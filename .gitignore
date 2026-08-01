@@ -10,3 +10,5 @@ local.properties
 .build/
 ios-sample/*.xcodeproj/
 ios-sample/Sources/Info.plist
+ios-compose-sample/*.xcodeproj/
+ios-compose-sample/Sources/Info.plist
