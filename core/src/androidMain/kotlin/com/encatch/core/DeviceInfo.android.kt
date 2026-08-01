@@ -4,6 +4,8 @@ import android.os.Build
 import java.util.Locale
 import java.util.TimeZone
 
+internal actual val SDK_PLATFORM: String = "android"
+
 internal actual fun collectPlatformDeviceFacts(): PlatformDeviceFacts {
     val context = EncatchAndroidContext.applicationContext
 
