@@ -1,0 +1,207 @@
+package com.encatch.android
+
+import android.content.Context
+import android.util.AttributeSet
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ProgressBar
+import com.encatch.core.Encatch
+import com.encatch.core.EncatchInternalEmitter
+import com.encatch.core.InlineSlotRegistry
+import com.encatch.core.InternalEvent
+import com.encatch.core.SDKMessage
+import com.encatch.core.ShowFormPayload
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/**
+ * Renders the Encatch form inline within the host layout — no modal, no overlay. Place it
+ * anywhere in an Activity/Fragment's view hierarchy (XML or programmatically), mirroring
+ * `EncatchInlineForm.tsx`.
+ *
+ * Routing (resolved by [InlineSlotRegistry] before this view receives anything):
+ *  - Exact match: set [formId] to catch `showForm("slug")` for that id only.
+ *  - Wildcard: leave [formId] null to catch any form not claimed by an exact slot.
+ *  - Fallback: when no inline slot is registered, the modal [EncatchFormDialog] takes over.
+ *
+ * Slot registration is tied to this view's attach/detach lifecycle — unlike the RN version's
+ * screen-focus tracking, a host using ViewPager/off-screen page retention should explicitly
+ * detach (or set [formId] to a sentinel no form will ever match) while backgrounded, otherwise
+ * a wildcard slot on a hidden page could intercept a showForm meant for the visible one.
+ */
+class EncatchInlineFormView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+) : FrameLayout(context, attrs) {
+
+    companion object {
+        /** Visible skeleton height (dp) used before the first form:resize arrives. */
+        private const val LOADING_SKELETON_HEIGHT_DP = 300
+    }
+
+    /** When set, this slot only catches showForm() calls for this exact form id (slug or uuid). */
+    var formId: String? = null
+        set(value) {
+            field = value
+            slotId?.let { InlineSlotRegistry.updateInlineSlot(it, value) }
+        }
+
+    /** Minimum height floor (px) after the first form:resize. Defaults to 0. */
+    var minHeight: Int = 0
+
+    /** Called when an in-form overlay (QnA with AI, Scheduler) opens or closes. */
+    var onOverlayOpenChange: ((Boolean) -> Unit)? = null
+
+    private var slotId: String? = null
+    private var unsubscribe: (() -> Unit)? = null
+
+    private var webView: EncatchWebView? = null
+    private var bridge: FormWebViewBridge? = null
+    private var loadingOverlay: ProgressBar? = null
+    private var webViewInstanceKey = 0
+
+    private var contentHeightPx = 0
+    private var overlayFrozenHeightPx: Int? = null
+    private var overlayActive = false
+    private val redirectBrowser by lazy { RedirectBrowser(context) }
+
+    init {
+        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        slotId = InlineSlotRegistry.registerInlineSlot(formId)
+        unsubscribe = EncatchInternalEmitter.on { event -> handleInternalEvent(event) }
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        slotId?.let { InlineSlotRegistry.unregisterInlineSlot(it) }
+        slotId = null
+        unsubscribe?.invoke()
+        unsubscribe = null
+
+        if (bridge?.formPayload != null) {
+            Encatch.setFormVisible(false)
+        }
+        clearForm()
+    }
+
+    private fun handleInternalEvent(event: InternalEvent) {
+        when (event) {
+            is InternalEvent.ShowForm -> {
+                if (event.payload.presentation == "inline" && event.payload.inlineSlotId == slotId) {
+                    loadForm(event.payload)
+                } else if (bridge?.formPayload != null) {
+                    Encatch.setFormVisible(false)
+                    clearForm()
+                }
+            }
+            is InternalEvent.DismissForm -> {
+                if (bridge?.formPayload != null) {
+                    Encatch.setFormVisible(false)
+                    clearForm()
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    private fun loadForm(payload: ShowFormPayload) {
+        removeAllViews()
+        webViewInstanceKey += 1
+        contentHeightPx = 0
+        overlayFrozenHeightPx = null
+        overlayActive = false
+
+        val newWebView = EncatchWebView(context)
+        val newBridge = FormWebViewBridge(
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main),
+            presentation = "inline",
+            onClose = { _ ->
+                Encatch.setFormVisible(false)
+                clearForm()
+            },
+            onHeightChange = { h -> applyHeight(h) },
+            onForceFullHeight = { force -> applyForceFullHeight(force) },
+            onReady = { loadingOverlay?.visibility = android.view.View.GONE },
+            sendToWebView = { message: SDKMessage -> newWebView.sendToWebView(message) },
+            redirectOpener = redirectBrowser,
+            openExternal = { url -> redirectBrowser.openExternal(url) },
+        )
+        newWebView.bridge = newBridge
+        newWebView.settings.setSupportZoom(false)
+        newWebView.isVerticalScrollBarEnabled = false
+        newWebView.overScrollMode = android.view.View.OVER_SCROLL_NEVER
+
+        newBridge.setFormPayload(payload)
+        webView = newWebView
+        bridge = newBridge
+
+        addView(newWebView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        val overlay = ProgressBar(context).apply {
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+        }
+        loadingOverlay = overlay
+        addView(overlay)
+
+        applyHeightPx(dpToPx(LOADING_SKELETON_HEIGHT_DP))
+        Encatch.setFormVisible(true)
+
+        val url = buildFormWebViewUrl(
+            webHost = Encatch.webHost,
+            formId = payload.formId,
+            instanceKey = webViewInstanceKey,
+            debugMode = Encatch.debugMode,
+            presentation = "inline",
+        )
+        newWebView.loadFormUrl(url)
+    }
+
+    private fun clearForm() {
+        webView = null
+        bridge = null
+        loadingOverlay = null
+        contentHeightPx = 0
+        overlayFrozenHeightPx = null
+        overlayActive = false
+        removeAllViews()
+        applyHeightPx(0)
+    }
+
+    private fun resolveContentHeight(h: Int): Int = if (minHeight > 0) max(h, minHeight) else h
+
+    private fun applyHeight(heightPx: Int) {
+        if (overlayActive) return
+        val resolved = resolveContentHeight(heightPx)
+        contentHeightPx = resolved
+        applyHeightPx(resolved)
+    }
+
+    private fun applyForceFullHeight(force: Boolean) {
+        overlayActive = force
+        if (force) {
+            val base = if (contentHeightPx > 0) resolveContentHeight(contentHeightPx) else if (minHeight > 0) minHeight else dpToPx(LOADING_SKELETON_HEIGHT_DP)
+            val maxHeight = (resources.displayMetrics.heightPixels * 0.8).roundToInt()
+            val frozen = min(base, maxHeight)
+            overlayFrozenHeightPx = frozen
+            applyHeightPx(frozen)
+        } else {
+            overlayFrozenHeightPx = null
+            applyHeightPx(if (contentHeightPx > 0) contentHeightPx else if (minHeight > 0) minHeight else dpToPx(LOADING_SKELETON_HEIGHT_DP))
+        }
+        onOverlayOpenChange?.invoke(force)
+    }
+
+    private fun applyHeightPx(px: Int) {
+        val params = layoutParams ?: ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, px)
+        params.height = px
+        layoutParams = params
+    }
+
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).roundToInt()
+}

@@ -6,6 +6,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.encatch.android.EncatchInlineFormView
 import com.encatch.core.Encatch
 import kotlinx.coroutines.launch
 
@@ -45,13 +46,29 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // No inline slot claims this id, so it falls through to the modal EncatchFormDialog.
         findViewById<Button>(R.id.showFormButton).setOnClickListener {
             if (!Encatch.isInitialized) {
                 Toast.makeText(this, "Init the SDK first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             lifecycleScope.launch {
-                Encatch.showForm("your-form-id")
+                Encatch.showForm("modal-form-id")
+            }
+        }
+
+        // The inline view below claims "inline-form-id" as an exact-match slot, so this
+        // showForm call renders inline instead of opening the modal.
+        val inlineForm = findViewById<EncatchInlineFormView>(R.id.inlineForm)
+        inlineForm.formId = "inline-form-id"
+
+        findViewById<Button>(R.id.showInlineFormButton).setOnClickListener {
+            if (!Encatch.isInitialized) {
+                Toast.makeText(this, "Init the SDK first", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                Encatch.showForm("inline-form-id")
             }
         }
     }

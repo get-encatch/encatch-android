@@ -360,6 +360,8 @@ object Encatch {
                 return@runCatching
             }
 
+            val target = InlineSlotRegistry.resolvePresentationTarget(formId, feedbackConfigurationId)
+
             EncatchInternalEmitter.emit(
                 InternalEvent.ShowForm(
                     ShowFormPayload(
@@ -371,7 +373,8 @@ object Encatch {
                         locale = localeState,
                         theme = themeState,
                         context = serializedContext,
-                        presentation = "modal",
+                        presentation = if (target is PresentationTarget.Inline) "inline" else "modal",
+                        inlineSlotId = (target as? PresentationTarget.Inline)?.slotId,
                     ),
                 ),
             )
