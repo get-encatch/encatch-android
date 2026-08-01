@@ -1,17 +1,20 @@
 package com.encatch.android
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
-import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.ProgressBar
 import com.encatch.core.Encatch
 import com.encatch.core.EncatchInternalEmitter
 import com.encatch.core.InlineSlotRegistry
 import com.encatch.core.InternalEvent
 import com.encatch.core.SDKMessage
 import com.encatch.core.ShowFormPayload
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -59,7 +62,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
 
     private var webView: EncatchWebView? = null
     private var bridge: FormWebViewBridge? = null
-    private var loadingOverlay: ProgressBar? = null
+    private var loadingOverlay: FormWebViewSkeleton? = null
     private var webViewInstanceKey = 0
 
     private var contentHeightPx = 0
@@ -127,7 +130,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
             },
             onHeightChange = { h -> applyHeight(h) },
             onForceFullHeight = { force -> applyForceFullHeight(force) },
-            onReady = { loadingOverlay?.visibility = android.view.View.GONE },
+            onReady = { loadingOverlay?.let { removeView(it) }; loadingOverlay = null },
             sendToWebView = { message: SDKMessage -> newWebView.sendToWebView(message) },
             redirectOpener = redirectBrowser,
             openExternal = { url -> redirectBrowser.openExternal(url) },
@@ -141,10 +144,11 @@ class EncatchInlineFormView @JvmOverloads constructor(
         webView = newWebView
         bridge = newBridge
 
+        val activeMode = applyInlineAppearance(payload, newWebView)
         addView(newWebView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        val overlay = ProgressBar(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+        val overlay = FormWebViewSkeleton(context, activeMode).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
         loadingOverlay = overlay
         addView(overlay)
@@ -160,6 +164,37 @@ class EncatchInlineFormView @JvmOverloads constructor(
             presentation = "inline",
         )
         newWebView.loadFormUrl(url)
+    }
+
+    private fun applyInlineAppearance(payload: ShowFormPayload, target: EncatchWebView): String {
+        val appearanceProperties = payload.formConfig.appearanceProperties as? JsonObject
+        val corners = resolveCornersFromFormConfig(appearanceProperties)
+
+        val systemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        val shareableMode = appearanceProperties?.get("featureSettings")?.let { it as? JsonObject }
+            ?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
+        val activeMode = resolveActiveMode(payload.theme?.wireValue ?: shareableMode, systemScheme)
+
+        val themeJson = appearanceProperties?.get("themes")?.let { it as? JsonObject }
+            ?.get(activeMode)?.let { it as? JsonObject }
+            ?.get("theme")?.let { (it as? JsonPrimitive)?.contentOrNull }
+        val fallbackBg = if (activeMode == "dark") "#1a1a1a" else "#ffffff"
+        val backgroundColorStr = getBackgroundColor(themeJson, fallbackBg)
+        val backgroundArgb = parseCssColorToArgb(backgroundColorStr, if (activeMode == "dark") Color.parseColor(fallbackBg) else Color.WHITE)
+
+        val radii = getInlineBorderRadii(corners)
+        background = GradientDrawable().apply {
+            setColor(backgroundArgb)
+            cornerRadii = floatArrayOf(
+                dpToPx(radii.topLeftDp).toFloat(), dpToPx(radii.topLeftDp).toFloat(),
+                dpToPx(radii.topRightDp).toFloat(), dpToPx(radii.topRightDp).toFloat(),
+                dpToPx(radii.bottomRightDp).toFloat(), dpToPx(radii.bottomRightDp).toFloat(),
+                dpToPx(radii.bottomLeftDp).toFloat(), dpToPx(radii.bottomLeftDp).toFloat(),
+            )
+        }
+        clipToOutline = true
+        target.setBackgroundColor(Color.TRANSPARENT)
+        return activeMode
     }
 
     private fun clearForm() {

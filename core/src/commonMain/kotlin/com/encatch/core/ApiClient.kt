@@ -104,6 +104,7 @@ class EncatchApiClient internal constructor(
     private val baseUrlProvider: () -> String,
     private val authStateProvider: () -> AuthState,
     private val onUserPendingRetryExhausted: suspend () -> Unit = {},
+    private val logger: EncatchLogger = DefaultEncatchLogger { false },
 ) {
     private fun buildAuthHeaders(signatureTime: String? = null): Map<String, String> {
         val auth = authStateProvider()
@@ -127,6 +128,10 @@ class EncatchApiClient internal constructor(
         val url = "${baseUrlProvider()}/$endpoint"
         val authHeaders = buildAuthHeaders(signatureTime)
 
+        logger.debug("POST $endpoint -> $url")
+        logger.debug("Request headers:\n${redactedHeadersForLog(authHeaders)}")
+        logger.debug("Request body:\n$body")
+
         val response: HttpResponse = httpClient.post(url) {
             headers { authHeaders.forEach { (k, v) -> append(k, v) } }
             contentType(ContentType.Application.Json)
@@ -136,16 +141,24 @@ class EncatchApiClient internal constructor(
         val responseText = response.bodyAsText()
         val parsed = runCatching { EncatchJson.parseToJsonElement(responseText).jsonObject }.getOrNull()
 
+        logger.debug("POST $endpoint <- ${response.status.value}")
+        logger.debug("Response body:\n${parsed ?: responseText}")
+
         if (parsed != null && parsed.toResponseMeta().userPendingRetryExhausted) {
             onUserPendingRetryExhausted()
         }
 
         if (!response.status.isSuccess() || parsed == null) {
-            throw EncatchApiException(endpoint, response.status.value, responseText)
+            val error = EncatchApiException(endpoint, response.status.value, responseText)
+            logger.warn(error.message ?: "[Encatch API] $endpoint failed")
+            throw error
         }
 
         return parsed
     }
+
+    private fun redactedHeadersForLog(headers: Map<String, String>): String =
+        headers.entries.joinToString("\n") { (k, v) -> "$k: ${if (k == "X-Api-Key") "***" else v}" }
 
     /** Multipart file upload with progress, mirrors the RN SDK's XHR-based `uploadFile`. */
     suspend fun uploadFile(

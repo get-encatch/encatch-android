@@ -77,6 +77,7 @@ object Encatch {
     private lateinit var apiClient: EncatchApiClient
     private lateinit var retryQueue: RetryQueue
     private lateinit var sessionManager: SessionManager
+    private var logger: EncatchLogger = DefaultEncatchLogger { debugModeState }
 
     // ============================================================================
     // Initialisation
@@ -84,8 +85,12 @@ object Encatch {
 
     suspend fun init(apiKey: String, config: EncatchConfig? = null) {
         debugModeState = config?.debugMode ?: false
+        logger = DefaultEncatchLogger { debugModeState }
 
-        if (initialized) return
+        if (initialized) {
+            logger.debug("SDK already initialized")
+            return
+        }
 
         apiKeyState = apiKey
         apiBaseUrlState = (config?.apiBaseUrl ?: DEFAULT_API_BASE_URL).trimEnd('/')
@@ -93,6 +98,8 @@ object Encatch {
         isFullScreenState = config?.isFullScreen ?: false
         config?.theme?.let { themeState = it }
         onBeforeShowForm = config?.onBeforeShowForm
+
+        logger.debug("Initializing SDK...")
 
         storage = EncatchStorage()
         apiClient = EncatchApiClient(
@@ -113,6 +120,7 @@ object Encatch {
                 sessionManager.stopPingInterval()
                 resetUser()
             },
+            logger = logger,
         )
         retryQueue = RetryQueue(scope, storage)
         sessionManager = SessionManager(scope, isFormVisible = { isFormVisible }, onPing = { doPing() })
@@ -139,6 +147,7 @@ object Encatch {
         initialized = true
 
         scope.launch { retryQueue.flush() }
+        logger.debug("SDK initialized. deviceId: $deviceIdState")
     }
 
     // ============================================================================
@@ -380,7 +389,7 @@ object Encatch {
             )
 
             isFormVisible = true
-        }
+        }.onFailure { logger.warn("showForm API error: ${it.message}") }
     }
 
     suspend fun dismissForm(formConfigurationId: String? = null) {
@@ -440,7 +449,7 @@ object Encatch {
             val res = apiClient.post(Endpoints.SUBMIT_FORM, req)
             applyFeedbackTransactions(res)
             sessionManager.handleResponseMeta(res.toResponseMeta())
-        }
+        }.onFailure { logger.warn("submitForm API error: ${it.message}") }
     }
 
     // ============================================================================
