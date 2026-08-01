@@ -11,7 +11,7 @@ public enum EncatchUploadFileSource: Sendable {
     /// Kept for API parity/documentation; iOS callers should use `.bytes` instead.
     case contentUri(String, mimeType: String?)
 
-    var kotlin: UploadFileSource {
+    public var kotlin: UploadFileSource {
         switch self {
         case let .bytes(data, mimeType):
             return UploadFileSource.Bytes(bytes: data.toKotlinByteArray(), mimeType: mimeType)

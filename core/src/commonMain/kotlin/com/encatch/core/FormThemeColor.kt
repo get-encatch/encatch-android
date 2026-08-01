@@ -1,5 +1,6 @@
 package com.encatch.core
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -64,17 +65,17 @@ fun getBackgroundColor(themeJson: String?, fallback: String): String {
 fun resolveSystemColorScheme(isSystemDark: Boolean): String = if (isSystemDark) "dark" else "light"
 
 /**
- * Reads `appearanceProperties.featureSettings.shareableMode`. Exposed as a standalone function
- * (rather than expecting UI layers to navigate the [JsonObject] themselves) so JSON-shape
- * knowledge stays in `:core` — Kotlin/Native-bridged Swift callers in particular would otherwise
- * need to downcast/navigate `JsonElement`/`JsonObject`/`JsonPrimitive` by hand.
+ * Reads `appearanceProperties.featureSettings.shareableMode`. Takes the raw [JsonElement] and
+ * downcasts internally — see the comment above `resolveCornersFromFormConfig` in
+ * FormAppearance.kt for why callers shouldn't pass an already-downcast [JsonObject] across the
+ * Kotlin/Native-Swift boundary a second time.
  */
-fun extractShareableMode(appearanceProperties: JsonObject?): String? =
-    (appearanceProperties?.get("featureSettings") as? JsonObject)?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
+fun extractShareableMode(appearanceProperties: JsonElement?): String? =
+    ((appearanceProperties as? JsonObject)?.get("featureSettings") as? JsonObject)?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
 
 /** Reads `appearanceProperties.themes[mode].theme` — see [extractShareableMode] for why this is a function, not inline JSON navigation. */
-fun extractThemeJsonForMode(appearanceProperties: JsonObject?, mode: String): String? =
-    (appearanceProperties?.get("themes") as? JsonObject)?.get(mode)?.let { (it as? JsonObject)?.get("theme") }
+fun extractThemeJsonForMode(appearanceProperties: JsonElement?, mode: String): String? =
+    ((appearanceProperties as? JsonObject)?.get("themes") as? JsonObject)?.get(mode)?.let { (it as? JsonObject)?.get("theme") }
         ?.let { (it as? JsonPrimitive)?.contentOrNull }
 
 /** Resolves which theme mode ("light" | "dark") is active for the form. */
@@ -128,12 +129,12 @@ fun colorWithAlpha(color: String, fallbackAlpha: Double = OVERLAY_FALLBACK_ALPHA
  * always keep touches captured by the modal shell regardless of overlay visibility.
  */
 fun resolveModalOverlayBackgroundColor(
-    appearanceProperties: JsonObject?,
+    appearanceProperties: JsonElement?,
     activeMode: String,
     darkOverlay: Boolean,
 ): String {
     if (!darkOverlay) return "transparent"
-    val themes = appearanceProperties?.get("themes")?.let { it as? JsonObject }
+    val themes = (appearanceProperties as? JsonObject)?.get("themes")?.let { it as? JsonObject }
     val modeConfig = themes?.get(activeMode)?.let { it as? JsonObject }
     val themeConfig = ThemeModeConfig(
         theme = (modeConfig?.get("theme") as? JsonPrimitive)?.contentOrNull,

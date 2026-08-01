@@ -55,7 +55,11 @@ public final class EncatchInlineFormView: UIView {
         super.willMove(toWindow: newWindow)
         if newWindow != nil, slotId == nil {
             slotId = InlineSlotRegistry.shared.registerInlineSlot(formId: formId)
-            unsubscribe = EncatchInternalEmitter.shared.on { [weak self] event in self?.handle(event: event) }
+            unsubscribe = EncatchInternalEmitter.shared.on { [weak self] event in
+                // See EncatchFormHost's twin comment — emit(...) isn't guaranteed to run on the
+                // main thread, and this touches UIKit/WebKit.
+                DispatchQueue.main.async { self?.handle(event: event) }
+            }
         } else if newWindow == nil, let currentSlotId = slotId {
             InlineSlotRegistry.shared.unregisterInlineSlot(slotId: currentSlotId)
             slotId = nil
@@ -151,7 +155,7 @@ public final class EncatchInlineFormView: UIView {
     }
 
     private func applyInlineAppearance(payload: ShowFormPayload) {
-        let appearanceProperties = FormAppearanceKt.asJsonObjectOrNull(element: payload.formConfig.appearanceProperties)
+        let appearanceProperties = payload.formConfig.appearanceProperties
         let corners = FormAppearanceKt.resolveCornersFromFormConfig(appearanceProperties: appearanceProperties)
 
         let systemScheme = FormThemeColorKt.resolveSystemColorScheme(isSystemDark: isSystemDark(traitCollection))

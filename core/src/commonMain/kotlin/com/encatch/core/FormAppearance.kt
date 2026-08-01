@@ -13,16 +13,6 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Downcasts a [JsonElement] to [JsonObject], returning null if it isn't one. Exists because
- * Kotlin/Native-bridged Swift callers can't do this themselves: `JsonElement`'s concrete
- * subclasses (`JsonObject`, `JsonPrimitive`, ...) aren't separately exported, so an `as?` cast
- * from the bridged `JsonElement` type to a Dictionary type is a compile-time-guaranteed failure
- * on the Swift side — the downcast has to happen here, in Kotlin, where `JsonObject` is a real
- * runtime-checkable subtype.
- */
-fun asJsonObjectOrNull(element: JsonElement?): JsonObject? = element as? JsonObject
-
-/**
  * Appearance/layout resolution, ported from `form-webview-helpers.ts`. Pure functions operating
  * on the form's `appearanceProperties` JSON — shared by every UI layer (`:android`, `:compose`)
  * so position/corner/animation semantics can't drift between them.
@@ -65,10 +55,22 @@ fun resolveCornerRadiusDp(corners: CornerStyle): Int = when (corners) {
     CornerStyle.SOFT -> 10
 }
 
+/**
+ * These 5 functions take the raw [JsonElement] (not a pre-downcast [JsonObject]) and downcast
+ * internally, rather than expecting the caller to pass an already-downcast [JsonObject] — a
+ * Kotlin/Native-bridged [JsonObject] value crossing the Swift boundary a second time (once as a
+ * return value from a helper like the old `asJsonObjectOrNull`, then again as a parameter into
+ * one of these) triggered a native crash (EXC_BAD_ACCESS deep in `Map#get`) under real network-
+ * sourced data, even though the identical pattern worked fine with directly-constructed test
+ * data. Doing the downcast fresh, in the same Kotlin call, from the original [JsonElement]
+ * every time sidesteps whatever Kotlin/Native interop edge case that was.
+ */
+
 /** Reads appearance.appearance.corners with legacy featureSettings.corners fallback. */
-fun resolveCornersFromFormConfig(appearanceProperties: JsonObject?): CornerStyle {
-    val value = appearanceProperties?.obj("appearance")?.str("corners")
-        ?: appearanceProperties?.obj("featureSettings")?.str("corners")
+fun resolveCornersFromFormConfig(appearanceProperties: JsonElement?): CornerStyle {
+    val obj = appearanceProperties as? JsonObject
+    val value = obj?.obj("appearance")?.str("corners")
+        ?: obj?.obj("featureSettings")?.str("corners")
     return when (value) {
         "sharp" -> CornerStyle.SHARP
         "round" -> CornerStyle.ROUND
@@ -77,9 +79,10 @@ fun resolveCornersFromFormConfig(appearanceProperties: JsonObject?): CornerStyle
 }
 
 /** Reads inApp.size with legacy featureSettings.inAppSize fallback. */
-fun resolveInAppSizeFromFormConfig(appearanceProperties: JsonObject?): InAppSize {
-    val value = appearanceProperties?.obj("inApp")?.str("size")
-        ?: appearanceProperties?.obj("featureSettings")?.str("inAppSize")
+fun resolveInAppSizeFromFormConfig(appearanceProperties: JsonElement?): InAppSize {
+    val obj = appearanceProperties as? JsonObject
+    val value = obj?.obj("inApp")?.str("size")
+        ?: obj?.obj("featureSettings")?.str("inAppSize")
     return when (value) {
         "compact" -> InAppSize.COMPACT
         "spacious" -> InAppSize.SPACIOUS
@@ -88,21 +91,24 @@ fun resolveInAppSizeFromFormConfig(appearanceProperties: JsonObject?): InAppSize
 }
 
 /** Reads inApp.position with legacy selectedPosition fallback. */
-fun resolveSelectedPositionFromFormConfig(appearanceProperties: JsonObject?): String {
-    return appearanceProperties?.obj("inApp")?.str("position")
-        ?: appearanceProperties?.str("selectedPosition")
+fun resolveSelectedPositionFromFormConfig(appearanceProperties: JsonElement?): String {
+    val obj = appearanceProperties as? JsonObject
+    return obj?.obj("inApp")?.str("position")
+        ?: obj?.str("selectedPosition")
         ?: "middle-center"
 }
 
 /** Reads inApp.darkOverlay with legacy featureSettings.darkOverlay fallback. */
-fun resolveDarkOverlayFromFormConfig(appearanceProperties: JsonObject?): Boolean {
-    return (appearanceProperties?.obj("inApp")?.bool("darkOverlay")
-        ?: appearanceProperties?.obj("featureSettings")?.bool("darkOverlay")) == true
+fun resolveDarkOverlayFromFormConfig(appearanceProperties: JsonElement?): Boolean {
+    val obj = appearanceProperties as? JsonObject
+    return (obj?.obj("inApp")?.bool("darkOverlay")
+        ?: obj?.obj("featureSettings")?.bool("darkOverlay")) == true
 }
 
 /** Reads featureSettings.maxDialogHeightPercentInApp, defaulting to 0.8 (80%). */
-fun resolveMaxDialogHeightFraction(appearanceProperties: JsonObject?): Double {
-    val raw = (appearanceProperties?.obj("featureSettings")?.get("maxDialogHeightPercentInApp") as? JsonPrimitive)?.doubleOrNull
+fun resolveMaxDialogHeightFraction(appearanceProperties: JsonElement?): Double {
+    val obj = appearanceProperties as? JsonObject
+    val raw = (obj?.obj("featureSettings")?.get("maxDialogHeightPercentInApp") as? JsonPrimitive)?.doubleOrNull
     return if (raw != null) raw / 100.0 else 0.8
 }
 

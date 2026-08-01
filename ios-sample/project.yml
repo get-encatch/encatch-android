@@ -1,0 +1,55 @@
+name: EncatchSample
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "15.0"
+
+packages:
+  Encatch:
+    path: ../swift
+
+targets:
+  EncatchSample:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: Encatch
+        product: Encatch
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch Sample"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.sample
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+  EncatchSampleUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.sample.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: EncatchSample
+
+schemes:
+  EncatchSample:
+    build:
+      targets:
+        EncatchSample: all
+        EncatchSampleUITests: [test]
+    test:
+      targets:
+        - EncatchSampleUITests
+    run:
+      config: Debug

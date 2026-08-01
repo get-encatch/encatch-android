@@ -15,19 +15,30 @@ public enum EncatchFormHost {
         installed = true
 
         _ = EncatchInternalEmitter.shared.on { event in
-            switch event {
-            case let showForm as InternalEvent.ShowForm:
-                guard showForm.payload.presentation != "inline" else { return }
-                guard let presenter = UIApplication.topmostViewController() else { return }
-                currentController?.dismiss(animated: false)
-                let controller = EncatchFormViewController()
-                currentController = controller
-                controller.present(payload: showForm.payload, from: presenter)
-            case is InternalEvent.DismissForm:
-                currentController?.dismiss(animated: false)
-                currentController = nil
-            default:
-                break
+            // EncatchInternalEmitter.emit(...) runs on whichever thread the Kotlin coroutine
+            // that triggered it happens to be on (:core's internal scope uses
+            // Dispatchers.Default) — never assume main thread before touching UIKit/WebKit.
+            guard let event else { return }
+            let work = {
+                switch event {
+                case let showForm as InternalEvent.ShowForm:
+                    guard showForm.payload.presentation != "inline" else { return }
+                    guard let presenter = UIApplication.topmostViewController() else { return }
+                    currentController?.dismiss(animated: false)
+                    let controller = EncatchFormViewController()
+                    currentController = controller
+                    controller.present(payload: showForm.payload, from: presenter)
+                case is InternalEvent.DismissForm:
+                    currentController?.dismiss(animated: false)
+                    currentController = nil
+                default:
+                    break
+                }
+            }
+            if Thread.isMainThread {
+                work()
+            } else {
+                DispatchQueue.main.sync(execute: work)
             }
         }
     }

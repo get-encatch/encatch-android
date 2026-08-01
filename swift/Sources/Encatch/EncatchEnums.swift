@@ -8,7 +8,7 @@ import EncatchCore
 public enum EncatchTheme: String, Sendable {
     case light, dark, system
 
-    var kotlin: Theme {
+    public var kotlin: Theme {
         switch self {
         case .light: return Theme.light
         case .dark: return Theme.dark
@@ -16,7 +16,7 @@ public enum EncatchTheme: String, Sendable {
         }
     }
 
-    init(kotlin: Theme) {
+    public init(kotlin: Theme) {
         switch kotlin {
         case Theme.dark: self = .dark
         case Theme.system: self = .system
@@ -33,7 +33,7 @@ public enum EncatchResetMode: String, Sendable {
     /// Never clear form data — preserve the user's previous answers.
     case never
 
-    var kotlin: ResetMode {
+    public var kotlin: ResetMode {
         switch self {
         case .always: return ResetMode.always
         case .onComplete: return ResetMode.onComplete
@@ -41,7 +41,7 @@ public enum EncatchResetMode: String, Sendable {
         }
     }
 
-    init(kotlin: ResetMode) {
+    public init(kotlin: ResetMode) {
         switch kotlin {
         case ResetMode.onComplete: self = .onComplete
         case ResetMode.never: self = .never
@@ -53,11 +53,11 @@ public enum EncatchResetMode: String, Sendable {
 public enum EncatchTriggerType: String, Sendable {
     case automatic, manual
 
-    var kotlin: TriggerType {
+    public var kotlin: TriggerType {
         self == .automatic ? TriggerType.automatic : TriggerType.manual
     }
 
-    init(kotlin: TriggerType) {
+    public init(kotlin: TriggerType) {
         self = kotlin == TriggerType.automatic ? .automatic : .manual
     }
 }
@@ -79,7 +79,7 @@ public enum EncatchEventType: String, Sendable, CaseIterable {
     /// crashing — check this case explicitly so new event types don't silently vanish.
     case unknown
 
-    init(kotlin: EventType) {
+    public init(kotlin: EventType) {
         if kotlin == EventType.formShow { self = .formShow }
         else if kotlin == EventType.formStarted { self = .formStarted }
         else if kotlin == EventType.formSubmit { self = .formSubmit }

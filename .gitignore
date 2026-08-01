@@ -8,3 +8,5 @@ local.properties
 .kotlin/
 .swiftpm/
 .build/
+ios-sample/*.xcodeproj/
+ios-sample/Sources/Info.plist
