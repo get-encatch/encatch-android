@@ -19,3 +19,4 @@ rootProject.name = "encatch-android"
 include(":core")
 include(":android")
 include(":sample-app")
+include(":mock-server")

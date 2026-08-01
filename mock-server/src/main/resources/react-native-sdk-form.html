@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Encatch Mock Form</title>
+    <style>
+        html, body { margin: 0; padding: 0; font-family: -apple-system, system-ui, sans-serif; }
+        #root { display: flex; flex-direction: column; gap: 16px; padding: 24px; box-sizing: border-box; }
+        button { font-size: 16px; padding: 12px 20px; border-radius: 8px; border: none; background: #0a0a23; color: white; }
+        .footer { font-size: 12px; color: #888; text-align: center; }
+    </style>
+</head>
+<body>
+<div id="root">
+    <div id="question">Loading...</div>
+    <button id="submitBtn">Submit</button>
+    <hr />
+    <div class="footer">Powered by Encatch (mock)</div>
+</div>
+<script>
+    // Standing in for the real hosted form page — implements just enough of the
+    // useEncatchFormWebView.ts postMessage contract to prove the native<->WebView JS bridge
+    // round-trips deterministically, for automated screenshot testing.
+    var formId = new URLSearchParams(window.location.search).get("formId") || "mock-form";
+    var feedbackConfigurationId = null;
+
+    function postToNative(message) {
+        window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    }
+
+    window.__encatchReceiveSDKMessage = function (message) {
+        if (message.type === "sdk:formConfig" && message.data) {
+            feedbackConfigurationId = message.data.feedbackConfigurationId || null;
+            document.getElementById("question").textContent =
+                "Mock question for " + (feedbackConfigurationId || formId);
+        }
+    };
+
+    document.getElementById("submitBtn").addEventListener("click", function () {
+        postToNative({
+            type: "form:submit",
+            formId: formId,
+            data: {
+                feedbackConfigurationId: feedbackConfigurationId || formId,
+                triggerType: "manual",
+                isPartialSubmit: false,
+                response: { questionId: "mock-question", type: "text", value: "mock answer" },
+            },
+        });
+        setTimeout(function () {
+            postToNative({
+                type: "form:complete",
+                formId: formId,
+                data: { feedbackConfigurationId: feedbackConfigurationId || formId },
+            });
+        }, 200);
+    });
+
+    window.addEventListener("load", function () {
+        postToNative({ type: "form:ready", formId: formId, data: {} });
+    });
+</script>
+</body>
+</html>
