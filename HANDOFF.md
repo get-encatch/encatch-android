@@ -27,9 +27,14 @@ Plan file (still accurate, was written for this phase): `/Users/godwin/.claude/p
    `FormWebViewBridge`/appearance logic unchanged, only the raw WKWebView/UIView plumbing is new.
    Ships as a standalone `ios-compose-sample/` app (no `swift/` dependency) plus a Compose screen
    embedded in `sample-app` on Android.
-5. KMP host sample app, Android+iOS — **not started**. A sample app that's itself a Kotlin
-   Multiplatform project (not just single-platform apps depending on KMP `:core`), validating the
-   real Gradle/XCFramework consumption path a customer's own KMP app would use.
+5. KMP host sample app, Android+iOS — **done**. New `:kmp-sample` module — `SampleAppController`
+   in commonMain calls `Encatch` directly, thin platform entry points call it. Android:
+   `KmpSampleMainActivity`, plain programmatic Views (no XML, no Compose), reuses `:android`'s
+   `EncatchInlineFormView`. iOS: whole screen built in Kotlin/Native UIKit directly
+   (`KmpSampleViewController.kt`, no SwiftUI/Swift logic) per the "Real architectural finding"
+   below, shipped as standalone `ios-kmp-sample/` (no `swift/` dependency). Deliberately UI-light
+   on iOS (status text + buttons only, no hosted-form rendering) — that's already proven by
+   variants 3 & 4; this variant's job is the dependency/build-path shape.
 6. One-command orchestrator script tying all 5 together — **not started**.
 
 ## Real architectural finding from Variant 4 (iOS) — read before touching Variant 5
@@ -55,7 +60,23 @@ Kotlin/Native binary, not a second separately-compiled framework that happens to
 **General rule**: an iOS app should link **at most one** Kotlin/Native framework that embeds
 `:core`. Real customers integrating this SDK would only pick one UI strategy per app anyway (plain
 Swift *or* Compose Multiplatform, not both) — this constraint only bit us because the test harness
-tried to demonstrate multiple variants side-by-side in one app.
+tried to demonstrate multiple variants side-by-side in one app. **Confirmed by variant 5**:
+`:kmp-sample`'s iOS side follows this rule (links only its own XCFramework) and worked as expected.
+
+## Two more real bugs found via device testing during Variant 5
+
+1. **Edge-to-edge status text hidden behind the action bar** (Android): targetSdk 35 forces
+   edge-to-edge rendering by default; a hand-built root `LinearLayout` that doesn't consume
+   `WindowInsets` renders its first child behind the system action bar (not clipped — literally
+   drawn underneath, invisible). Fix: put `fitsSystemWindows = true` on an **unpadded wrapper**
+   `FrameLayout`, with the padded content `LinearLayout` nested inside — putting `fitsSystemWindows`
+   directly on the padded view lets the framework's inset dispatch overwrite (stomp) the manual
+   padding. See `KmpSampleMainActivity.kt`.
+2. **`UIControl.addTarget` doesn't retain its target** (iOS): a `ClosureTarget` (NSObject wrapping
+   a Kotlin closure) created inline as `addTarget`'s argument gets deallocated immediately after
+   the call returns — UIKit's target-action pattern assumes the caller keeps its own strong
+   reference. Buttons rendered fine, taps silently did nothing, no error/crash. Fix: hold all
+   `ClosureTarget`s in a list owned by a `UIViewController` subclass. See `KmpSampleViewController.kt`.
 
 ## Task list state (if TaskList tool is available, these are the live tracked tasks)
 
@@ -66,12 +87,15 @@ tried to demonstrate multiple variants side-by-side in one app.
 | 16 | Variant 2: Android Compose | ✅ done |
 | 17 | Variant 3: iOS native Swift | ✅ done |
 | 18 | Variant 4: Compose Multiplatform interop sample (Android + iOS) | ✅ done |
-| 19 | Variant 5: KMP host sample app | ⬜ not started |
+| 19 | Variant 5: KMP host sample app (Android + iOS) | ✅ done |
 | 20 | Orchestrator script + full verification | ⬜ not started |
 
 ## Commits so far (this phase), newest first
 
 ```
+ea2a2a5 Variant 5 (iOS): native Kotlin/Native screen + standalone sample app
+2d06007 Variant 5 (Android): KMP host sample app module
+9ad6ccd Update handoff doc with variant 4 completion and iOS architecture finding
 5de9438 Variant 4 (iOS): native Kotlin/Native WebView port + standalone sample app
 4298dd9 Add session handoff doc for variant-testing phase
 dd939c0 Include form:resize in mock hosted-form page (missed in previous commit)
@@ -214,19 +238,31 @@ not just error-filtered output.
 
 ## Immediate next steps (in order)
 
-1. **Variant 5** (KMP host sample app): new `kmp-sample/` — minimal KMP application project,
-   shared `commonMain` calling `:core`'s `Encatch` API directly, thin `androidMain`/`iosMain` entry
-   points. Read the "Real architectural finding" section above before adding any iOS UI to this —
-   don't link `swift/` or `:compose-sample`'s XCFramework alongside a direct `:core` dependency.
-2. **Orchestrator** (`scripts/test-all-variants.sh`): start mock-server, boot simulator/emulator,
-   build+install+drive+screenshot all 5 variants (using the manual install/instrument/pull dance
-   for Android — see Variant 1&2 gotcha above — and `xcodebuild test`/`build.sh` scripts for iOS),
-   summarize pass/fail, tear down. Variant 4 has two iOS build scripts to wire in:
-   `ios-sample/build.sh` (native Swift) and `ios-compose-sample/build.sh` (Compose Multiplatform) —
-   they must NOT both be built into the same running app (see architectural finding above).
-3. Re-run full regression (`./gradlew build`, `swift test` via `xcodebuild test -scheme Encatch`)
+All 5 variants are done. Only task 20 (orchestrator) remains.
+
+1. **Orchestrator** (`scripts/test-all-variants.sh`): start mock-server, boot simulator/emulator,
+   build+install+drive+screenshot all 5 variants, summarize pass/fail, tear down.
+   - Android (variants 1, 2, 4, 5 all live in `sample-app`): build APK + androidTest APK once
+     (`./gradlew :sample-app:assembleDebug :sample-app:assembleDebugAndroidTest -PmockServerBaseUrl=http://10.0.2.2:8089`),
+     then for each test class do the manual install/instrument/pull dance (NOT
+     `connectedAndroidTest` — see gotcha below): `adb install -r` both APKs, `adb shell am
+     instrument -w -e class <FQCN> com.encatch.sampleapp.test/androidx.test.runner.AndroidJUnitRunner`,
+     `adb pull` the screenshots dir, `adb uninstall` both. Test classes:
+     `ScreenshotFlowTest`, `ComposeScreenshotFlowTest`, `ComposeMultiplatformScreenshotFlowTest`,
+     `KmpSampleScreenshotFlowTest`.
+   - iOS variant 3 (`ios-sample/`): `./build.sh` then `./test.sh` (XCUITest, has its own screenshot
+     capture via `XCTAttachment`).
+   - iOS variant 4 (`ios-compose-sample/`) and variant 5 (`ios-kmp-sample/`): each has its own
+     `build.sh` (builds + `xcodebuild build`, no test target yet) — launch via
+     `mcp__Claude_Code_iOS_Simulator__control` (or `xcrun simctl launch`) and drive with
+     `xcrun simctl io <udid> screenshot` for a scripted, non-interactive equivalent of what this
+     session did by hand. Neither app links `swift/` — don't add that dependency to either (see
+     architectural finding above).
+   - All iOS builds need a **specific booted simulator UDID** (never the generic destination) —
+     each `build.sh` already auto-detects one, or accepts `$1`.
+2. Re-run full regression (`./gradlew build`, `swift test` via `xcodebuild test -scheme Encatch`)
    before each commit, as has been done throughout.
-4. Decide whether/how to remove `HANDOFF.md` once this phase wraps — it's a working note, not
+3. Decide whether/how to remove `HANDOFF.md` once this phase wraps — it's a working note, not
    permanent repo documentation.
 
 ## Housekeeping reminders
