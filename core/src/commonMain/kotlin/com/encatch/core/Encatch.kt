@@ -83,6 +83,7 @@ object Encatch {
     // Initialisation
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun init(apiKey: String, config: EncatchConfig? = null) {
         debugModeState = config?.debugMode ?: false
         logger = DefaultEncatchLogger { debugModeState }
@@ -154,6 +155,7 @@ object Encatch {
     // Identity
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun identifyUser(userName: String, traits: UserTraits? = null, options: IdentifyOptions? = null) {
         if (!initialized) return
 
@@ -230,6 +232,7 @@ object Encatch {
     // Event tracking
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun trackEvent(eventName: String) {
         if (!initialized || isFullScreenState) return
 
@@ -256,6 +259,7 @@ object Encatch {
      * Public so the `:android` UI module's WebView bridge can call it for form:started/answered/show,
      * mirroring how the RN SDK's `useEncatchFormWebView` hook calls `Encatch._trackFormEvent`.
      */
+    @Throws(Exception::class)
     suspend fun trackFormEvent(eventName: String, feedbackConfigurationId: String?) {
         if (!initialized) return
         val deviceInfo = buildDeviceInfo()
@@ -274,6 +278,7 @@ object Encatch {
         }
     }
 
+    @Throws(Exception::class)
     suspend fun trackScreen(screenName: String) {
         if (!initialized || isFullScreenState) return
 
@@ -306,6 +311,7 @@ object Encatch {
     // Form display
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun showForm(formId: String, options: ShowFormOptions? = null) {
         if (!initialized) return
         showFormInternal(formId, options?.reset ?: ResetMode.ALWAYS, TriggerType.MANUAL, options?.context)
@@ -392,6 +398,7 @@ object Encatch {
         }.onFailure { logger.warn("showForm API error: ${it.message}") }
     }
 
+    @Throws(Exception::class)
     suspend fun dismissForm(formConfigurationId: String? = null) {
         if (!initialized) return
 
@@ -437,6 +444,7 @@ object Encatch {
     // Submit form
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun submitForm(params: SubmitFormRequest) {
         if (!initialized) return
         val deviceInfo = buildDeviceInfo()
@@ -456,6 +464,7 @@ object Encatch {
     // Refine text / Q&A with AI / upload
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun refineText(params: RefineTextRequest): RefineTextResponse {
         if (!initialized) throw EncatchNotInitializedException()
         val deviceInfo = buildDeviceInfo()
@@ -477,6 +486,7 @@ object Encatch {
         )
     }
 
+    @Throws(Exception::class)
     suspend fun streamQnaWithAi(params: QnaWithAiRequest, onChunk: (String) -> Unit, onDone: (String) -> Unit) {
         if (!initialized) throw EncatchNotInitializedException()
         require(params.feedbackConfigurationId.isNotEmpty() && params.questionId.isNotEmpty() && params.conversation.isNotEmpty()) {
@@ -485,6 +495,7 @@ object Encatch {
         apiClient.streamQnaWithAi(params.feedbackConfigurationId, params.questionId, params.conversation, onChunk, onDone)
     }
 
+    @Throws(Exception::class)
     suspend fun uploadFile(params: UploadFileRequest): UploadFileResponse {
         if (apiKeyState == null) throw EncatchNotInitializedException()
         val bytes = when (val src = params.file) {
@@ -509,6 +520,7 @@ object Encatch {
     // clearAll — full consent withdrawal
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun clearAll() {
         if (::sessionManager.isInitialized) sessionManager.stopPingInterval()
 
@@ -540,6 +552,7 @@ object Encatch {
     // Session management
     // ============================================================================
 
+    @Throws(Exception::class)
     suspend fun startSession(options: StartSessionOptions? = null) {
         if (!initialized) return
 
@@ -572,6 +585,7 @@ object Encatch {
         sessionManager.startPingInterval()
     }
 
+    @Throws(Exception::class)
     suspend fun stopSession() {
         if (isSessionStopped) return
         isSessionStopped = true
@@ -582,6 +596,7 @@ object Encatch {
         storage.setSessionStopped()
     }
 
+    @Throws(Exception::class)
     suspend fun resetUser() {
         userNameState?.let { name ->
             storage.clearUserId(name)
