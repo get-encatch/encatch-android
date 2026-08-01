@@ -56,6 +56,7 @@ dependencies {
     implementation(project(":android"))
     implementation(project(":core"))
     implementation(project(":compose-sample"))
+    implementation(project(":kmp-sample"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

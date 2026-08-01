@@ -25,6 +25,10 @@
             android:name="com.encatch.composesample.ComposeMultiplatformSampleActivity"
             android:exported="true" />
 
+        <activity
+            android:name="com.encatch.kmpsample.KmpSampleMainActivity"
+            android:exported="true" />
+
     </application>
 
 </manifest>
