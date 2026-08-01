@@ -5,7 +5,9 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.app.Dialog
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -50,9 +52,36 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     private var maxDialogHeightPx = Int.MAX_VALUE
     private var contentHeightPx = 0
     private var currentPosition = "middle-center"
+    private var currentPayload: ShowFormPayload? = null
+    private var currentAppearanceProperties: JsonObject? = null
+    private var currentCorners = CornerStyle.SOFT
+    private var currentDarkOverlay = false
+    private var lastSystemScheme: String? = null
     private var skeleton: FormWebViewSkeleton? = null
     private var closeAnimator: Animator? = null
     private val redirectBrowser = RedirectBrowser(context)
+
+    /**
+     * Observes live system light/dark-mode changes while a form is open, mirroring RN's
+     * `Appearance.addChangeListener` — re-resolves theme-derived colors without a full
+     * re-layout. Registered on the application context so it fires regardless of whether the
+     * host Activity declares `android:configChanges="uiMode"`.
+     */
+    private val systemThemeCallbacks = object : ComponentCallbacks2 {
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            val scheme = resolveSystemColorScheme(newConfig.uiMode)
+            if (scheme == lastSystemScheme) return
+            lastSystemScheme = scheme
+            val payload = currentPayload ?: return
+            if (!isShowing) return
+            val activeMode = applyThemeColors(payload)
+            if (skeleton != null) showSkeleton(activeMode)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun onLowMemory() = Unit
+        override fun onTrimMemory(level: Int) = Unit
+    }
 
     private val bridge = FormWebViewBridge(
         scope = scope,
@@ -98,6 +127,9 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
             insets
         }
 
+        lastSystemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
+
         setOnDismissListener {
             Encatch.setFormVisible(false)
         }
@@ -106,6 +138,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     fun present(payload: ShowFormPayload) {
         closeAnimator?.cancel()
         webViewInstanceKey += 1
+        currentPayload = payload
         val (activeMode, darkOverlay) = applyAppearance(payload)
         showSkeleton(activeMode)
         applyBlurBehind(enabled = !darkOverlay)
@@ -228,6 +261,38 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val size = resolveInAppSizeFromFormConfig(appearanceProperties)
         val darkOverlay = resolveDarkOverlayFromFormConfig(appearanceProperties)
 
+        currentAppearanceProperties = appearanceProperties
+        currentCorners = corners
+        currentDarkOverlay = darkOverlay
+        currentPosition = position
+        popupShell.elevation = if (isFullCenter) 0f else dpToPxInt(20, density).toFloat()
+        val activeMode = applyThemeColors(payload)
+
+        val gravity = if (isFullCenter) Gravity.FILL else getPositionLayout(position).gravity
+        (popupShell.layoutParams as FrameLayout.LayoutParams).gravity = gravity
+        popupShell.layoutParams = (popupShell.layoutParams as FrameLayout.LayoutParams).apply {
+            width = if (isFullCenter) ViewGroup.LayoutParams.MATCH_PARENT else dpToPxInt(resolveInAppMaxWidthDp(size, position, screenWidthDp), density)
+        }
+
+        val maxHeightFraction = resolveMaxDialogHeightFraction(appearanceProperties)
+        maxDialogHeightPx = if (isFullCenter) screenHeightPx else max((screenHeightPx * maxHeightFraction).roundToInt(), dpToPxInt(100, density))
+        contentHeightPx = 0
+        isFullHeightOverlay = false
+
+        return activeMode to darkOverlay
+    }
+
+    /**
+     * Resolves and applies theme-derived colors only (background/overlay), without touching
+     * position/size/height layout state. Called on initial [applyAppearance] and again whenever
+     * [systemThemeCallbacks] observes a live system light/dark-mode change while the form is open.
+     */
+    private fun applyThemeColors(payload: ShowFormPayload, position: String = currentPosition): String {
+        val density = context.resources.displayMetrics.density
+        val appearanceProperties = currentAppearanceProperties
+        val corners = currentCorners
+        val darkOverlay = currentDarkOverlay
+
         val systemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
         val shareableMode = appearanceProperties?.get("featureSettings")?.let { it as? JsonObject }
             ?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
@@ -244,33 +309,19 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val overlayArgb = parseCssColorToArgb(overlayColorStr, Color.TRANSPARENT)
 
         val radii = getBorderRadii(position, corners)
-        val radiiPxArray = floatArrayOf(
-            dpToPxInt(radii.topLeftDp, density).toFloat(), dpToPxInt(radii.topLeftDp, density).toFloat(),
-            dpToPxInt(radii.topRightDp, density).toFloat(), dpToPxInt(radii.topRightDp, density).toFloat(),
-            dpToPxInt(radii.bottomRightDp, density).toFloat(), dpToPxInt(radii.bottomRightDp, density).toFloat(),
-            dpToPxInt(radii.bottomLeftDp, density).toFloat(), dpToPxInt(radii.bottomLeftDp, density).toFloat(),
-        )
         popupShell.background = GradientDrawable().apply {
             setColor(backgroundArgb)
-            cornerRadii = radiiPxArray
+            cornerRadii = floatArrayOf(
+                dpToPxInt(radii.topLeftDp, density).toFloat(), dpToPxInt(radii.topLeftDp, density).toFloat(),
+                dpToPxInt(radii.topRightDp, density).toFloat(), dpToPxInt(radii.topRightDp, density).toFloat(),
+                dpToPxInt(radii.bottomRightDp, density).toFloat(), dpToPxInt(radii.bottomRightDp, density).toFloat(),
+                dpToPxInt(radii.bottomLeftDp, density).toFloat(), dpToPxInt(radii.bottomLeftDp, density).toFloat(),
+            )
         }
-        popupShell.elevation = if (isFullCenter) 0f else dpToPxInt(20, density).toFloat()
-
         overlayRoot.setBackgroundColor(overlayArgb)
+        webView.setBackgroundColor(Color.TRANSPARENT)
 
-        val gravity = if (isFullCenter) Gravity.FILL else getPositionLayout(position).gravity
-        (popupShell.layoutParams as FrameLayout.LayoutParams).gravity = gravity
-        popupShell.layoutParams = (popupShell.layoutParams as FrameLayout.LayoutParams).apply {
-            width = if (isFullCenter) ViewGroup.LayoutParams.MATCH_PARENT else dpToPxInt(resolveInAppMaxWidthDp(size, position, screenWidthDp), density)
-        }
-
-        val maxHeightFraction = resolveMaxDialogHeightFraction(appearanceProperties)
-        maxDialogHeightPx = if (isFullCenter) screenHeightPx else max((screenHeightPx * maxHeightFraction).roundToInt(), dpToPxInt(100, density))
-        contentHeightPx = 0
-        isFullHeightOverlay = false
-        currentPosition = position
-
-        return activeMode to darkOverlay
+        return activeMode
     }
 
     private fun applyHeight(heightPx: Int) {
@@ -293,9 +344,11 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     override fun dismiss() {
         super.dismiss()
         bridge.setFormPayload(null)
+        currentPayload = null
         skeleton?.let { popupShell.removeView(it) }
         skeleton = null
         closeAnimator = null
         applyBlurBehind(enabled = false)
+        context.applicationContext.unregisterComponentCallbacks(systemThemeCallbacks)
     }
 }

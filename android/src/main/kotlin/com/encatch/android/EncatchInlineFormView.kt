@@ -1,6 +1,8 @@
 package com.encatch.android
 
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
@@ -70,6 +72,33 @@ class EncatchInlineFormView @JvmOverloads constructor(
     private var overlayActive = false
     private val redirectBrowser by lazy { RedirectBrowser(context) }
 
+    private var currentPayload: ShowFormPayload? = null
+    private var lastSystemScheme: String? = null
+
+    /** Observes live system light/dark-mode changes while a form is active — see EncatchFormDialog's twin. */
+    private val systemThemeCallbacks = object : ComponentCallbacks2 {
+        override fun onConfigurationChanged(newConfig: Configuration) {
+            val scheme = resolveSystemColorScheme(newConfig.uiMode)
+            if (scheme == lastSystemScheme) return
+            lastSystemScheme = scheme
+            val payload = currentPayload ?: return
+            val target = webView ?: return
+            val activeMode = applyInlineAppearance(payload, target)
+            loadingOverlay?.let {
+                removeView(it)
+                val replacement = FormWebViewSkeleton(context, activeMode).apply {
+                    layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+                }
+                loadingOverlay = replacement
+                addView(replacement)
+            }
+        }
+
+        @Suppress("DEPRECATION")
+        override fun onLowMemory() = Unit
+        override fun onTrimMemory(level: Int) = Unit
+    }
+
     init {
         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0)
     }
@@ -78,6 +107,8 @@ class EncatchInlineFormView @JvmOverloads constructor(
         super.onAttachedToWindow()
         slotId = InlineSlotRegistry.registerInlineSlot(formId)
         unsubscribe = EncatchInternalEmitter.on { event -> handleInternalEvent(event) }
+        lastSystemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
     }
 
     override fun onDetachedFromWindow() {
@@ -86,6 +117,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         slotId = null
         unsubscribe?.invoke()
         unsubscribe = null
+        context.applicationContext.unregisterComponentCallbacks(systemThemeCallbacks)
 
         if (bridge?.formPayload != null) {
             Encatch.setFormVisible(false)
@@ -119,6 +151,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         contentHeightPx = 0
         overlayFrozenHeightPx = null
         overlayActive = false
+        currentPayload = payload
 
         val newWebView = EncatchWebView(context)
         val newBridge = FormWebViewBridge(
@@ -204,6 +237,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         contentHeightPx = 0
         overlayFrozenHeightPx = null
         overlayActive = false
+        currentPayload = null
         removeAllViews()
         applyHeightPx(0)
     }
