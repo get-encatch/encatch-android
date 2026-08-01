@@ -55,6 +55,7 @@ kotlin {
 dependencies {
     implementation(project(":android"))
     implementation(project(":core"))
+    implementation(project(":compose-sample"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

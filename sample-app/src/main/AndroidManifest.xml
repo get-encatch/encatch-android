@@ -21,6 +21,10 @@
             android:name=".ComposeMainActivity"
             android:exported="true" />
 
+        <activity
+            android:name="com.encatch.composesample.ComposeMultiplatformSampleActivity"
+            android:exported="true" />
+
     </application>
 
 </manifest>
