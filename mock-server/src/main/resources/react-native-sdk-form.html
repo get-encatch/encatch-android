@@ -57,8 +57,19 @@
         }, 200);
     });
 
+    function reportHeight() {
+        postToNative({ type: "form:resize", formId: formId, data: { height: document.body.scrollHeight } });
+    }
+
     window.addEventListener("load", function () {
         postToNative({ type: "form:ready", formId: formId, data: {} });
+        // A real hosted form page reports its content height so the native modal/inline
+        // container can size itself — this mock page needs to as well, or the native side's
+        // height starts (and stays) at 0.
+        reportHeight();
+        if (window.ResizeObserver) {
+            new ResizeObserver(reportHeight).observe(document.body);
+        }
     });
 </script>
 </body>
