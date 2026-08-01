@@ -63,6 +63,20 @@ fun getBackgroundColor(themeJson: String?, fallback: String): String {
 /** Resolves "dark"/"light" from the platform's current system appearance flag. */
 fun resolveSystemColorScheme(isSystemDark: Boolean): String = if (isSystemDark) "dark" else "light"
 
+/**
+ * Reads `appearanceProperties.featureSettings.shareableMode`. Exposed as a standalone function
+ * (rather than expecting UI layers to navigate the [JsonObject] themselves) so JSON-shape
+ * knowledge stays in `:core` — Kotlin/Native-bridged Swift callers in particular would otherwise
+ * need to downcast/navigate `JsonElement`/`JsonObject`/`JsonPrimitive` by hand.
+ */
+fun extractShareableMode(appearanceProperties: JsonObject?): String? =
+    (appearanceProperties?.get("featureSettings") as? JsonObject)?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
+
+/** Reads `appearanceProperties.themes[mode].theme` — see [extractShareableMode] for why this is a function, not inline JSON navigation. */
+fun extractThemeJsonForMode(appearanceProperties: JsonObject?, mode: String): String? =
+    (appearanceProperties?.get("themes") as? JsonObject)?.get(mode)?.let { (it as? JsonObject)?.get("theme") }
+        ?.let { (it as? JsonPrimitive)?.contentOrNull }
+
 /** Resolves which theme mode ("light" | "dark") is active for the form. */
 fun resolveActiveMode(shareableMode: String?, systemScheme: String): String = when (shareableMode) {
     "light" -> "light"

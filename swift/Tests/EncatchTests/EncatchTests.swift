@@ -1,6 +1,7 @@
 import XCTest
 @testable import Encatch
 import EncatchCore
+import UIKit
 
 final class EncatchTests: XCTestCase {
     func testSharedInstanceIsReachable() {
@@ -56,5 +57,58 @@ final class EncatchTests: XCTestCase {
                 return XCTFail("expected .notInitialized, got \(encatchError)")
             }
         }
+    }
+
+    /// Drives the whole native UI stack (WKWebView + JS-bridge shim creation, appearance/theme
+    /// resolution, layout constraints, entrance animation) with a synthetic payload — no live
+    /// network/backend involved, per this project's fully-offline testing rule. Doesn't verify
+    /// the hosted form page actually renders (that needs a live URL), but proves nothing in the
+    /// native chrome crashes or fails to lay out when driven with real data shapes.
+    @MainActor
+    func testModalFormViewControllerPresentsWithSyntheticPayloadWithoutCrashing() async throws {
+        let hostWindow = UIWindow(frame: UIScreen.main.bounds)
+        let hostController = UIViewController()
+        hostWindow.rootViewController = hostController
+        hostWindow.makeKeyAndVisible()
+
+        let formConfig = ShowFormResponse(
+            feedbackConfigurationId: "test-config",
+            feedbackIdentifier: nil,
+            triggerType: TriggerType.manual,
+            formConfiguration: nil,
+            questionnaireFields: nil,
+            otherConfigurationProperties: nil,
+            appearanceProperties: nil,
+            partialResponseEnabled: nil,
+            contact: nil,
+            projectI18nFileUrl: nil,
+            pingAgainIn: nil,
+            pingOnNextPageVisit: nil,
+            feedbackTransactions: nil,
+        )
+        let payload = ShowFormPayload(
+            formId: "test-form",
+            formConfig: formConfig,
+            resetMode: ResetMode.always,
+            triggerType: TriggerType.manual,
+            prefillResponses: [:],
+            locale: nil,
+            theme: EncatchTheme.light.kotlin,
+            context: nil,
+            presentation: "modal",
+            inlineSlotId: nil,
+        )
+
+        let controller = EncatchFormViewController()
+        let presented = expectation(description: "modal presented")
+        controller.present(payload: payload, from: hostController)
+
+        // present(from:) itself calls UIKit's async present(_:animated:completion:); give the
+        // run loop a beat to actually finish presenting before asserting.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { presented.fulfill() }
+        await fulfillment(of: [presented], timeout: 2)
+
+        XCTAssertNotNil(hostController.presentedViewController)
+        controller.dismiss(animated: false)
     }
 }
