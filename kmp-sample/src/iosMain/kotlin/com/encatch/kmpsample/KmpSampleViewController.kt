@@ -22,55 +22,64 @@ import platform.UIKit.UIViewController
  * would just be redundant WebView-porting effort for no new coverage.
  */
 @Suppress("unused")
-fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController {
-    val controller = UIViewController()
-    val scope = CoroutineScope(Dispatchers.Main)
+fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController = KmpRootViewController(mockServerBaseUrl)
 
-    val statusLabel = UILabel().apply {
+/**
+ * `UIControl.addTarget` doesn't retain its target — a bare `ClosureTarget` created inline gets
+ * deallocated right after `addTarget` returns, silently dropping the tap handler (found via a real
+ * tap doing nothing on-device, not a compile/type error). This subclass holds the [targets] list
+ * so they live as long as the controller does.
+ */
+private class KmpRootViewController(mockServerBaseUrl: String?) : UIViewController(nibName = null, bundle = null) {
+    private val targets = mutableListOf<ClosureTarget>()
+    private val scope = CoroutineScope(Dispatchers.Main)
+    private val statusLabel = UILabel().apply {
         text = "Not initialized"
         numberOfLines = 0
     }
 
-    fun button(title: String, onTap: () -> Unit): UIButton {
-        val button = UIButton.buttonWithType(platform.UIKit.UIButtonTypeSystem)
-        button.setTitle(title, forState = platform.UIKit.UIControlStateNormal)
-        button.backgroundColor = UIColor(red = 0.35, green = 0.30, blue = 0.55, alpha = 1.0)
-        button.setTitleColor(UIColor.whiteColor, forState = platform.UIKit.UIControlStateNormal)
-        button.layer.cornerRadius = 8.0
-        button.addTarget(
-            target = ClosureTarget(onTap),
-            action = platform.objc.sel_registerName("invoke"),
-            forControlEvents = platform.UIKit.UIControlEventTouchUpInside,
+    init {
+        fun button(title: String, onTap: () -> Unit): UIButton {
+            val button = UIButton.buttonWithType(platform.UIKit.UIButtonTypeSystem)
+            button.setTitle(title, forState = platform.UIKit.UIControlStateNormal)
+            button.backgroundColor = UIColor(red = 0.35, green = 0.30, blue = 0.55, alpha = 1.0)
+            button.setTitleColor(UIColor.whiteColor, forState = platform.UIKit.UIControlStateNormal)
+            button.layer.cornerRadius = 8.0
+            val target = ClosureTarget(onTap)
+            targets.add(target)
+            button.addTarget(
+                target = target,
+                action = platform.objc.sel_registerName("invoke"),
+                forControlEvents = platform.UIKit.UIControlEventTouchUpInside,
+            )
+            return button
+        }
+
+        val initButton = button("Init SDK") {
+            scope.launch { statusLabel.text = SampleAppController.initSdk(mockServerBaseUrl) }
+        }
+        val modalButton = button("Show modal form") {
+            scope.launch { statusLabel.text = SampleAppController.showModalForm() }
+        }
+        val inlineButton = button("Show inline form") {
+            scope.launch { statusLabel.text = SampleAppController.showInlineForm() }
+        }
+
+        val stack = UIStackView(arrangedSubviews = listOf(statusLabel, initButton, modalButton, inlineButton))
+        stack.axis = platform.UIKit.UILayoutConstraintAxisVertical
+        stack.spacing = 16.0
+        stack.setTranslatesAutoresizingMaskIntoConstraints(false)
+
+        view.backgroundColor = UIColor.whiteColor
+        view.addSubview(stack)
+        NSLayoutConstraint.activateConstraints(
+            listOf(
+                stack.leadingAnchor.constraintEqualToAnchor(view.leadingAnchor, constant = 24.0),
+                stack.trailingAnchor.constraintEqualToAnchor(view.trailingAnchor, constant = -24.0),
+                stack.topAnchor.constraintEqualToAnchor(view.safeAreaLayoutGuide.topAnchor, constant = 24.0),
+            ),
         )
-        return button
     }
-
-    val initButton = button("Init SDK") {
-        scope.launch { statusLabel.text = SampleAppController.initSdk(mockServerBaseUrl) }
-    }
-    val modalButton = button("Show modal form") {
-        scope.launch { statusLabel.text = SampleAppController.showModalForm() }
-    }
-    val inlineButton = button("Show inline form") {
-        scope.launch { statusLabel.text = SampleAppController.showInlineForm() }
-    }
-
-    val stack = UIStackView(arrangedSubviews = listOf(statusLabel, initButton, modalButton, inlineButton))
-    stack.axis = platform.UIKit.UILayoutConstraintAxisVertical
-    stack.spacing = 16.0
-    stack.setTranslatesAutoresizingMaskIntoConstraints(false)
-
-    controller.view.backgroundColor = UIColor.whiteColor
-    controller.view.addSubview(stack)
-    NSLayoutConstraint.activateConstraints(
-        listOf(
-            stack.leadingAnchor.constraintEqualToAnchor(controller.view.leadingAnchor, constant = 24.0),
-            stack.trailingAnchor.constraintEqualToAnchor(controller.view.trailingAnchor, constant = -24.0),
-            stack.topAnchor.constraintEqualToAnchor(controller.view.safeAreaLayoutGuide.topAnchor, constant = 24.0),
-        ),
-    )
-
-    return controller
 }
 
 /** Bridges a Kotlin closure to a UIKit target-action selector (`UIButton.addTarget` needs an ObjC object). */

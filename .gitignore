@@ -12,3 +12,5 @@ ios-sample/*.xcodeproj/
 ios-sample/Sources/Info.plist
 ios-compose-sample/*.xcodeproj/
 ios-compose-sample/Sources/Info.plist
+ios-kmp-sample/*.xcodeproj/
+ios-kmp-sample/Sources/Info.plist
