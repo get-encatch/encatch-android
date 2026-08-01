@@ -18,14 +18,44 @@ Plan file (still accurate, was written for this phase): `/Users/godwin/.claude/p
 1. Android native Views — **done**
 2. Android Jetpack Compose (wraps `:android` via `AndroidView`) — **done**
 3. iOS native Swift/UIKit (wraps the `swift/` package) — **done**
-4. Compose Multiplatform host, Android+iOS — **not started**. Interop-only: wrap the *existing*
-   native components (`AndroidView` on Android, `UIKitViewController` on iOS wrapping
-   `EncatchFormViewController`/`EncatchInlineFormView`) — no WebView reimplementation, no new
-   third-party dependency, low risk.
+4. Compose Multiplatform host, Android+iOS — **done**. Android: interop wraps `:android`'s
+   `EncatchInlineFormView`/`EncatchFormDialog` via `AndroidView`, same underlying components as
+   variant 2. iOS: since linking `swift/`'s `EncatchCore.xcframework` alongside `:compose-sample`'s
+   own XCFramework would statically embed `:core` twice (see "Real architectural finding" below),
+   the iOS inline form is a **native Kotlin/Native WebKit port** written directly in
+   `compose-sample`'s iosMain (`EncatchNativeInlineFormView.kt`) — reuses `:core`'s
+   `FormWebViewBridge`/appearance logic unchanged, only the raw WKWebView/UIView plumbing is new.
+   Ships as a standalone `ios-compose-sample/` app (no `swift/` dependency) plus a Compose screen
+   embedded in `sample-app` on Android.
 5. KMP host sample app, Android+iOS — **not started**. A sample app that's itself a Kotlin
    Multiplatform project (not just single-platform apps depending on KMP `:core`), validating the
    real Gradle/XCFramework consumption path a customer's own KMP app would use.
 6. One-command orchestrator script tying all 5 together — **not started**.
+
+## Real architectural finding from Variant 4 (iOS) — read before touching Variant 5
+
+Linking **two separately-compiled Kotlin/Native frameworks that each depend on `:core`** into the
+same iOS app produces **two disconnected copies of every `:core` singleton** (`Encatch`,
+`EncatchInternalEmitter`, `InlineSlotRegistry`, etc.) — Kotlin/Native statically embeds a module's
+compiled code into every binary that depends on it, there's no cross-framework sharing like a JVM
+classloader gives you on Android. Concretely: `swift/`'s `EncatchCore.xcframework` and
+`:compose-sample`'s `EncatchComposeSample.xcframework` (which also depends on `:core`) each contain
+their own `Encatch` object. Calling `Encatch.init()`/`showForm()` through one copy does not notify
+listeners registered against the other — this manifested as "Init SDK" reporting `true` while the
+modal/inline form silently never appeared, no crash, no error, just nothing (found via live
+Simulator testing, not something a unit test would catch).
+
+**Implication for Variant 5 (KMP host sample app)**: if the KMP sample app's iOS target links
+`:core` directly (normal KMP dependency) **and also** links `swift/`'s XCFramework for UI, the same
+duplication will happen. Prefer depending on `:core` only (calling the SDK's non-UI API directly,
+which is the actual point of variant 5) and either skip native UI entirely or, if UI is wanted,
+follow variant 4's approach — a self-contained UI written against `:core` in the *same* compiled
+Kotlin/Native binary, not a second separately-compiled framework that happens to also embed `:core`.
+
+**General rule**: an iOS app should link **at most one** Kotlin/Native framework that embeds
+`:core`. Real customers integrating this SDK would only pick one UI strategy per app anyway (plain
+Swift *or* Compose Multiplatform, not both) — this constraint only bit us because the test harness
+tried to demonstrate multiple variants side-by-side in one app.
 
 ## Task list state (if TaskList tool is available, these are the live tracked tasks)
 
@@ -35,20 +65,24 @@ Plan file (still accurate, was written for this phase): `/Users/godwin/.claude/p
 | 15 | Variant 1: Android Views | ✅ done |
 | 16 | Variant 2: Android Compose | ✅ done |
 | 17 | Variant 3: iOS native Swift | ✅ done |
-| 18 | Variant 4: Compose Multiplatform interop sample | ⬜ not started |
+| 18 | Variant 4: Compose Multiplatform interop sample (Android + iOS) | ✅ done |
 | 19 | Variant 5: KMP host sample app | ⬜ not started |
 | 20 | Orchestrator script + full verification | ⬜ not started |
 
 ## Commits so far (this phase), newest first
 
 ```
+5de9438 Variant 4 (iOS): native Kotlin/Native WebView port + standalone sample app
+4298dd9 Add session handoff doc for variant-testing phase
 dd939c0 Include form:resize in mock hosted-form page (missed in previous commit)
 c3c6ed0 Variant 3: commit real ios-sample project; fix 3 real bugs it found
 40539b2 Variant 2: Android Jetpack Compose sample screen + screenshot test
 2890bb8 Variant 1: Android Views screenshot test against :mock-server
 c519a34 Add :mock-server module for offline/deterministic variant testing
 ```
-All pushed? **No** — not yet pushed to `origin/main`. Working tree is clean as of now.
+(Variant 4's Android-only commit `15c6d27` sits between `4298dd9` and `5de9438`.)
+
+All pushed to `origin/main` as of `5de9438`. Working tree is clean.
 
 ## Critical technical facts for continuing
 
@@ -101,6 +135,42 @@ All pushed? **No** — not yet pushed to `origin/main`. Working tree is clean as
 - `ios-sample/UITests/EncatchSampleUITests.swift` — XCUITest, screenshots via `XCTAttachment`
   (`add(attachment)`), inspect via the resulting `.xcresult` bundle or Xcode's Test Navigator.
 
+### Variant 4 (`:compose-sample/`, `ios-compose-sample/`)
+- `:compose-sample` is a real KMP module: `androidTarget()` + `iosArm64()`/`iosSimulatorArm64()`,
+  `org.jetbrains.compose` plugin (version pinned in `gradle/libs.versions.toml` as
+  `compose-multiplatform`, must stay compatible with the root `kotlin` version — check
+  compose-multiplatform's release notes if bumping Kotlin). commonMain depends on `:core` and
+  `compose.{runtime,foundation,material3,ui}`; `EncatchInlineFormHost` is `expect`/`actual`.
+- Android actual (`EncatchInlineFormHost.android.kt`): plain `AndroidView` wrapping `:android`'s
+  `EncatchInlineFormView` — trivial, works first try (single JVM process, no singleton issue).
+- iOS actual (`EncatchInlineFormHost.ios.kt` + `EncatchNativeInlineFormView.kt`): `UIKitView`
+  wrapping a **from-scratch Kotlin/Native port** of `swift/`'s `EncatchInlineFormView`/`EncatchWebView`
+  (see "Real architectural finding" above for *why* it couldn't just reuse `swift/`). Reuses
+  `:core`'s `FormWebViewBridge` and all appearance/theme helpers directly (pure Kotlin, no ObjC
+  bridging needed since it's Kotlin calling Kotlin within the same binary) — only the WKWebView/
+  UIView/WKNavigationDelegate/WKScriptMessageHandler plumbing is new. `@file:OptIn(ExperimentalForeignApi::class)`
+  needed for `CValue`/`useContents`. `CGRectMake(0.0,0.0,0.0,0.0)` used instead of `CGRectZero`
+  (the latter isn't directly a `CValue<CGRect>` in this Kotlin/Native version).
+- `:compose-sample:assembleEncatchComposeSampleDebugXCFramework` produces
+  `compose-sample/build/XCFrameworks/debug/EncatchComposeSample.xcframework`.
+- **Gotcha**: Compose Multiplatform's iOS UIKit target aborts the process
+  (`PlistSanityCheck`/`SIGABRT`) on iPhone unless the app's Info.plist has
+  `CADisableMinimumFrameDurationOnPhone = true`. Both `ios-compose-sample/project.yml` needs this
+  in `info.properties` (already added) — copy this into any future iOS host app that embeds a
+  `ComposeUIViewController`.
+- **Gotcha**: don't give the Xcode app target the same name as the linked framework module
+  (`EncatchComposeSample` was tried for both) — Swift silently drops the `import` with "ignoring
+  import" and the framework's symbols become unresolvable. Target is named `EncatchComposeSampleApp`.
+- **Gotcha**: after any project.yml/target-name change, `rm -rf ~/Library/Developer/Xcode/DerivedData/EncatchComposeSample-*`
+  before rebuilding — Xcode's module cache can keep serving a stale/broken parse of the framework
+  module from an earlier failed build, causing "cannot find X in scope" errors that look like a
+  real symbol-visibility bug but are just a stale cache.
+- `ios-compose-sample/build.sh` — same "target a specific simulator UDID" pattern as `ios-sample/build.sh`.
+- Android side wired into `sample-app` as a third launcher activity
+  (`com.encatch.composesample.ComposeMultiplatformSampleActivity`), with its own screenshot test
+  `ComposeMultiplatformScreenshotFlowTest.kt` following the exact same manual install/instrument/pull
+  dance as variants 1 & 2.
+
 ### Three real bugs found + fixed during Variant 3 (do not reintroduce)
 
 1. **Main-thread violation** (`swift/Sources/Encatch/UI/EncatchFormHost.swift`,
@@ -144,23 +214,20 @@ not just error-filtered output.
 
 ## Immediate next steps (in order)
 
-1. **Push the 5 commits above to `origin/main`** if the user wants that (wasn't asked yet this
-   phase — last explicit push was before this phase started).
-2. **Variant 4** (Compose Multiplatform interop, Android+iOS): new `:compose-sample` module —
-   `kotlin("multiplatform")` + `org.jetbrains.compose` plugin, `androidTarget()` +
-   `iosArm64()`/`iosSimulatorArm64()`, commonMain depends on `:core`. `AndroidView` wraps
-   `EncatchFormDialog`/`EncatchInlineFormView` (Android actual); `UIKitViewController` wraps
-   `EncatchFormViewController`/`EncatchInlineFormView` from `swift/` (iOS actual). Given the 3 bugs
-   just found, budget time for similar surprises — verify with real device runs, not just
-   compilation, same as variant 3.
-3. **Variant 5** (KMP host sample app): new `kmp-sample/` — minimal KMP application project,
+1. **Variant 5** (KMP host sample app): new `kmp-sample/` — minimal KMP application project,
    shared `commonMain` calling `:core`'s `Encatch` API directly, thin `androidMain`/`iosMain` entry
-   points.
-4. **Orchestrator** (`scripts/test-all-variants.sh`): start mock-server, boot simulator/emulator,
+   points. Read the "Real architectural finding" section above before adding any iOS UI to this —
+   don't link `swift/` or `:compose-sample`'s XCFramework alongside a direct `:core` dependency.
+2. **Orchestrator** (`scripts/test-all-variants.sh`): start mock-server, boot simulator/emulator,
    build+install+drive+screenshot all 5 variants (using the manual install/instrument/pull dance
-   for Android, `xcodebuild test` for iOS), summarize pass/fail, tear down.
-5. Re-run full regression (`./gradlew build`, `swift test` via `xcodebuild test -scheme Encatch`)
+   for Android — see Variant 1&2 gotcha above — and `xcodebuild test`/`build.sh` scripts for iOS),
+   summarize pass/fail, tear down. Variant 4 has two iOS build scripts to wire in:
+   `ios-sample/build.sh` (native Swift) and `ios-compose-sample/build.sh` (Compose Multiplatform) —
+   they must NOT both be built into the same running app (see architectural finding above).
+3. Re-run full regression (`./gradlew build`, `swift test` via `xcodebuild test -scheme Encatch`)
    before each commit, as has been done throughout.
+4. Decide whether/how to remove `HANDOFF.md` once this phase wraps — it's a working note, not
+   permanent repo documentation.
 
 ## Housekeeping reminders
 - **Never add a `Co-Authored-By: Claude` trailer to commits** (standing user instruction).
