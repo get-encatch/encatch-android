@@ -151,7 +151,7 @@ public final class EncatchInlineFormView: UIView {
     }
 
     private func applyInlineAppearance(payload: ShowFormPayload) {
-        let appearanceProperties = payload.formConfig.appearanceProperties as? [String: Kotlinx_serialization_jsonJsonElement]
+        let appearanceProperties = FormAppearanceKt.asJsonObjectOrNull(element: payload.formConfig.appearanceProperties)
         let corners = FormAppearanceKt.resolveCornersFromFormConfig(appearanceProperties: appearanceProperties)
 
         let systemScheme = FormThemeColorKt.resolveSystemColorScheme(isSystemDark: isSystemDark(traitCollection))

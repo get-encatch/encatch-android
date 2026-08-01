@@ -1,5 +1,6 @@
 package com.encatch.core
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -10,6 +11,16 @@ import kotlinx.serialization.json.jsonObject
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+/**
+ * Downcasts a [JsonElement] to [JsonObject], returning null if it isn't one. Exists because
+ * Kotlin/Native-bridged Swift callers can't do this themselves: `JsonElement`'s concrete
+ * subclasses (`JsonObject`, `JsonPrimitive`, ...) aren't separately exported, so an `as?` cast
+ * from the bridged `JsonElement` type to a Dictionary type is a compile-time-guaranteed failure
+ * on the Swift side — the downcast has to happen here, in Kotlin, where `JsonObject` is a real
+ * runtime-checkable subtype.
+ */
+fun asJsonObjectOrNull(element: JsonElement?): JsonObject? = element as? JsonObject
 
 /**
  * Appearance/layout resolution, ported from `form-webview-helpers.ts`. Pure functions operating

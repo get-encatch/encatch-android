@@ -110,7 +110,7 @@ public final class EncatchFormViewController: UIViewController {
     private func applyAppearance(payload: ShowFormPayload) -> (String, Bool) {
         let screenSize = UIScreen.main.bounds.size
         let screenWidthDp = Int32(screenSize.width)
-        let appearanceProperties = payload.formConfig.appearanceProperties as? [String: Kotlinx_serialization_jsonJsonElement]
+        let appearanceProperties = FormAppearanceKt.asJsonObjectOrNull(element: payload.formConfig.appearanceProperties)
 
         let rawPosition = FormAppearanceKt.resolveSelectedPositionFromFormConfig(appearanceProperties: appearanceProperties)
         let position = FormAppearanceKt.normalizePosition(position: rawPosition, screenWidthDp: screenWidthDp)
@@ -169,7 +169,7 @@ public final class EncatchFormViewController: UIViewController {
     /// called on initial presentation and again from `traitCollectionDidChange`.
     @discardableResult
     private func applyThemeColorsReturningMode(payload: ShowFormPayload, position: String) -> (String, Bool) {
-        let appearanceProperties = payload.formConfig.appearanceProperties as? [String: Kotlinx_serialization_jsonJsonElement]
+        let appearanceProperties = FormAppearanceKt.asJsonObjectOrNull(element: payload.formConfig.appearanceProperties)
         let corners = FormAppearanceKt.resolveCornersFromFormConfig(appearanceProperties: appearanceProperties)
         let darkOverlay = FormAppearanceKt.resolveDarkOverlayFromFormConfig(appearanceProperties: appearanceProperties)
 
