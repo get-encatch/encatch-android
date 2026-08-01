@@ -17,6 +17,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ComposeMainActivity"
+            android:exported="true" />
+
     </application>
 
 </manifest>
