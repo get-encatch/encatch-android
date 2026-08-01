@@ -13,6 +13,20 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Overridden for automated screenshot testing: -PmockServerBaseUrl=http://10.0.2.2:8089
+        // points the sample app at :mock-server instead of the real backend. Empty by default —
+        // the manual "Init SDK" button keeps using EncatchConfig's real production defaults.
+        buildConfigField(
+            "String",
+            "MOCK_SERVER_BASE_URL",
+            "\"${project.findProperty("mockServerBaseUrl") ?: ""}\"",
+        )
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
@@ -40,4 +54,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.kotlinx.coroutines.core)
+
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.espresso.core)
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }

@@ -30,7 +30,13 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.initButton).setOnClickListener {
             lifecycleScope.launch {
-                Encatch.init("YOUR_API_KEY", com.encatch.core.EncatchConfig(debugMode = true))
+                val mockBaseUrl = BuildConfig.MOCK_SERVER_BASE_URL.takeIf { it.isNotEmpty() }
+                val config = if (mockBaseUrl != null) {
+                    com.encatch.core.EncatchConfig(apiBaseUrl = mockBaseUrl, webHost = mockBaseUrl, debugMode = true)
+                } else {
+                    com.encatch.core.EncatchConfig(debugMode = true)
+                }
+                Encatch.init("YOUR_API_KEY", config)
                 statusText.text = "Initialized: ${Encatch.isInitialized}, deviceId=${Encatch.deviceId}"
             }
         }
