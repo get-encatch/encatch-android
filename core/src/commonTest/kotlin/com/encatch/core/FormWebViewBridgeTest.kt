@@ -1,27 +1,16 @@
-package com.encatch.android
+package com.encatch.core
 
-import com.encatch.core.Encatch
-import com.encatch.core.RedirectOpener
-import com.encatch.core.ResetMode
-import com.encatch.core.SDKMessage
-import com.encatch.core.SDKMessageType
-import com.encatch.core.ShowFormPayload
-import com.encatch.core.ShowFormResponse
-import com.encatch.core.Theme
-import com.encatch.core.TriggerType
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import org.junit.After
-import org.junit.Before
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-@RunWith(RobolectricTestRunner::class)
+@OptIn(ExperimentalCoroutinesApi::class)
 class FormWebViewBridgeTest {
 
     private val sentMessages = mutableListOf<SDKMessage>()
@@ -31,10 +20,10 @@ class FormWebViewBridgeTest {
     private var readyCalled = false
 
     private lateinit var bridge: FormWebViewBridge
-    private val testEventCallbacks = mutableListOf<Pair<com.encatch.core.EventType, com.encatch.core.EventPayload>>()
+    private val testEventCallbacks = mutableListOf<Pair<EventType, EventPayload>>()
     private lateinit var unsubscribe: () -> Unit
 
-    @Before
+    @BeforeTest
     fun setUp() {
         sentMessages.clear()
         closedImmediate = null
@@ -57,7 +46,7 @@ class FormWebViewBridgeTest {
         )
     }
 
-    @After
+    @AfterTest
     fun tearDown() {
         unsubscribe()
     }
@@ -84,14 +73,14 @@ class FormWebViewBridgeTest {
     fun handleMessage_close_emitsEventAndCallsOnClose() {
         bridge.handleMessage("""{"type":"form:close","formId":"f1"}""")
         assertEquals(false, closedImmediate)
-        assertTrue(testEventCallbacks.any { it.first == com.encatch.core.EventType.FORM_CLOSE })
+        assertTrue(testEventCallbacks.any { it.first == EventType.FORM_CLOSE })
     }
 
     @Test
     fun handleMessage_remindMeLater_emitsEventAndCloses() {
         bridge.handleMessage("""{"type":"form:remindmelater","formId":"f1"}""")
         assertEquals(false, closedImmediate)
-        assertTrue(testEventCallbacks.any { it.first == com.encatch.core.EventType.FORM_REMIND_ME_LATER })
+        assertTrue(testEventCallbacks.any { it.first == EventType.FORM_REMIND_ME_LATER })
     }
 
     @Test

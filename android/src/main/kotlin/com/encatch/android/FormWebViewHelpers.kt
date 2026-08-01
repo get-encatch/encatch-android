@@ -17,9 +17,3 @@ internal fun buildFormWebViewUrl(
     if (presentation == "inline") builder.appendQueryParameter("presentation", "inline")
     return builder.build().toString()
 }
-
-/** Normalizes a MIME type string, mirrors `uploadMimeType` from `form-webview-helpers.ts`. */
-internal fun uploadMimeType(mimeType: String?): String {
-    val base = mimeType?.substringBefore(';')?.trim()
-    return if (base.isNullOrEmpty()) "application/octet-stream" else base
-}

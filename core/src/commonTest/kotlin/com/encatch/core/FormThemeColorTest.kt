@@ -1,11 +1,8 @@
-package com.encatch.android
+package com.encatch.core
 
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import kotlin.test.Test
 import kotlin.test.assertEquals
 
-@RunWith(RobolectricTestRunner::class)
 class FormThemeColorTest {
 
     @Test
@@ -40,6 +37,12 @@ class FormThemeColorTest {
     fun getBackgroundColor_fallsBackWhenStoredColorIsUnrenderable() {
         // --background stored as an oklch() token (shadcn default) -> can't render, use fallback.
         assertEquals("#000000", getBackgroundColor("""{"--background":"oklch(1 0 0)"}""", "#000000"))
+    }
+
+    @Test
+    fun resolveSystemColorScheme_mapsIsSystemDarkToModeString() {
+        assertEquals("dark", resolveSystemColorScheme(isSystemDark = true))
+        assertEquals("light", resolveSystemColorScheme(isSystemDark = false))
     }
 
     @Test

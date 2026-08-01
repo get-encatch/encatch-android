@@ -1,6 +1,5 @@
-package com.encatch.android
+package com.encatch.core
 
-import android.view.Gravity
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -14,8 +13,8 @@ import kotlin.math.roundToInt
 
 /**
  * Appearance/layout resolution, ported from `form-webview-helpers.ts`. Pure functions operating
- * on the form's `appearanceProperties` JSON — kept side-effect-free so they're unit-testable
- * without a device/Robolectric (aside from referencing [Gravity]'s compile-time int constants).
+ * on the form's `appearanceProperties` JSON — shared by every UI layer (`:android`, `:compose`)
+ * so position/corner/animation semantics can't drift between them.
  */
 
 // ============================================================================
@@ -36,7 +35,11 @@ data class PopupBorderRadii(
     val bottomRightDp: Int,
 )
 
-data class PositionLayout(val gravity: Int)
+enum class VerticalAnchor { TOP, CENTER, BOTTOM }
+enum class HorizontalAnchor { START, CENTER, END }
+
+/** Platform-neutral alignment — `:android` maps this to `Gravity`, `:compose` to `Alignment`. */
+data class PositionAlignment(val vertical: VerticalAnchor, val horizontal: HorizontalAnchor)
 
 data class AnimationConfig(val type: String, val txFractionPercent: Int, val tyFractionPercent: Int)
 
@@ -127,17 +130,17 @@ fun resolveInAppMaxWidthDp(size: InAppSize, position: String, screenWidthDp: Int
     return min(presetWidth, available)
 }
 
-fun getPositionLayout(position: String): PositionLayout {
-    var vertical = Gravity.CENTER_VERTICAL
-    var horizontal = Gravity.CENTER_HORIZONTAL
+fun getPositionLayout(position: String): PositionAlignment {
+    var vertical = VerticalAnchor.CENTER
+    var horizontal = HorizontalAnchor.CENTER
 
-    if (position.startsWith("top")) vertical = Gravity.TOP
-    else if (position.startsWith("bottom")) vertical = Gravity.BOTTOM
+    if (position.startsWith("top")) vertical = VerticalAnchor.TOP
+    else if (position.startsWith("bottom")) vertical = VerticalAnchor.BOTTOM
 
-    if (position.endsWith("left")) horizontal = Gravity.START
-    else if (position.endsWith("right")) horizontal = Gravity.END
+    if (position.endsWith("left")) horizontal = HorizontalAnchor.START
+    else if (position.endsWith("right")) horizontal = HorizontalAnchor.END
 
-    return PositionLayout(vertical or horizontal)
+    return PositionAlignment(vertical, horizontal)
 }
 
 /**

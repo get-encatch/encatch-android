@@ -10,7 +10,9 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.encatch.core.FormWebViewBridge
 import com.encatch.core.SDKMessage
+import com.encatch.core.buildSdkMessageInjectionScript
 
 /**
  * Wraps [android.webkit.WebView] to host the Encatch form page, mirroring `EncatchWebView.tsx`'s
@@ -71,31 +73,7 @@ class EncatchWebView(context: Context) : WebView(context) {
 
     /** Native -> WebView: injects an `sdk:*` message, mirrors `injectSDKMessage` in `useEncatchFormWebView.ts`. */
     fun sendToWebView(message: SDKMessage) {
-        val envelope = buildString {
-            append("{\"type\":\"")
-            append(message.type.wireValue)
-            append("\"")
-            if (message.dataJson != null) {
-                append(",\"data\":")
-                append(message.dataJson)
-            }
-            append("}")
-        }
-        val js = """
-            (function () {
-                var message = $envelope;
-                if (typeof window.__encatchReceiveSDKMessage === 'function') {
-                    window.__encatchReceiveSDKMessage(message);
-                    return true;
-                }
-                window.__encatchSDKMessageQueue = window.__encatchSDKMessageQueue || [];
-                window.__encatchSDKMessageQueue.push(message);
-                window.dispatchEvent(new MessageEvent('message', { data: message }));
-                return true;
-            })();
-            true;
-        """.trimIndent()
-        evaluateJavascript(js, null)
+        evaluateJavascript(buildSdkMessageInjectionScript(message), null)
     }
 
     private inner class EncatchJsInterface {

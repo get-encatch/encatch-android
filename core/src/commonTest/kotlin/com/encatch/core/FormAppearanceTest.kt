@@ -1,15 +1,12 @@
-package com.encatch.android
+package com.encatch.core
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-@RunWith(RobolectricTestRunner::class)
 class FormAppearanceTest {
 
     private fun appearance(json: String): JsonObject = Json.parseToJsonElement(json).jsonObject
@@ -116,5 +113,12 @@ class FormAppearanceTest {
         assertEquals("slide", getAnimationConfig("middle-left").type)
         assertEquals("slide", getAnimationConfig("middle-right").type)
         assertEquals("scale", getAnimationConfig("middle-center").type)
+    }
+
+    @Test
+    fun getPositionLayout_resolvesVerticalAndHorizontalAnchors() {
+        assertEquals(PositionAlignment(VerticalAnchor.TOP, HorizontalAnchor.START), getPositionLayout("top-left"))
+        assertEquals(PositionAlignment(VerticalAnchor.BOTTOM, HorizontalAnchor.END), getPositionLayout("bottom-right"))
+        assertEquals(PositionAlignment(VerticalAnchor.CENTER, HorizontalAnchor.CENTER), getPositionLayout("middle-center"))
     }
 }

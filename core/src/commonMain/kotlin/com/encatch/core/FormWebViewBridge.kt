@@ -1,28 +1,5 @@
-package com.encatch.android
+package com.encatch.core
 
-import android.util.Base64
-import com.encatch.core.Encatch
-import com.encatch.core.EncatchJson
-import com.encatch.core.EventPayload
-import com.encatch.core.EventType
-import com.encatch.core.FormDetails
-import com.encatch.core.FormMessage
-import com.encatch.core.FormMessageType
-import com.encatch.core.FormResponse
-import com.encatch.core.QnaWithAiConversationTurn
-import com.encatch.core.QnaWithAiRequest
-import com.encatch.core.RedirectOpener
-import com.encatch.core.RefineTextRequest
-import com.encatch.core.ResetMode
-import com.encatch.core.SDKMessage
-import com.encatch.core.SDKMessageType
-import com.encatch.core.ShowFormPayload
-import com.encatch.core.ShowFormResponse
-import com.encatch.core.SubmitFormRequest
-import com.encatch.core.UploadFileRequest
-import com.encatch.core.UploadFileSource
-import com.encatch.core.anyToJsonElement
-import com.encatch.core.parsePendingCompletionCta
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,11 +11,14 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * Handles the `form:*`/`sdk:*` WebView postMessage bridge, mirroring
- * `useEncatchFormWebView.ts`. UI-agnostic — driven by [EncatchWebView] / a future
- * inline-form view via [onHeightChange]/[onForceFullHeight]/[onReady]/[onClose]/[sendToWebView].
+ * `useEncatchFormWebView.ts`. UI-agnostic — driven by any WebView host (`:android`'s
+ * `EncatchWebView`, `:compose`'s WebView content) via [onHeightChange]/[onForceFullHeight]/
+ * [onReady]/[onClose]/[sendToWebView].
  */
 class FormWebViewBridge(
     private val scope: CoroutineScope,
@@ -118,6 +98,7 @@ class FormWebViewBridge(
         onReady()
     }
 
+    @OptIn(ExperimentalEncodingApi::class)
     fun handleMessage(raw: String) {
         val parsed = runCatching { EncatchJson.decodeFromString(FormMessage.serializer(), raw) }.getOrNull() ?: return
         val data = parsed.data
@@ -252,7 +233,7 @@ class FormWebViewBridge(
 
                 scope.launch {
                     val result = runCatching {
-                        val bytes = Base64.decode(fileDataBase64, Base64.DEFAULT)
+                        val bytes = Base64.decode(fileDataBase64)
                         Encatch.uploadFile(
                             UploadFileRequest(
                                 feedbackConfigurationId = feedbackConfigurationId,
@@ -367,11 +348,25 @@ class FormWebViewBridge(
         if (requestUrl.startsWith("about:blank") || requestUrl.startsWith("data:") || requestUrl.startsWith("blob:")) return true
         if (formWebViewUrl.isEmpty()) return true
         return runCatching {
-            val requested = android.net.Uri.parse(requestUrl)
-            val form = android.net.Uri.parse(formWebViewUrl)
-            requested.host == form.host && requested.path == form.path
+            val requested = parseUrlHostAndPath(requestUrl)
+            val form = parseUrlHostAndPath(formWebViewUrl)
+            requested == form
         }.getOrDefault(true)
     }
+}
+
+private data class HostAndPath(val host: String?, val path: String?)
+
+/** Minimal, dependency-free URL host+path extraction (no android.net.Uri / java.net.URL needed). */
+private fun parseUrlHostAndPath(url: String): HostAndPath {
+    val schemeSplit = url.substringAfter("://", missingDelimiterValue = url)
+    val authorityAndRest = schemeSplit
+    val pathStart = authorityAndRest.indexOfFirst { it == '/' || it == '?' || it == '#' }
+    val authority = if (pathStart >= 0) authorityAndRest.substring(0, pathStart) else authorityAndRest
+    val rest = if (pathStart >= 0) authorityAndRest.substring(pathStart) else ""
+    val path = rest.substringBefore('?').substringBefore('#')
+    val host = authority.substringAfter('@').substringBefore(':')
+    return HostAndPath(host.ifEmpty { null }, path.ifEmpty { null })
 }
 
 private fun ShowFormResponse.toJson(): JsonObject = buildJsonObject {
@@ -387,4 +382,38 @@ private fun ShowFormResponse.toJson(): JsonObject = buildJsonObject {
     projectI18nFileUrl?.let { put("projectI18nFileUrl", it) }
     pingAgainIn?.let { put("pingAgainIn", it) }
     pingOnNextPageVisit?.let { put("pingOnNextPageVisit", it) }
+}
+
+/** Normalizes a MIME type string, mirrors `uploadMimeType` from `form-webview-helpers.ts`. */
+fun uploadMimeType(mimeType: String?): String {
+    val base = mimeType?.substringBefore(';')?.trim()
+    return if (base.isNullOrEmpty()) "application/octet-stream" else base
+}
+
+/** Native -> WebView: builds the JS snippet that injects an `sdk:*` message, mirrors `injectSDKMessage` in `useEncatchFormWebView.ts`. */
+fun buildSdkMessageInjectionScript(message: SDKMessage): String {
+    val envelope = buildString {
+        append("{\"type\":\"")
+        append(message.type.wireValue)
+        append("\"")
+        if (message.dataJson != null) {
+            append(",\"data\":")
+            append(message.dataJson)
+        }
+        append("}")
+    }
+    return """
+        (function () {
+            var message = $envelope;
+            if (typeof window.__encatchReceiveSDKMessage === 'function') {
+                window.__encatchReceiveSDKMessage(message);
+                return true;
+            }
+            window.__encatchSDKMessageQueue = window.__encatchSDKMessageQueue || [];
+            window.__encatchSDKMessageQueue.push(message);
+            window.dispatchEvent(new MessageEvent('message', { data: message }));
+            return true;
+        })();
+        true;
+    """.trimIndent()
 }

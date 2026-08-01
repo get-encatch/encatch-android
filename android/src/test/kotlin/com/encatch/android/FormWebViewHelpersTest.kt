@@ -1,5 +1,6 @@
 package com.encatch.android
 
+import com.encatch.core.uploadMimeType
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner

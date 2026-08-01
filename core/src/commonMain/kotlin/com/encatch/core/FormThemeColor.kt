@@ -1,6 +1,5 @@
-package com.encatch.android
+package com.encatch.core
 
-import android.content.res.Configuration
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -10,7 +9,8 @@ import kotlin.math.roundToInt
  * Color resolution for form theming, ported from `form-webview-helpers.ts`. The web form's
  * theme JSON stores shadcn CSS variables (hex/rgb/rgba/hsl/hsla, occasionally oklch which we
  * can't render and fall back from) — these functions extract and normalize them, then
- * [parseCssColorToArgb] converts the normalized string into an Android ARGB [Int].
+ * [parseCssColorToArgb] converts the normalized string into a packed ARGB [Int] (compatible with
+ * `android.graphics.Color`'s packing and with `androidx.compose.ui.graphics.Color(Int)`).
  */
 
 private val hexRegex = Regex("^#[0-9A-Fa-f]{3,8}$")
@@ -60,8 +60,8 @@ fun getBackgroundColor(themeJson: String?, fallback: String): String {
     }.getOrDefault(fallback)
 }
 
-fun resolveSystemColorScheme(uiModeNightFlags: Int): String =
-    if ((uiModeNightFlags and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES) "dark" else "light"
+/** Resolves "dark"/"light" from the platform's current system appearance flag. */
+fun resolveSystemColorScheme(isSystemDark: Boolean): String = if (isSystemDark) "dark" else "light"
 
 /** Resolves which theme mode ("light" | "dark") is active for the form. */
 fun resolveActiveMode(shareableMode: String?, systemScheme: String): String = when (shareableMode) {
@@ -110,8 +110,8 @@ fun colorWithAlpha(color: String, fallbackAlpha: Double = OVERLAY_FALLBACK_ALPHA
 }
 
 /**
- * Modal backdrop color when darkOverlay is enabled; transparent when disabled. Android always
- * keeps touches captured by the modal shell regardless of overlay visibility.
+ * Modal backdrop color when darkOverlay is enabled; transparent when disabled. Native UI layers
+ * always keep touches captured by the modal shell regardless of overlay visibility.
  */
 fun resolveModalOverlayBackgroundColor(
     appearanceProperties: JsonObject?,
@@ -129,7 +129,7 @@ fun resolveModalOverlayBackgroundColor(
     return normalizeColorForNative(colorWithAlpha(base), DEFAULT_OVERLAY_RGBA)
 }
 
-/** Parses a hex/rgb/rgba/hsl/hsla CSS color string into an Android ARGB [Int]; [fallbackArgb] on failure. */
+/** Parses a hex/rgb/rgba/hsl/hsla CSS color string into a packed ARGB [Int]; [fallbackArgb] on failure. */
 fun parseCssColorToArgb(color: String, fallbackArgb: Int): Int {
     if (color == "transparent") return 0x00000000
     val s = color.trim()

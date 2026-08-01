@@ -22,9 +22,27 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
+import com.encatch.core.CornerStyle
 import com.encatch.core.Encatch
+import com.encatch.core.FormWebViewBridge
 import com.encatch.core.SDKMessage
 import com.encatch.core.ShowFormPayload
+import com.encatch.core.dpToPxInt
+import com.encatch.core.getAnimationConfig
+import com.encatch.core.getBackgroundColor
+import com.encatch.core.getBorderRadii
+import com.encatch.core.getPositionLayout
+import com.encatch.core.normalizePosition
+import com.encatch.core.parseCssColorToArgb
+import com.encatch.core.resolveActiveMode
+import com.encatch.core.resolveCornersFromFormConfig
+import com.encatch.core.resolveDarkOverlayFromFormConfig
+import com.encatch.core.resolveInAppMaxWidthDp
+import com.encatch.core.resolveInAppSizeFromFormConfig
+import com.encatch.core.resolveMaxDialogHeightFraction
+import com.encatch.core.resolveModalOverlayBackgroundColor
+import com.encatch.core.resolveSelectedPositionFromFormConfig
+import com.encatch.core.resolveSystemColorScheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -69,7 +87,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
      */
     private val systemThemeCallbacks = object : ComponentCallbacks2 {
         override fun onConfigurationChanged(newConfig: Configuration) {
-            val scheme = resolveSystemColorScheme(newConfig.uiMode)
+            val scheme = resolveSystemColorScheme(isConfigurationDark(newConfig.uiMode))
             if (scheme == lastSystemScheme) return
             lastSystemScheme = scheme
             val payload = currentPayload ?: return
@@ -127,7 +145,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
             insets
         }
 
-        lastSystemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        lastSystemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
 
         setOnDismissListener {
@@ -268,7 +286,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         popupShell.elevation = if (isFullCenter) 0f else dpToPxInt(20, density).toFloat()
         val activeMode = applyThemeColors(payload)
 
-        val gravity = if (isFullCenter) Gravity.FILL else getPositionLayout(position).gravity
+        val gravity = if (isFullCenter) Gravity.FILL else getPositionLayout(position).toGravity()
         (popupShell.layoutParams as FrameLayout.LayoutParams).gravity = gravity
         popupShell.layoutParams = (popupShell.layoutParams as FrameLayout.LayoutParams).apply {
             width = if (isFullCenter) ViewGroup.LayoutParams.MATCH_PARENT else dpToPxInt(resolveInAppMaxWidthDp(size, position, screenWidthDp), density)
@@ -293,7 +311,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val corners = currentCorners
         val darkOverlay = currentDarkOverlay
 
-        val systemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        val systemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         val shareableMode = appearanceProperties?.get("featureSettings")?.let { it as? JsonObject }
             ?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
         val activeMode = resolveActiveMode(payload.theme?.wireValue ?: shareableMode, systemScheme)

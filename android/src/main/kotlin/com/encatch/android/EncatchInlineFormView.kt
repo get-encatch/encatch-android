@@ -10,10 +10,17 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.encatch.core.Encatch
 import com.encatch.core.EncatchInternalEmitter
+import com.encatch.core.FormWebViewBridge
 import com.encatch.core.InlineSlotRegistry
 import com.encatch.core.InternalEvent
 import com.encatch.core.SDKMessage
 import com.encatch.core.ShowFormPayload
+import com.encatch.core.getBackgroundColor
+import com.encatch.core.getInlineBorderRadii
+import com.encatch.core.parseCssColorToArgb
+import com.encatch.core.resolveActiveMode
+import com.encatch.core.resolveCornersFromFormConfig
+import com.encatch.core.resolveSystemColorScheme
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -78,7 +85,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
     /** Observes live system light/dark-mode changes while a form is active — see EncatchFormDialog's twin. */
     private val systemThemeCallbacks = object : ComponentCallbacks2 {
         override fun onConfigurationChanged(newConfig: Configuration) {
-            val scheme = resolveSystemColorScheme(newConfig.uiMode)
+            val scheme = resolveSystemColorScheme(isConfigurationDark(newConfig.uiMode))
             if (scheme == lastSystemScheme) return
             lastSystemScheme = scheme
             val payload = currentPayload ?: return
@@ -107,7 +114,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         super.onAttachedToWindow()
         slotId = InlineSlotRegistry.registerInlineSlot(formId)
         unsubscribe = EncatchInternalEmitter.on { event -> handleInternalEvent(event) }
-        lastSystemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        lastSystemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
     }
 
@@ -203,7 +210,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         val appearanceProperties = payload.formConfig.appearanceProperties as? JsonObject
         val corners = resolveCornersFromFormConfig(appearanceProperties)
 
-        val systemScheme = resolveSystemColorScheme(context.resources.configuration.uiMode)
+        val systemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         val shareableMode = appearanceProperties?.get("featureSettings")?.let { it as? JsonObject }
             ?.get("shareableMode")?.let { (it as? JsonPrimitive)?.contentOrNull }
         val activeMode = resolveActiveMode(payload.theme?.wireValue ?: shareableMode, systemScheme)
