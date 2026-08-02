@@ -1,15 +1,13 @@
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package com.encatch.composesample
+package com.encatch.iosnativeui
 
 import com.encatch.core.Encatch
 import com.encatch.core.EncatchInternalEmitter
 import com.encatch.core.FormWebViewBridge
 import com.encatch.core.InlineSlotRegistry
 import com.encatch.core.InternalEvent
-import com.encatch.core.SDKMessage
 import com.encatch.core.ShowFormPayload
-import com.encatch.core.buildSdkMessageInjectionScript
 import com.encatch.core.extractShareableMode
 import com.encatch.core.extractThemeJsonForMode
 import com.encatch.core.getBackgroundColor
@@ -19,14 +17,11 @@ import com.encatch.core.resolveActiveMode
 import com.encatch.core.resolveCornerRadiusDp
 import com.encatch.core.resolveCornersFromFormConfig
 import com.encatch.core.resolveSystemColorScheme
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.useContents
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.cinterop.useContents
 import platform.CoreGraphics.CGRectMake
-import platform.Foundation.NSURL
-import platform.Foundation.NSURLRequest
 import platform.UIKit.NSLayoutConstraint
 import platform.UIKit.UIActivityIndicatorView
 import platform.UIKit.UIColor
@@ -34,44 +29,16 @@ import platform.UIKit.UITraitCollection
 import platform.UIKit.UIUserInterfaceStyle
 import platform.UIKit.UIView
 import platform.UIKit.UIWindow
-import platform.WebKit.WKNavigation
-import platform.WebKit.WKNavigationAction
-import platform.WebKit.WKNavigationActionPolicy
-import platform.WebKit.WKNavigationDelegateProtocol
-import platform.WebKit.WKScriptMessage
-import platform.WebKit.WKScriptMessageHandlerProtocol
-import platform.WebKit.WKUserContentController
-import platform.WebKit.WKUserScript
-import platform.WebKit.WKUserScriptInjectionTime
-import platform.WebKit.WKWebView
-import platform.WebKit.WKWebViewConfiguration
-import platform.darwin.NSObject
 import kotlin.math.max
 import kotlin.math.min
 
-private const val BRIDGE_MESSAGE_HANDLER_NAME = "encatchBridge"
-
-private const val BRIDGE_SHIM_SCRIPT = """
-window.ReactNativeWebView = {
-    postMessage: function (message) {
-        window.webkit.messageHandlers.$BRIDGE_MESSAGE_HANDLER_NAME.postMessage(message);
-    }
-};
-"""
-
-private fun buildInlineFormWebViewUrl(webHost: String, formId: String, instanceKey: Int, debugMode: Boolean): String {
-    val params = mutableListOf("formId=$formId", "ts=$instanceKey", "presentation=inline")
-    if (debugMode) params.add("debug=true")
-    return "$webHost/s/react-native-sdk-form?" + params.joinToString("&")
-}
-
 /**
  * Native Kotlin/Native port of `swift/`'s `EncatchInlineFormView`/`EncatchWebView`, written
- * directly in `:compose-sample`'s iosMain rather than reusing the Swift Package. Kotlin/Native
- * can't cinterop against a compiled Swift Package, and linking `swift/`'s `EncatchCore.xcframework`
- * alongside this module's own XCFramework would statically embed `:core` twice — two independent
- * `Encatch` singletons in one process, found via a real crash while testing this variant (see
- * HANDOFF.md). All business logic here is [FormWebViewBridge] from `:core` commonMain, unchanged
+ * directly here (rather than reusing the Swift Package) since Kotlin/Native can't cinterop
+ * against a compiled Swift Package, and linking `swift/`'s `EncatchCore.xcframework` alongside
+ * a consumer's own XCFramework would statically embed `:core` twice — two independent `Encatch`
+ * singletons in one process (see [EncatchNativeFormHost] for the modal counterpart and the same
+ * finding). All business logic here is [FormWebViewBridge] from `:core` commonMain, unchanged
  * from `:android`/`swift`'s usage — only the raw WKWebView/UIView plumbing is iOS-native Kotlin.
  */
 class EncatchNativeInlineFormView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0)) {
@@ -110,7 +77,7 @@ class EncatchNativeInlineFormView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0
         super.willMoveToWindow(newWindow)
         if (newWindow != null && slotId == null) {
             slotId = InlineSlotRegistry.registerInlineSlot(formId)
-            unsubscribe = EncatchInternalEmitter.on { event -> handle(event) }
+            unsubscribe = EncatchInternalEmitter.on { event -> runOnMain { handle(event) } }
         } else if (newWindow == null && slotId != null) {
             InlineSlotRegistry.unregisterInlineSlot(slotId!!)
             slotId = null
@@ -202,6 +169,7 @@ class EncatchNativeInlineFormView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0
             formId = payload.formId,
             instanceKey = webViewInstanceKey,
             debugMode = Encatch.debugMode,
+            presentation = "inline",
         )
         newWebView.loadFormUrl(url)
     }
@@ -210,7 +178,7 @@ class EncatchNativeInlineFormView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0
         val appearanceProperties = payload.formConfig.appearanceProperties
         val corners = resolveCornersFromFormConfig(appearanceProperties)
 
-        val systemScheme = resolveSystemColorScheme(traitCollection.userInterfaceStyle == platform.UIKit.UIUserInterfaceStyle.UIUserInterfaceStyleDark)
+        val systemScheme = resolveSystemColorScheme(traitCollection.userInterfaceStyle == UIUserInterfaceStyle.UIUserInterfaceStyleDark)
         val shareableMode = extractShareableMode(appearanceProperties)
         val activeMode = resolveActiveMode(payload.theme?.wireValue ?: shareableMode, systemScheme)
 
@@ -267,72 +235,5 @@ class EncatchNativeInlineFormView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0
         super.traitCollectionDidChange(previousTraitCollection)
         val payload = currentPayload ?: return
         applyInlineAppearance(payload)
-    }
-}
-
-private fun uiColorFromArgb(argb: Int): UIColor {
-    val value = argb.toLong() and 0xFFFFFFFFL
-    val alpha = ((value shr 24) and 0xFF) / 255.0
-    val red = ((value shr 16) and 0xFF) / 255.0
-    val green = ((value shr 8) and 0xFF) / 255.0
-    val blue = (value and 0xFF) / 255.0
-    return UIColor(red = red, green = green, blue = blue, alpha = alpha)
-}
-
-/**
- * Kotlin/Native port of `swift/`'s `EncatchWebView` — WKWebView with the same `window.ReactNativeWebView`
- * JS-bridge shim, so the unmodified hosted form page works identically to the Android/Swift UIs.
- */
-private class EncatchNativeWebView : WKWebView, WKNavigationDelegateProtocol {
-    var bridge: FormWebViewBridge? = null
-    private var loadedUrl: String = ""
-    private val messageReceiver = ScriptMessageReceiver { raw -> bridge?.handleMessage(raw) }
-
-    constructor() : super(
-        frame = CGRectMake(0.0, 0.0, 0.0, 0.0),
-        configuration = WKWebViewConfiguration().apply {
-            allowsInlineMediaPlayback = true
-            userContentController.addUserScript(
-                WKUserScript(
-                    source = BRIDGE_SHIM_SCRIPT,
-                    injectionTime = WKUserScriptInjectionTime.WKUserScriptInjectionTimeAtDocumentStart,
-                    forMainFrameOnly = true,
-                ),
-            )
-        },
-    ) {
-        configuration.userContentController.addScriptMessageHandler(messageReceiver, name = BRIDGE_MESSAGE_HANDLER_NAME)
-        navigationDelegate = this
-        backgroundColor = UIColor.clearColor
-        opaque = false
-        scrollView.bounces = false
-    }
-
-    fun loadFormUrl(url: String) {
-        loadedUrl = url
-        val requestUrl = NSURL.URLWithString(url) ?: return
-        loadRequest(NSURLRequest.requestWithURL(requestUrl))
-    }
-
-    fun sendToWebView(message: SDKMessage) {
-        evaluateJavaScript(buildSdkMessageInjectionScript(message), completionHandler = null)
-    }
-
-    override fun webView(webView: WKWebView, decidePolicyForNavigationAction: WKNavigationAction, decisionHandler: (WKNavigationActionPolicy) -> Unit) {
-        val requestUrl = decidePolicyForNavigationAction.request.URL?.absoluteString ?: ""
-        val isTopFrame = decidePolicyForNavigationAction.targetFrame?.mainFrame ?: true
-        val allow = bridge?.shouldAllowNavigation(requestUrl, loadedUrl, isTopFrame) ?: true
-        decisionHandler(if (allow) WKNavigationActionPolicy.WKNavigationActionPolicyAllow else WKNavigationActionPolicy.WKNavigationActionPolicyCancel)
-    }
-
-    override fun webView(webView: WKWebView, didFinishNavigation: WKNavigation?) {
-        bridge?.handleFormReady()
-    }
-}
-
-private class ScriptMessageReceiver(private val onMessage: (String) -> Unit) : NSObject(), WKScriptMessageHandlerProtocol {
-    override fun userContentController(userContentController: WKUserContentController, didReceiveScriptMessage: WKScriptMessage) {
-        val body = didReceiveScriptMessage.body as? String ?: return
-        onMessage(body)
     }
 }

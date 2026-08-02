@@ -50,6 +50,9 @@ kotlin {
         }
         val iosMain by creating {
             dependsOn(commonMain.get())
+            dependencies {
+                implementation(project(":ios-native-form-ui"))
+            }
         }
         getByName("iosArm64Main").dependsOn(iosMain)
         getByName("iosSimulatorArm64Main").dependsOn(iosMain)

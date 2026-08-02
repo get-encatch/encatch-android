@@ -2,6 +2,8 @@
 
 package com.encatch.kmpsample
 
+import com.encatch.iosnativeui.EncatchNativeFormHost
+import com.encatch.iosnativeui.EncatchNativeInlineFormView
 import kotlinx.cinterop.ObjCAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,13 +18,16 @@ import platform.UIKit.UIViewController
 /**
  * Swift-callable entry point producing the root `UIViewController` for the KMP host sample
  * screen — built entirely in Kotlin/Native (no SwiftUI, no Swift business logic) to demonstrate
- * that a KMP app's iosMain can drive a real native screen straight from commonMain calls. Kept
- * deliberately UI-light (status text + buttons, no hosted-form rendering): the form-rendering UI
- * is already proven end-to-end by variants 3 & 4; giving it its own UIKit-in-Kotlin screen here
- * would just be redundant WebView-porting effort for no new coverage.
+ * that a KMP app's iosMain can drive a real native screen straight from commonMain calls.
+ * Installs [EncatchNativeFormHost] once (the modal path) and embeds a real
+ * [EncatchNativeInlineFormView] (the inline path) — both from `:ios-native-form-ui`, the same
+ * native Kotlin/Native form UI `:compose-sample`'s iOS side uses.
  */
 @Suppress("unused")
-fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController = KmpRootViewController(mockServerBaseUrl)
+fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController {
+    EncatchNativeFormHost.install()
+    return KmpRootViewController(mockServerBaseUrl)
+}
 
 /**
  * `UIControl.addTarget` doesn't retain its target — a bare `ClosureTarget` created inline gets
@@ -61,11 +66,15 @@ private class KmpRootViewController(mockServerBaseUrl: String?) : UIViewControll
         val modalButton = button("Show modal form") {
             scope.launch { statusLabel.text = SampleAppController.showModalForm() }
         }
+        val inlineForm = EncatchNativeInlineFormView().apply {
+            formId = "kmp-inline-form-id"
+            setTranslatesAutoresizingMaskIntoConstraints(false)
+        }
         val inlineButton = button("Show inline form") {
             scope.launch { statusLabel.text = SampleAppController.showInlineForm() }
         }
 
-        val stack = UIStackView(arrangedSubviews = listOf(statusLabel, initButton, modalButton, inlineButton))
+        val stack = UIStackView(arrangedSubviews = listOf(statusLabel, initButton, modalButton, inlineForm, inlineButton))
         stack.axis = platform.UIKit.UILayoutConstraintAxisVertical
         stack.spacing = 16.0
         stack.setTranslatesAutoresizingMaskIntoConstraints(false)

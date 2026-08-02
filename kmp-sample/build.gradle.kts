@@ -8,9 +8,7 @@ plugins {
 // Variant 5: a sample app that is itself a Kotlin Multiplatform project (shared commonMain
 // business logic calling :core's Encatch API directly), rather than a single-platform app that
 // merely depends on KMP :core (variants 1-4). Validates the real Gradle KMP consumption path on
-// Android and the XCFramework consumption path on iOS. UI is intentionally minimal (status text +
-// buttons, no hosted-form rendering) — the form-rendering UI is already proven by variants 1-4;
-// this variant's job is the dependency/build-path shape, not additional UI coverage.
+// Android and the XCFramework consumption path on iOS.
 val xcf = XCFramework("EncatchKmpSample")
 
 kotlin {
@@ -48,6 +46,9 @@ kotlin {
         }
         val iosMain by creating {
             dependsOn(commonMain.get())
+            dependencies {
+                implementation(project(":ios-native-form-ui"))
+            }
         }
         getByName("iosArm64Main").dependsOn(iosMain)
         getByName("iosSimulatorArm64Main").dependsOn(iosMain)

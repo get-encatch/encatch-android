@@ -65,7 +65,10 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
         }
 
         Button(onClick = {
-            scope.launch { Encatch.showForm("cmp-modal-form-id") }
+            scope.launch {
+                Encatch.showForm("cmp-modal-form-id")
+                status = "showForm(\"cmp-modal-form-id\") called"
+            }
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Show modal form")
         }
@@ -78,7 +81,10 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
         )
 
         Button(onClick = {
-            scope.launch { Encatch.showForm("cmp-inline-form-id") }
+            scope.launch {
+                Encatch.showForm("cmp-inline-form-id")
+                status = "showForm(\"cmp-inline-form-id\") called"
+            }
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Show inline form")
         }
@@ -88,10 +94,10 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 /**
  * Renders the SDK's native inline-form view for the current platform via Compose interop.
  * Android: `AndroidView` wrapping `:android`'s `EncatchInlineFormView` directly.
- * iOS: `UIKitView` wrapping a `UIView` obtained from [IOSNativeViewBridge.inlineFormViewFactory] —
- * Kotlin/Native can't cinterop against a Swift Package directly, so the real iOS host app
- * (built in Xcode, linking both this module's XCFramework and the `swift/` package) sets that
- * factory to construct `swift/`'s `EncatchInlineFormView` at runtime.
+ * iOS: `UIKitView` wrapping `:ios-native-form-ui`'s `EncatchNativeInlineFormView` — a from-scratch
+ * Kotlin/Native WebKit port, since Kotlin/Native can't cinterop against a Swift Package directly
+ * and linking `swift/`'s XCFramework alongside this module's own would duplicate `:core`'s
+ * singletons (see `EncatchNativeFormHost`'s doc comment).
  */
 @Composable
 expect fun EncatchInlineFormHost(formId: String, modifier: Modifier = Modifier)
