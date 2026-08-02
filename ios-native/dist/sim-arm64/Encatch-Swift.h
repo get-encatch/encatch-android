@@ -280,6 +280,7 @@ typedef unsigned int swift_uint4  __attribute__((__ext_vector_type__(4)));
 #pragma clang diagnostic ignored "-Watimport-in-framework-header"
 #endif
 @import CoreFoundation;
+@import Foundation;
 @import ObjectiveC;
 @import UIKit;
 #endif
@@ -307,23 +308,117 @@ typedef unsigned int swift_uint4  __attribute__((__ext_vector_type__(4)));
 @class NSString;
 @class EncatchBridgeConfig;
 @class NSError;
+@class EncatchBridgeUserTraits;
+@class EncatchBridgeIdentifyOptions;
+@class EncatchBridgeShowFormOptions;
+@class NSDictionary;
+@class EncatchBridgeRefineTextResponse;
+@class NSData;
+@class EncatchBridgeUploadFileResponse;
+@class EncatchBridgeStartSessionOptions;
+@class EncatchBridgeEventPayload;
 /// The Kotlin/Native-facing entry point onto the pure-Swift <code>Encatch</code> singleton. See file-level
-/// doc comment above for why this exists and what it deliberately does NOT expose.
+/// doc comment above for the full design rationale and the <code>submitForm</code>/<code>refineText</code>/<code>uploadFile</code>/
+/// <code>on</code>-<code>off</code> tradeoffs specifically.
 SWIFT_CLASS_NAMED("EncatchBridge")
 @interface EncatchBridge : NSObject
 SWIFT_CLASS_PROPERTY(@property (nonatomic, class, readonly, strong) EncatchBridge * _Nonnull shared;)
 + (EncatchBridge * _Nonnull)shared SWIFT_WARN_UNUSED_RESULT;
 - (nonnull instancetype)init SWIFT_UNAVAILABLE;
 + (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
-/// Mirrors <code>Encatch.shared.initialize(apiKey:config:)</code>. Completion is invoked exactly once,
-/// on an arbitrary thread (matches Swift concurrency’s <code>Task</code> — callers needing main-thread
-/// delivery should hop themselves, same as any other async bridge).
+/// Mirrors <code>Encatch.shared.initialize(apiKey:config:)</code>.
 - (void)initializeWithApiKey:(NSString * _Nonnull)apiKey config:(EncatchBridgeConfig * _Nullable)config completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
 @property (nonatomic, readonly) BOOL isInitialized;
-@property (nonatomic, readonly, copy) NSString * _Nullable deviceId;
-/// Mirrors <code>Encatch.shared.showForm(_:)</code> with default options (the only call shape the samples
-/// use today).
+/// Mirrors <code>Encatch.shared.identifyUser(userName:traits:options:)</code>.
+- (void)identifyUserWithUserName:(NSString * _Nonnull)userName traits:(EncatchBridgeUserTraits * _Nullable)traits options:(EncatchBridgeIdentifyOptions * _Nullable)options completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+- (void)setLocale:(NSString * _Nonnull)locale;
+- (void)setCountry:(NSString * _Nonnull)country;
+/// <code>theme</code> is one of “light” / “dark” / “system” (case-insensitive); anything else resolves to
+/// <code>.system</code> (same parsing <code>EncatchBridgeConfig.theme</code> uses).
+- (void)setTheme:(NSString * _Nonnull)theme;
+/// Mirrors <code>Encatch.shared.trackEvent(_:)</code>.
+- (void)trackEvent:(NSString * _Nonnull)eventName completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.trackFormEvent(_:_:)</code> — best-effort, never throws, so <code>completion</code>
+/// just signals “the underlying call finished” rather than carrying an error.
+- (void)trackFormEvent:(NSString * _Nonnull)eventName feedbackConfigurationId:(NSString * _Nullable)feedbackConfigurationId completion:(void (^ _Nonnull)(void))completion;
+/// Mirrors <code>Encatch.shared.trackScreen(_:)</code>.
+- (void)trackScreen:(NSString * _Nonnull)screenName completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.showForm(_:)</code> with default options (the shape the samples use
+/// today). Kept as its own overload (rather than requiring callers to always pass <code>options</code>)
+/// since it’s already the established, shipped selector — see <code>showForm(_:options:completion:)</code>
+/// below for the full-parity version.
 - (void)showForm:(NSString * _Nonnull)formId completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.showForm(_:options:)</code>.
+- (void)showForm:(NSString * _Nonnull)formId options:(EncatchBridgeShowFormOptions * _Nullable)options completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.dismissForm(_:)</code>.
+- (void)dismissForm:(NSString * _Nullable)formConfigurationId completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.addToResponse(questionId:value:)</code>. <code>value</code> is <code>AnyObject?</code> rather
+/// than <code>Any?</code> — <code>@objc</code> methods can’t take plain <code>Any</code> parameters, only <code>AnyObject</code>-rooted
+/// ones, which covers every JSON-safe value a caller would realistically pass (<code>NSString</code>,
+/// <code>NSNumber</code>, <code>NSArray</code>, <code>NSDictionary</code>, <code>NSNull</code>).
+- (void)addToResponseWithQuestionId:(NSString * _Nonnull)questionId value:(id _Nullable)value;
+/// Mirrors <code>Encatch.shared.getPendingResponses()</code>. Returns an <code>NSDictionary</code> (via <code>JSONValue .toAny()</code>) rather than <code>[String: JSONValue]</code>, since <code>JSONValue</code> itself isn’t <code>@objc</code>-representable.
+- (NSDictionary * _Nonnull)getPendingResponses SWIFT_WARN_UNUSED_RESULT;
+- (void)clearPendingResponses;
+/// Mirrors <code>Encatch.shared.submitForm(_:)</code>. <code>requestJSON</code> must decode into <code>SubmitFormRequest</code>
+/// via <code>JSONDecoder</code> — i.e. the same wire shape <code>SubmitFormRequest</code>’s <code>Codable</code> conformance
+/// produces/consumes elsewhere in this SDK (see the file-level doc comment above for why this
+/// method takes JSON rather than a hand-built <code>@objc</code> mirror of the whole nested request tree).
+- (void)submitForm:(NSString * _Nonnull)requestJSON completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.refineText(_:)</code>. Takes <code>RefineTextRequest</code>’s three fields directly
+/// (rather than JSON, unlike <code>submitForm</code>) since <code>RefineTextRequest</code> is flat with no nested
+/// payload — a plain <code>@objc</code> parameter list is simpler here.
+- (void)refineTextWithQuestionId:(NSString * _Nonnull)questionId feedbackConfigurationId:(NSString * _Nonnull)feedbackConfigurationId userText:(NSString * _Nonnull)userText completion:(void (^ _Nonnull)(EncatchBridgeRefineTextResponse * _Nullable, NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.streamQnaWithAi(_:onChunk:onDone:)</code>. The Swift API’s dual-callback
+/// shape maps directly to two separate <code>@escaping</code> closures here (plus a third for the <code>throws</code>
+/// side, since there’s no single completion handler to funnel an error through once streaming
+/// has already started emitting chunks). <code>conversation</code> is <code>[[String: String]]</code> — an <code>NSArray</code>
+/// of <code>NSDictionary</code>s with <code>"question"</code>/<code>"answer"</code> string keys — rather than a dedicated mirror
+/// class, mirroring <code>QnaWithAiConversationTurn</code>’s own two-string shape with one less type to
+/// define.
+- (void)streamQnaWithAiWithFeedbackConfigurationId:(NSString * _Nonnull)feedbackConfigurationId questionId:(NSString * _Nonnull)questionId conversation:(NSArray<NSDictionary<NSString *, NSString *> *> * _Nonnull)conversation onChunk:(void (^ _Nonnull)(NSString * _Nonnull))onChunk onDone:(void (^ _Nonnull)(NSString * _Nonnull))onDone onError:(void (^ _Nonnull)(NSError * _Nonnull))onError;
+/// Mirrors <code>Encatch.shared.uploadFile(_:)</code>, restricted to <code>UploadFileSource.bytes</code> — the only
+/// source <code>UploadFileRequest.file</code> supports on iOS in the first place (<code>.contentUri</code> always
+/// throws <code>EncatchUnsupportedOperationException</code> from <code>Core/Encatch.swift</code>, matching the
+/// Android-only concept it represents). <code>onProgress</code>, if provided, is invoked with 0-100
+/// percentages on an arbitrary thread, same as every other completion in this file.
+- (void)uploadFileWithFeedbackConfigurationId:(NSString * _Nonnull)feedbackConfigurationId questionId:(NSString * _Nonnull)questionId fileBytes:(NSData * _Nonnull)fileBytes fileName:(NSString * _Nonnull)fileName mimeType:(NSString * _Nullable)mimeType onProgress:(void (^ _Nullable)(NSInteger))onProgress completion:(void (^ _Nonnull)(EncatchBridgeUploadFileResponse * _Nullable, NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.clearAll()</code>.
+- (void)clearAllWithCompletion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.startSession(_:)</code>.
+- (void)startSession:(EncatchBridgeStartSessionOptions * _Nullable)options completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+- (void)pauseSession;
+- (void)resumeSession;
+/// Mirrors <code>Encatch.shared.stopSession()</code>.
+- (void)stopSessionWithCompletion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// Mirrors <code>Encatch.shared.resetUser()</code>.
+- (void)resetUserWithCompletion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+- (void)setFormVisible:(BOOL)visible;
+- (void)flushRetryQueue;
+/// Mirrors <code>Encatch.shared.on(_:)</code>. Registers <code>callback</code> and returns an unsubscribe closure
+/// (bridged to an Objective-C block; Kotlin/Native consumes it as a callable <code>() -> Unit</code>).
+/// There is no separate <code>off(callback)</code> entry point — see the file-level doc comment’s “Design
+/// constraints” section for why (Swift closures aren’t <code>Equatable</code>, and <code>Core/Emitter.swift</code>
+/// already made the same call for the pure-Swift <code>Encatch.on</code> API this wraps).
+- (void (^ _Nonnull)(void))onEvent:(void (^ _Nonnull)(NSString * _Nonnull, EncatchBridgeEventPayload * _Nonnull))callback;
+/// Mirrors <code>Encatch.shared.emitEvent(_:_:)</code>. <code>eventType</code> must be one of <code>EventType.wireValue</code>’s
+/// wire strings (e.g. <code>"form:complete"</code>) — unrecognized values are silently ignored, matching
+/// <code>EventType.fromWire</code>’s <code>nil</code>-on-unknown behavior. <code>dataJSON</code>, if provided, must decode as a
+/// JSON object (matches <code>EncatchBridgeEventPayload.dataJSON</code>’s encoding on the way out).
+- (void)emitEvent:(NSString * _Nonnull)eventType formId:(NSString * _Nullable)formId dataJSON:(NSString * _Nullable)dataJSON;
+- (void)stop;
+@property (nonatomic, readonly, copy) NSString * _Nullable apiKey;
+@property (nonatomic, readonly, copy) NSString * _Nonnull baseUrl;
+@property (nonatomic, readonly, copy) NSString * _Nonnull webHost;
+@property (nonatomic, readonly) BOOL isFullScreen;
+/// One of “light” / “dark” / “system” (<code>Theme.wireValue</code>).
+@property (nonatomic, readonly, copy) NSString * _Nonnull theme;
+@property (nonatomic, readonly, copy) NSString * _Nullable locale;
+@property (nonatomic, readonly, copy) NSString * _Nullable deviceId;
+@property (nonatomic, readonly, copy) NSString * _Nullable sessionId;
+@property (nonatomic, readonly, copy) NSString * _Nullable userName;
+@property (nonatomic, readonly, copy) NSString * _Nullable userId;
+@property (nonatomic, readonly) BOOL debugMode;
 /// Installs the app-wide modal form host (<code>EncatchFormHost.install()</code>). <code>EncatchFormHost</code> is a
 /// caseless <code>enum</code> namespace, which Swift can’t expose to Objective-C directly (only
 /// <code>NSObject</code>-rooted classes/members are <code>@objc</code>-representable) — this static method is the
@@ -344,6 +439,100 @@ SWIFT_CLASS_NAMED("EncatchBridgeConfig")
 /// One of “light” / “dark” / “system” (case-insensitive). Any other value (including nil)
 /// resolves to <code>.system</code>.
 @property (nonatomic, copy) NSString * _Nullable theme;
+- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// <code>@objc</code> mirror of <code>EventPayload</code>. <code>dataJSON</code> is the JSON-serialized form of <code>EventPayload.data</code>
+/// (<code>nil</code> if <code>data</code> itself was <code>nil</code>) rather than a further <code>NSDictionary</code> mirror — callers that
+/// need it can parse it with any JSON decoder on their side (Kotlin’s <code>kotlinx.serialization</code>,
+/// <code>JSONSerialization</code>, etc.), avoiding yet another dynamic-value bridging layer for a field that’s
+/// informational payload, not something the bridge itself needs to interpret.
+SWIFT_CLASS_NAMED("EncatchBridgeEventPayload")
+@interface EncatchBridgeEventPayload : NSObject
+@property (nonatomic, readonly, copy) NSString * _Nullable formId;
+@property (nonatomic, readonly) int64_t timestamp;
+@property (nonatomic, readonly, copy) NSString * _Nullable dataJSON;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+@class EncatchBridgeSecureOptions;
+/// <code>@objc</code> mirror of <code>IdentifyOptions</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeIdentifyOptions")
+@interface EncatchBridgeIdentifyOptions : NSObject
+@property (nonatomic, copy) NSString * _Nullable locale;
+@property (nonatomic, copy) NSString * _Nullable country;
+@property (nonatomic, strong) EncatchBridgeSecureOptions * _Nullable secure;
+- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+@class NSNumber;
+/// <code>@objc</code> mirror of <code>RefineTextResponse</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeRefineTextResponse")
+@interface EncatchBridgeRefineTextResponse : NSObject
+@property (nonatomic, readonly, copy) NSString * _Nullable message;
+@property (nonatomic, readonly, copy) NSString * _Nullable refinedText;
+/// <code>NSNumber</code> wrapping an <code>Int</code>, or <code>nil</code> if <code>RefineTextResponse.status</code> was <code>nil</code>.
+@property (nonatomic, readonly, strong) NSNumber * _Nullable status;
+@property (nonatomic, readonly, copy) NSString * _Nullable error;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+/// <code>@objc</code> mirror of <code>SecureOptions</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeSecureOptions")
+@interface EncatchBridgeSecureOptions : NSObject
+@property (nonatomic, copy) NSString * _Nonnull signature;
+@property (nonatomic, copy) NSString * _Nullable generatedDateTimeInUtc;
+- (nonnull instancetype)initWithSignature:(NSString * _Nonnull)signature OBJC_DESIGNATED_INITIALIZER;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+/// <code>@objc</code> mirror of <code>ShowFormOptions</code>. <code>reset</code> is one of <code>ResetMode.wireValue</code>‘s wire strings
+/// (“always” / “on-complete” / “never”, case-insensitive; unrecognized/nil falls back to “always”,
+/// matching <code>ResetMode.fromWire</code>). <code>context</code> values may be <code>NSString</code>/<code>NSNumber</code> (including
+/// booleans) — arbitrary nesting is not supported at this boundary (matches what <code>ContextValue</code>
+/// itself allows: only string/number/boolean/date). Deviation from <code>ContextValue.date</code>: this
+/// bridge has no reliable way to distinguish “this NSNumber represents an epoch-millis date” from
+/// “this NSNumber is a plain number” once it’s inside an untyped <code>NSDictionary</code>, so date context
+/// values aren’t specially supported here — callers who need the <code>date</code> wire behavior (ISO-8601
+/// serialization) should pre-format the date as an ISO-8601 string and pass it as a plain string
+/// value instead.
+SWIFT_CLASS_NAMED("EncatchBridgeShowFormOptions")
+@interface EncatchBridgeShowFormOptions : NSObject
+@property (nonatomic, copy) NSString * _Nullable reset;
+@property (nonatomic, strong) NSDictionary * _Nullable context;
+- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// <code>@objc</code> mirror of <code>StartSessionOptions</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeStartSessionOptions")
+@interface EncatchBridgeStartSessionOptions : NSObject
+@property (nonatomic) BOOL skipImmediatePing;
+@property (nonatomic) BOOL skipImmediateTrackScreen;
+- (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// <code>@objc</code> mirror of <code>UploadFileResponse</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeUploadFileResponse")
+@interface EncatchBridgeUploadFileResponse : NSObject
+@property (nonatomic, readonly, copy) NSString * _Nonnull fileUrl;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+/// <code>@objc</code> mirror of <code>UserTraits</code> (see <code>Core/Types.swift</code>). <code>set</code>/<code>setOnce</code> are plain
+/// <code>NSDictionary</code>s of JSON-safe values (String/NSNumber/nested dictionaries/arrays — anything
+/// <code>JSONValue.from(any:)</code> understands); <code>increment</code>/<code>decrement</code> are <code>NSDictionary</code>s of
+/// <code>String -> NSNumber</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeUserTraits")
+@interface EncatchBridgeUserTraits : NSObject
+@property (nonatomic, strong) NSDictionary * _Nullable set;
+@property (nonatomic, strong) NSDictionary * _Nullable setOnce;
+@property (nonatomic, strong) NSDictionary * _Nullable increment;
+@property (nonatomic, strong) NSDictionary * _Nullable decrement;
+@property (nonatomic, copy) NSArray<NSString *> * _Nullable unset;
 - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
 @end
 

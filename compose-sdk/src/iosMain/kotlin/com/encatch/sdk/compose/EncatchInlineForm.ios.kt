@@ -1,6 +1,6 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package com.encatch.composesample
+package com.encatch.sdk.compose
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -8,8 +8,18 @@ import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import com.encatch.bridge.EncatchInlineFormView
 
+/**
+ * iOS `actual`. Copied from `compose-sample`'s former `EncatchInlineFormHost.ios.kt` (now deleted
+ * in favour of this library composable), renamed — including its `isNativeAccessibilityEnabled`
+ * fix below.
+ *
+ * No form-host-install plumbing needed here: `:kmp-sdk`'s `Encatch.ios.kt` `init(...)` already
+ * calls `EncatchBridge.installFormHost()` internally (verified directly in that file), since iOS
+ * has no Application-equivalent context requirement the way Android's `EncatchFormHost.install`
+ * does — see `EncatchInlineForm.android.kt`'s doc comment for the full asymmetry explanation.
+ */
 @Composable
-actual fun EncatchInlineFormHost(formId: String, modifier: Modifier) {
+actual fun EncatchInlineForm(formId: String, modifier: Modifier) {
     // isNativeAccessibilityEnabled defaults to false — Compose Multiplatform's iOS interop
     // views don't expose their native accessibility subtree (e.g. the hosted WKWebView's DOM
     // content surfaced via ios-native's bridge) to the app's accessibility tree unless opted

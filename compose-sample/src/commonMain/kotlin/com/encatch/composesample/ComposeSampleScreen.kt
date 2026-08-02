@@ -19,14 +19,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.encatch.sdk.Encatch
+import com.encatch.sdk.EncatchConfig
+import com.encatch.sdk.compose.EncatchInlineForm
 import kotlinx.coroutines.launch
 
 /**
  * The Compose Multiplatform "host app" variant: a customer building with Compose Multiplatform
- * (Android + iOS from one commonMain UI) embedding Encatch's existing native UI components via
- * interop — [EncatchInlineFormHost] resolves to `AndroidView` on Android and `UIKitView` on iOS,
- * wrapping the same platform-native views/view-controllers used by the plain-native samples.
- * No WebView reimplementation, no shared UI code duplicating `:android`/`swift`.
+ * (Android + iOS from one commonMain UI) consuming the real `:compose-sdk`/`:kmp-sdk` libraries —
+ * [EncatchInlineForm] (from `:compose-sdk`) resolves to `AndroidView` on Android and `UIKitView`
+ * on iOS, wrapping the same platform-native views/view-controllers used by the plain-native
+ * samples. No WebView reimplementation, no shared UI code duplicating `:android`/`swift`, and no
+ * sample-owned bridging glue — this app is a thin consumer of the SDK modules, not their owner.
  */
 @Composable
 fun ComposeSampleApp(mockServerBaseUrl: String?) {
@@ -51,13 +55,15 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 
         Button(onClick = {
             scope.launch {
-                SampleSdk.init(
+                Encatch.init(
                     apiKey = "YOUR_API_KEY",
-                    apiBaseUrl = mockServerBaseUrl,
-                    webHost = mockServerBaseUrl,
-                    debugMode = true,
+                    config = EncatchConfig(
+                        apiBaseUrl = mockServerBaseUrl,
+                        webHost = mockServerBaseUrl,
+                        debugMode = true,
+                    ),
                 )
-                status = "Initialized: ${SampleSdk.isInitialized}"
+                status = "Initialized: ${Encatch.isInitialized}"
             }
         }, modifier = Modifier.fillMaxWidth().testTag("initButton")) {
             Text("Init SDK")
@@ -65,7 +71,7 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 
         Button(onClick = {
             scope.launch {
-                SampleSdk.showForm("cmp-modal-form-id")
+                Encatch.showForm("cmp-modal-form-id")
                 status = "showForm(\"cmp-modal-form-id\") called"
             }
         }, modifier = Modifier.fillMaxWidth().testTag("showModalButton")) {
@@ -74,14 +80,14 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 
         Text("Inline form slot:", style = MaterialTheme.typography.titleMedium)
 
-        EncatchInlineFormHost(
+        EncatchInlineForm(
             formId = "cmp-inline-form-id",
             modifier = Modifier.fillMaxWidth().height(320.dp),
         )
 
         Button(onClick = {
             scope.launch {
-                SampleSdk.showForm("cmp-inline-form-id")
+                Encatch.showForm("cmp-inline-form-id")
                 status = "showForm(\"cmp-inline-form-id\") called"
             }
         }, modifier = Modifier.fillMaxWidth().testTag("showInlineButton")) {
@@ -89,14 +95,3 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
         }
     }
 }
-
-/**
- * Renders the SDK's native inline-form view for the current platform via Compose interop.
- * Android: `AndroidView` wrapping `:android`'s `EncatchInlineFormView` directly.
- * iOS: `UIKitView` wrapping `ios-native/`'s real `EncatchInlineFormView` via cinterop against its
- * `@objc` facade (`ios-native/Sources/Encatch/ObjCBridge/EncatchBridge.swift`) — the pure-Swift SDK,
- * not a Kotlin/Native reimplementation. See
- * `/Users/godwin/.claude/plans/stateless-floating-ripple.md` for the full rationale.
- */
-@Composable
-expect fun EncatchInlineFormHost(formId: String, modifier: Modifier = Modifier)

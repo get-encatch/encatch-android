@@ -6,13 +6,42 @@ plugins {
 }
 
 // Variant 5: a sample app that is itself a Kotlin Multiplatform project (shared commonMain
-// business logic calling the platform SDK directly), rather than a single-platform app that
-// merely depends on KMP :core (variants 1-4). Validates the real Gradle KMP consumption path on
-// Android (:core) and — since this branch — the Kotlin/Native cinterop consumption path on iOS
-// against ios-native/'s pure-Swift SDK (no :core/:ios-native-form-ui on iOS anymore). See
-// /Users/godwin/.claude/plans/stateless-floating-ripple.md and compose-sample/build.gradle.kts's
-// twin comment for the full rationale and how ios-native/dist/ was produced.
+// business logic calling the real :kmp-sdk library directly), rather than a single-platform app
+// that merely depends on KMP :core (variants 1-4). Validates the real Gradle KMP consumption path
+// for :kmp-sdk on both Android (thin forward to :core) and iOS (Kotlin/Native cinterop onto
+// ios-native/'s pure-Swift SDK). See /Users/godwin/.claude/plans/stateless-floating-ripple.md
+// ("Publish real :kmp-sdk / :compose-sdk libraries" — Phase 5) for the migration rationale.
+//
+// Unlike compose-sample, this module DOES keep its own `cinterops` block onto ios-native/'s @objc
+// facade: it has no Compose UI, so it can't use :compose-sdk's `EncatchInlineForm` composable, and
+// :kmp-sdk deliberately doesn't expose the raw `EncatchInlineFormView` type itself (it's a pure
+// business-logic module, no UI surface at all — see kmp-sdk/build.gradle.kts's comment). So
+// `KmpSampleViewController.kt`'s hand-rolled UIKit screen still needs direct cinterop access to
+// `com.encatch.bridge.EncatchInlineFormView` for the inline-form *view* only — all business logic
+// (`Encatch.init`/`showForm`/etc., including automatic modal-form-host install) goes through
+// `:kmp-sdk`'s `Encatch` now, not this module's own bridge calls. This is a known, flagged gap in
+// :kmp-sdk's surface for non-Compose KMP consumers that need a raw inline-form view; a cleaner fix
+// would be a small non-Compose `expect`/`actual` view accessor in :kmp-sdk itself, deferred here.
 val xcf = XCFramework("EncatchKmpSample")
+
+// ios-arm64 = device, sim-arm64 = Simulator (Apple Silicon host) — see ios-native/dist's own
+// build steps for how these were produced.
+val iosNativeDistDir = rootProject.layout.projectDirectory.dir("ios-native/dist")
+
+// Automates the above: runs ios-native/build-dist.sh, which reproduces dist/{ios-arm64,sim-arm64}/
+// from ios-native/Sources/ via `xcodebuild` + `libtool`/`lipo` (see that script's own header
+// comment for the exact recipe). The script hashes ios-native/Sources/ into dist/.build-stamp and
+// no-ops if nothing changed, so wiring it as a hard `dependsOn` on every cinterop task doesn't
+// force an xcodebuild invocation on every Gradle build — Gradle's own `inputs`/`outputs` below add
+// a second (even cheaper) up-to-date check on top of that.
+val buildIosNativeDist by tasks.registering(Exec::class) {
+    description = "Builds ios-native/dist/ (cinterop static lib + ObjC header) via ios-native/build-dist.sh"
+    workingDir(rootProject.layout.projectDirectory.dir("ios-native"))
+    commandLine("./build-dist.sh")
+    inputs.dir(rootProject.layout.projectDirectory.dir("ios-native/Sources"))
+    inputs.file(rootProject.layout.projectDirectory.file("ios-native/build-dist.sh"))
+    outputs.dir(iosNativeDistDir)
+}
 
 kotlin {
     androidTarget {
@@ -52,9 +81,14 @@ kotlin {
     }
 
     sourceSets {
+        commonMain.dependencies {
+            implementation(project(":kmp-sdk"))
+        }
         val androidMain by getting {
             dependencies {
-                implementation(project(":core"))
+                // :android (not :core directly) — needed for the raw EncatchInlineFormView type
+                // KmpSampleMainActivity embeds; business logic goes through :kmp-sdk, which itself
+                // forwards to :core.
                 implementation(project(":android"))
                 implementation(libs.androidx.core.ktx)
                 implementation(libs.androidx.appcompat)
@@ -70,6 +104,13 @@ kotlin {
         getByName("iosArm64Main").dependsOn(iosMain)
         getByName("iosSimulatorArm64Main").dependsOn(iosMain)
     }
+}
+
+// The generated task names are cinteropEncatchBridge<Target> (e.g. cinteropEncatchBridgeIosArm64 /
+// cinteropEncatchBridgeIosSimulatorArm64) — match by prefix rather than hardcoding both, so this
+// keeps working if/when more iOS targets are added.
+tasks.matching { it.name.startsWith("cinteropEncatchBridge") }.configureEach {
+    dependsOn(buildIosNativeDist)
 }
 
 android {

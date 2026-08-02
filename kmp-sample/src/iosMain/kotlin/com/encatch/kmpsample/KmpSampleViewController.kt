@@ -2,7 +2,6 @@
 
 package com.encatch.kmpsample
 
-import com.encatch.bridge.EncatchBridge
 import com.encatch.bridge.EncatchInlineFormView
 import kotlinx.cinterop.ObjCAction
 import kotlinx.coroutines.CoroutineScope
@@ -36,17 +35,17 @@ private fun platform.darwin.NSObject.setAccessibilityIdentifierViaKVC(identifier
  * Swift-callable entry point producing the root `UIViewController` for the KMP host sample
  * screen — built entirely in Kotlin/Native (no SwiftUI, no Swift business logic) to demonstrate
  * that a KMP app's iosMain can drive a real native screen straight from commonMain calls, this
- * time backed by the pure-Swift `ios-native` SDK via Kotlin/Native cinterop rather than
- * `:ios-native-form-ui`'s from-scratch WKWebView port. Installs the modal form host once via
- * [EncatchBridge.installFormHost] (the modal path) and embeds a real [EncatchInlineFormView] (the
- * inline path) — both cinterop bindings generated from
- * `ios-native/Sources/Encatch/ObjCBridge/EncatchBridge.swift`'s `@objc` facade.
+ * time backed by `:kmp-sdk`'s `Encatch` (which itself forwards through Kotlin/Native cinterop
+ * onto the pure-Swift `ios-native` SDK). No manual form-host install here: `:kmp-sdk`'s
+ * `Encatch.init(...)` (called from `SampleAppController.initSdk`) already installs the modal form
+ * host internally — see `kmp-sdk/src/iosMain/kotlin/com/encatch/sdk/Encatch.ios.kt`. This screen
+ * still embeds a real [EncatchInlineFormView] directly via this module's own cinterop bindings
+ * for the inline-form path, since `:kmp-sdk` has no Compose dependency and doesn't expose the raw
+ * view type itself — see this module's `build.gradle.kts` for that known gap.
  */
 @Suppress("unused")
-fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController {
-    EncatchBridge.installFormHost()
-    return KmpRootViewController(mockServerBaseUrl)
-}
+fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController =
+    KmpRootViewController(mockServerBaseUrl)
 
 // NOTE: our custom cinterop bridge doesn't synthesize Kotlin properties for the generated
 // header's Objective-C `@property` declarations (see `SampleSdk.ios.kt`'s doc comment) — hence

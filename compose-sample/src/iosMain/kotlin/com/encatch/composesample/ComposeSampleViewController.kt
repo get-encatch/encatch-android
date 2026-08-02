@@ -1,21 +1,15 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-
 package com.encatch.composesample
 
 import androidx.compose.ui.window.ComposeUIViewController
-import com.encatch.bridge.EncatchBridge
 import platform.UIKit.UIViewController
 
 /**
  * Swift-callable entry point producing the root `UIViewController` for the Compose Multiplatform
  * sample screen. The real iOS host app embeds this (e.g. via `UIViewControllerRepresentable` in
- * SwiftUI). Installs the modal form host once via the cinterop'd `EncatchBridge.installFormHost()`
- * (Kotlin binding for `ios-native`'s `EncatchFormHost.install()`, see `EncatchBridge.swift`) — the
- * inline form path handles its own slot registration per-view, but the modal path needs a single
- * app-wide listener, same as `swift/`'s `EncatchFormHost`.
+ * SwiftUI). No manual form-host install here: `:kmp-sdk`'s `Encatch.init(...)` (called from
+ * `ComposeSampleScreen`) already installs the modal form host internally via
+ * `EncatchBridge.installFormHost()` — see `kmp-sdk/src/iosMain/kotlin/com/encatch/sdk/Encatch.ios.kt`.
  */
 @Suppress("unused")
-fun ComposeSampleViewController(mockServerBaseUrl: String?): UIViewController {
-    EncatchBridge.installFormHost()
-    return ComposeUIViewController { ComposeSampleApp(mockServerBaseUrl) }
-}
+fun ComposeSampleViewController(mockServerBaseUrl: String?): UIViewController =
+    ComposeUIViewController { ComposeSampleApp(mockServerBaseUrl) }
