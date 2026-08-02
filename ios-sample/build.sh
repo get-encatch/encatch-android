@@ -1,7 +1,9 @@
 #!/bin/bash
-# Builds :core's debug XCFramework (if needed), generates the Xcode project via xcodegen, and
-# builds the EncatchSample app for the iOS Simulator. Run `./run.sh` afterward to launch it, or
-# `./test.sh` to run the UI test suite (needs :mock-server running first, see mock-server/).
+# Generates the Xcode project via xcodegen and builds the EncatchSample app for the iOS
+# Simulator, linking the pure-Swift `ios-native/` package (no Kotlin/Native XCFramework
+# dependency — see /Users/godwin/.claude/plans/stateless-floating-ripple.md). Run `./run.sh`
+# afterward to launch it, or `./test.sh` to run the UI test suite (needs :mock-server running
+# first, see mock-server/).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -10,18 +12,9 @@ if ! command -v xcodegen >/dev/null 2>&1; then
     exit 1
 fi
 
-FRAMEWORK="../core/build/XCFrameworks/debug/EncatchCore.xcframework"
-if [ ! -d "$FRAMEWORK" ]; then
-    echo "Building EncatchCore.xcframework (debug)..."
-    (cd .. && ./gradlew :core:assembleEncatchCoreDebugXCFramework)
-fi
-
 echo "Generating Xcode project..."
 xcodegen generate
 
-# :core's debug xcframework only has an arm64 simulator slice (no iosX64() target) — building
-# against the generic "iOS Simulator" destination pulls in x86_64 too and fails to link. Target
-# a concrete (booted, or first available) simulator instead, matching its actual architecture.
 DEVICE_ID="${1:-$(xcrun simctl list devices booted -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; ids=[dev["udid"] for devs in d.values() for dev in devs]; print(ids[0] if ids else "")')}"
 if [ -z "$DEVICE_ID" ]; then
     echo "No booted simulator found — boot one (e.g. 'xcrun simctl boot <name>') or pass a device UDID as \$1." >&2

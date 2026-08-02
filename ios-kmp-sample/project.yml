@@ -27,10 +27,26 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
 
+  EncatchKmpSampleAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.kmpsample.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: EncatchKmpSampleApp
+
 schemes:
   EncatchKmpSampleApp:
     build:
       targets:
         EncatchKmpSampleApp: all
+        EncatchKmpSampleAppUITests: [test]
+    test:
+      targets:
+        - EncatchKmpSampleAppUITests
     run:
       config: Debug

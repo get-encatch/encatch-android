@@ -30,10 +30,26 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
 
+  EncatchComposeSampleAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.composesample.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: EncatchComposeSampleApp
+
 schemes:
   EncatchComposeSampleApp:
     build:
       targets:
         EncatchComposeSampleApp: all
+        EncatchComposeSampleAppUITests: [test]
+    test:
+      targets:
+        - EncatchComposeSampleAppUITests
     run:
       config: Debug

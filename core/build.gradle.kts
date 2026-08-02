@@ -1,5 +1,3 @@
-import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
-
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
@@ -8,8 +6,10 @@ plugins {
     signing
 }
 
-// Produces EncatchCore.xcframework for the native Swift UI layer (swift/ package) to consume.
-val xcf = XCFramework("EncatchCore")
+// Android + desktop/JVM only. iOS moved to ios-native/ (pure Swift, no Kotlin/Native dependency)
+// — see /Users/godwin/.claude/plans/stateless-floating-ripple.md. :core previously also targeted
+// iosArm64/iosSimulatorArm64 to produce EncatchCore.xcframework for the (now-deleted) swift/
+// package; nothing links that anymore.
 
 kotlin {
     androidTarget {
@@ -21,18 +21,6 @@ kotlin {
     jvm("desktop") {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-        }
-    }
-    iosArm64 {
-        binaries.framework {
-            baseName = "EncatchCore"
-            xcf.add(this)
-        }
-    }
-    iosSimulatorArm64 {
-        binaries.framework {
-            baseName = "EncatchCore"
-            xcf.add(this)
         }
     }
 
@@ -78,14 +66,6 @@ kotlin {
                 implementation(libs.ktor.client.mock)
             }
         }
-        val iosMain by creating {
-            dependsOn(commonMain.get())
-            dependencies {
-                implementation(libs.ktor.client.darwin)
-            }
-        }
-        getByName("iosArm64Main").dependsOn(iosMain)
-        getByName("iosSimulatorArm64Main").dependsOn(iosMain)
     }
 }
 

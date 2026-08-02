@@ -1,6 +1,5 @@
 import SwiftUI
 import Encatch
-import EncatchCore
 
 /// Mock server default (matches `mock-server/src/main/kotlin/com/encatch/mockserver/Main.kt`'s
 /// DEFAULT_PORT). iOS Simulator shares the host Mac's network namespace, so `127.0.0.1` reaches
@@ -42,7 +41,7 @@ struct ContentView: View {
                         let config = EncatchConfig(
                             apiBaseUrl: mockServerBaseURL,
                             webHost: mockServerBaseURL,
-                            theme: EncatchTheme.system.kotlin,
+                            theme: Theme.system,
                             isFullScreen: false,
                             debugMode: true,
                             appVersion: nil,
@@ -61,7 +60,7 @@ struct ContentView: View {
             Button("Show modal form") {
                 Task {
                     do {
-                        try await Encatch.shared.showForm(formId: "ios-modal-form-id")
+                        try await Encatch.shared.showForm("ios-modal-form-id")
                     } catch {
                         status = "showForm() failed: \(EncatchError(error).localizedDescription)"
                     }
@@ -82,7 +81,7 @@ struct ContentView: View {
             Button("Show inline form") {
                 Task {
                     do {
-                        try await Encatch.shared.showForm(formId: "ios-inline-form-id")
+                        try await Encatch.shared.showForm("ios-inline-form-id")
                     } catch {
                         status = "showForm() failed: \(EncatchError(error).localizedDescription)"
                     }

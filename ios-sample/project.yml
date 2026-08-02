@@ -6,7 +6,7 @@ options:
 
 packages:
   Encatch:
-    path: ../swift
+    path: ../ios-native
 
 targets:
   EncatchSample:

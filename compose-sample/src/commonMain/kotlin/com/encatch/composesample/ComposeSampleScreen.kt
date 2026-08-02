@@ -17,9 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import com.encatch.core.Encatch
-import com.encatch.core.EncatchConfig
 import kotlinx.coroutines.launch
 
 /**
@@ -48,28 +47,28 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Encatch Compose Multiplatform Sample", style = MaterialTheme.typography.headlineSmall)
-        Text(status, style = MaterialTheme.typography.bodySmall)
+        Text(status, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("statusText"))
 
         Button(onClick = {
             scope.launch {
-                val config = if (mockServerBaseUrl != null) {
-                    EncatchConfig(apiBaseUrl = mockServerBaseUrl, webHost = mockServerBaseUrl, debugMode = true)
-                } else {
-                    EncatchConfig(debugMode = true)
-                }
-                Encatch.init("YOUR_API_KEY", config)
-                status = "Initialized: ${Encatch.isInitialized}"
+                SampleSdk.init(
+                    apiKey = "YOUR_API_KEY",
+                    apiBaseUrl = mockServerBaseUrl,
+                    webHost = mockServerBaseUrl,
+                    debugMode = true,
+                )
+                status = "Initialized: ${SampleSdk.isInitialized}"
             }
-        }, modifier = Modifier.fillMaxWidth()) {
+        }, modifier = Modifier.fillMaxWidth().testTag("initButton")) {
             Text("Init SDK")
         }
 
         Button(onClick = {
             scope.launch {
-                Encatch.showForm("cmp-modal-form-id")
+                SampleSdk.showForm("cmp-modal-form-id")
                 status = "showForm(\"cmp-modal-form-id\") called"
             }
-        }, modifier = Modifier.fillMaxWidth()) {
+        }, modifier = Modifier.fillMaxWidth().testTag("showModalButton")) {
             Text("Show modal form")
         }
 
@@ -82,10 +81,10 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 
         Button(onClick = {
             scope.launch {
-                Encatch.showForm("cmp-inline-form-id")
+                SampleSdk.showForm("cmp-inline-form-id")
                 status = "showForm(\"cmp-inline-form-id\") called"
             }
-        }, modifier = Modifier.fillMaxWidth()) {
+        }, modifier = Modifier.fillMaxWidth().testTag("showInlineButton")) {
             Text("Show inline form")
         }
     }
@@ -94,10 +93,10 @@ private fun ComposeSampleScreen(mockServerBaseUrl: String?) {
 /**
  * Renders the SDK's native inline-form view for the current platform via Compose interop.
  * Android: `AndroidView` wrapping `:android`'s `EncatchInlineFormView` directly.
- * iOS: `UIKitView` wrapping `:ios-native-form-ui`'s `EncatchNativeInlineFormView` — a from-scratch
- * Kotlin/Native WebKit port, since Kotlin/Native can't cinterop against a Swift Package directly
- * and linking `swift/`'s XCFramework alongside this module's own would duplicate `:core`'s
- * singletons (see `EncatchNativeFormHost`'s doc comment).
+ * iOS: `UIKitView` wrapping `ios-native/`'s real `EncatchInlineFormView` via cinterop against its
+ * `@objc` facade (`ios-native/Sources/Encatch/ObjCBridge/EncatchBridge.swift`) — the pure-Swift SDK,
+ * not a Kotlin/Native reimplementation. See
+ * `/Users/godwin/.claude/plans/stateless-floating-ripple.md` for the full rationale.
  */
 @Composable
 expect fun EncatchInlineFormHost(formId: String, modifier: Modifier = Modifier)

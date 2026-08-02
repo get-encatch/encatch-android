@@ -12,8 +12,8 @@
 # Variants 1/2/4(Android)/5(Android) are driven with real UI Automator flows via instrumentation
 # tests (init -> show modal -> show inline, screenshotted at each step). Variant 3 (iOS native
 # Swift) is driven with a real XCUITest flow, same shape, screenshots attach to the .xcresult.
-# Variants 4/5's iOS sides don't have XCUITest targets yet (see HANDOFF.md) — they get a build +
-# launch + single-screenshot smoke check, not a full driven flow.
+# Variants 4/5's iOS sides don't have XCUITest targets yet — they get a build + launch +
+# single-screenshot smoke check, not a full driven flow.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
@@ -172,9 +172,10 @@ echo
 
 # ---------------------------------------------------------------------------
 # 4/5. iOS variants 4 & 5 — no XCUITest target yet: build + launch + smoke screenshot.
-# Neither app links swift/ — don't add that dependency to either (see HANDOFF.md's
-# "Real architectural finding": two Kotlin/Native frameworks that each embed :core produce two
-# disconnected singletons in one process).
+# Both apps cinterop against ios-native/'s @objc facade (EncatchBridge.swift) rather than linking
+# any Kotlin/Native binary — see /Users/godwin/.claude/plans/stateless-floating-ripple.md. This is
+# the fix for the old architecture, where two independently-linked Kotlin/Native frameworks that
+# each embedded :core produced two disconnected `Encatch` singletons in one process.
 # ---------------------------------------------------------------------------
 run_ios_smoke_test() {
     local variant_name="$1"

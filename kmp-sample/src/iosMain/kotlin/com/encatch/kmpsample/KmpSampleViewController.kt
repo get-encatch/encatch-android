@@ -2,8 +2,8 @@
 
 package com.encatch.kmpsample
 
-import com.encatch.iosnativeui.EncatchNativeFormHost
-import com.encatch.iosnativeui.EncatchNativeInlineFormView
+import com.encatch.bridge.EncatchBridge
+import com.encatch.bridge.EncatchInlineFormView
 import kotlinx.cinterop.ObjCAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,20 +14,43 @@ import platform.UIKit.UIColor
 import platform.UIKit.UILabel
 import platform.UIKit.UIStackView
 import platform.UIKit.UIViewController
+import platform.Foundation.setValue
+
+/**
+ * Sets `accessibilityIdentifier` via Objective-C key-value coding rather than a direct property
+ * assignment or a cast to `UIAccessibilityIdentificationProtocol`. Real UIKit classes
+ * (`UIView`/`UILabel`/`UIButton`, ...) expose `accessibilityIdentifier` through an
+ * Objective-C *category* on `NSObject`, not through formal protocol conformance — Kotlin/Native's
+ * generated `UIAccessibilityIdentificationProtocol` binding exists (matching the header), but
+ * casting a real `UIView` instance to it throws `TypeCastException` at runtime (crashed the app
+ * on launch when first tried here: "class UILabel cannot be cast to class
+ * platform.UIKit.UIAccessibilityIdentificationProtocol") because the class doesn't formally
+ * declare that protocol's conformance at the Objective-C runtime level. KVC bypasses static
+ * typing entirely and talks to the same underlying `setAccessibilityIdentifier:` selector.
+ */
+private fun platform.darwin.NSObject.setAccessibilityIdentifierViaKVC(identifier: String) {
+    this.setValue(identifier as Any?, forKey = "accessibilityIdentifier")
+}
 
 /**
  * Swift-callable entry point producing the root `UIViewController` for the KMP host sample
  * screen — built entirely in Kotlin/Native (no SwiftUI, no Swift business logic) to demonstrate
- * that a KMP app's iosMain can drive a real native screen straight from commonMain calls.
- * Installs [EncatchNativeFormHost] once (the modal path) and embeds a real
- * [EncatchNativeInlineFormView] (the inline path) — both from `:ios-native-form-ui`, the same
- * native Kotlin/Native form UI `:compose-sample`'s iOS side uses.
+ * that a KMP app's iosMain can drive a real native screen straight from commonMain calls, this
+ * time backed by the pure-Swift `ios-native` SDK via Kotlin/Native cinterop rather than
+ * `:ios-native-form-ui`'s from-scratch WKWebView port. Installs the modal form host once via
+ * [EncatchBridge.installFormHost] (the modal path) and embeds a real [EncatchInlineFormView] (the
+ * inline path) — both cinterop bindings generated from
+ * `ios-native/Sources/Encatch/ObjCBridge/EncatchBridge.swift`'s `@objc` facade.
  */
 @Suppress("unused")
 fun KmpSampleViewController(mockServerBaseUrl: String?): UIViewController {
-    EncatchNativeFormHost.install()
+    EncatchBridge.installFormHost()
     return KmpRootViewController(mockServerBaseUrl)
 }
+
+// NOTE: our custom cinterop bridge doesn't synthesize Kotlin properties for the generated
+// header's Objective-C `@property` declarations (see `SampleSdk.ios.kt`'s doc comment) — hence
+// `setFormId(...)` below instead of `formId = ...`.
 
 /**
  * `UIControl.addTarget` doesn't retain its target — a bare `ClosureTarget` created inline gets
@@ -41,15 +64,17 @@ private class KmpRootViewController(mockServerBaseUrl: String?) : UIViewControll
     private val statusLabel = UILabel().apply {
         text = "Not initialized"
         numberOfLines = 0
+        setAccessibilityIdentifierViaKVC("statusText")
     }
 
     init {
-        fun button(title: String, onTap: () -> Unit): UIButton {
+        fun button(title: String, accessibilityId: String, onTap: () -> Unit): UIButton {
             val button = UIButton.buttonWithType(platform.UIKit.UIButtonTypeSystem)
             button.setTitle(title, forState = platform.UIKit.UIControlStateNormal)
             button.backgroundColor = UIColor(red = 0.35, green = 0.30, blue = 0.55, alpha = 1.0)
             button.setTitleColor(UIColor.whiteColor, forState = platform.UIKit.UIControlStateNormal)
             button.layer.cornerRadius = 8.0
+            button.setAccessibilityIdentifierViaKVC(accessibilityId)
             val target = ClosureTarget(onTap)
             targets.add(target)
             button.addTarget(
@@ -60,17 +85,17 @@ private class KmpRootViewController(mockServerBaseUrl: String?) : UIViewControll
             return button
         }
 
-        val initButton = button("Init SDK") {
+        val initButton = button("Init SDK", "initButton") {
             scope.launch { statusLabel.text = SampleAppController.initSdk(mockServerBaseUrl) }
         }
-        val modalButton = button("Show modal form") {
+        val modalButton = button("Show modal form", "showModalButton") {
             scope.launch { statusLabel.text = SampleAppController.showModalForm() }
         }
-        val inlineForm = EncatchNativeInlineFormView().apply {
-            formId = "kmp-inline-form-id"
+        val inlineForm = EncatchInlineFormView().apply {
+            setFormId("kmp-inline-form-id")
             setTranslatesAutoresizingMaskIntoConstraints(false)
         }
-        val inlineButton = button("Show inline form") {
+        val inlineButton = button("Show inline form", "showInlineButton") {
             scope.launch { statusLabel.text = SampleAppController.showInlineForm() }
         }
 
