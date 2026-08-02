@@ -42,6 +42,34 @@ val unsubscribe = Encatch.on { eventType, payload ->
 }
 ```
 
+### Inline forms
+
+Renders the form inline within your layout instead of as a modal overlay — place it anywhere in
+an Activity/Fragment's view hierarchy, XML or programmatic:
+
+```xml
+<com.encatch.android.EncatchInlineFormView
+    android:id="@+id/inlineForm"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content" />
+```
+
+```kotlin
+findViewById<EncatchInlineFormView>(R.id.inlineForm).formId = "your-form-id"
+```
+
+or programmatically:
+
+```kotlin
+val inlineForm = EncatchInlineFormView(context).apply {
+    formId = "your-form-id"
+}
+container.addView(inlineForm)
+```
+
+Leave `formId` unset to make the view a wildcard slot that catches any `showForm(...)` call not
+claimed by another exact-match inline slot — otherwise, calls fall through to the modal overlay.
+
 ## Default hosts
 
 | Option | Default |
