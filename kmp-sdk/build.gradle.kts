@@ -35,6 +35,15 @@ val buildIosNativeDist by tasks.registering(Exec::class) {
 }
 
 kotlin {
+    // See :core's build.gradle.kts for the full rationale — pinned below our actual Kotlin
+    // version so consumers on an older Kotlin Gradle Plugin can still read this published
+    // library's binary metadata. Especially relevant here: :kmp-sdk is the module most likely to
+    // be depended on directly by a customer's own KMP app.
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+    }
+
     androidTarget {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)

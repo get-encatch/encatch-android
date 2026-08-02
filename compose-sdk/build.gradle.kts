@@ -37,6 +37,15 @@ val buildIosNativeDist by tasks.registering(Exec::class) {
 }
 
 kotlin {
+    // See :core's build.gradle.kts for the full rationale. Attempted here too for the same
+    // consumer-compatibility reason, but this module depends on Compose Multiplatform's iOS/
+    // native target, which may impose its own higher Kotlin floor — if so, raise this to whatever
+    // Compose Multiplatform actually requires rather than leaving the build broken.
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+    }
+
     androidTarget {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)

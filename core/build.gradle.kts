@@ -12,6 +12,18 @@ plugins {
 // package; nothing links that anymore.
 
 kotlin {
+    // Pinned below the Kotlin version we actually build with (2.3.21 at time of writing) so
+    // consuming apps on an older Kotlin Gradle Plugin can still read this published library's
+    // binary metadata. Kotlin's compiler only supports apiVersion/languageVersion up to 2 minor
+    // versions behind the compiler itself, so 2.1 (released Nov 2024) is the oldest non-deprecated
+    // target available from 2.3.x — chosen deliberately for broad compatibility with SDK
+    // consumers, not because our own code needs anything older. Raise this in lockstep with the
+    // project's Kotlin version over time, keeping roughly a 1-2 minor-version buffer behind it.
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+    }
+
     androidTarget {
         publishLibraryVariants("release")
         compilerOptions {

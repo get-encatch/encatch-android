@@ -31,8 +31,13 @@ android {
 }
 
 kotlin {
+    // See :core's build.gradle.kts for the full rationale — pinned below our actual Kotlin
+    // version (2.3.21) so consuming apps on an older Kotlin Gradle Plugin can still read this
+    // published library's binary metadata.
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
     }
 }
 
