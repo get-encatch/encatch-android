@@ -6,6 +6,7 @@ expect object TesterPrefs {
     var formId: String?
     var apiBaseUrl: String?
     var webHost: String?
+    var interceptorFormId: String?
     var userName: String?
     val isSetupComplete: Boolean
     fun clear()

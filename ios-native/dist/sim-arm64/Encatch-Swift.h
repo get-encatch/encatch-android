@@ -426,6 +426,7 @@ SWIFT_CLASS_PROPERTY(@property (nonatomic, class, readonly, strong) EncatchBridg
 + (void)installFormHost;
 @end
 
+@class EncatchBridgeShowFormInterceptorPayload;
 /// <code>@objc</code>-compatible mirror of <code>EncatchConfig</code>, for Kotlin/Native cinterop callers that can’t
 /// construct the Swift struct directly. Unset fields fall back to <code>Encatch.initialize</code>’s own
 /// defaults (see <code>EncatchConfig.init</code>).
@@ -439,6 +440,8 @@ SWIFT_CLASS_NAMED("EncatchBridgeConfig")
 /// One of “light” / “dark” / “system” (case-insensitive). Any other value (including nil)
 /// resolves to <code>.system</code>.
 @property (nonatomic, copy) NSString * _Nullable theme;
+/// See <code>EncatchBridgeInterceptorCallback</code>‘s doc comment for why this isn’t an <code>async</code> closure.
+@property (nonatomic, copy) void (^ _Nullable onBeforeShowForm)(EncatchBridgeShowFormInterceptorPayload * _Nonnull, void (^ _Nonnull)(BOOL));
 - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
 @end
 
@@ -485,6 +488,29 @@ SWIFT_CLASS_NAMED("EncatchBridgeSecureOptions")
 @property (nonatomic, copy) NSString * _Nonnull signature;
 @property (nonatomic, copy) NSString * _Nullable generatedDateTimeInUtc;
 - (nonnull instancetype)initWithSignature:(NSString * _Nonnull)signature OBJC_DESIGNATED_INITIALIZER;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
+@end
+
+/// <code>@objc</code> mirror of <code>ShowFormInterceptorPayload</code>, passed to <code>EncatchBridgeConfig.onBeforeShowForm</code>.
+/// <code>formConfig</code> (the full form definition, <code>ShowFormResponse</code>) is deliberately NOT mirrored here —
+/// it isn’t <code>Codable</code> (unlike <code>SubmitFormRequest</code>), and an interceptor deciding whether to allow or
+/// block a form needs lightweight identifying info (which form, how it was triggered), not the
+/// whole config tree; same “flat mirror vs. JSON passthrough vs. out of scope” tradeoff this file’s
+/// top doc comment already describes for <code>submitForm</code>. <code>prefillResponses</code>/<code>context</code> are exposed as
+/// JSON strings (nil if empty), the same pattern <code>EncatchBridgeEventPayload.dataJSON</code> already uses.
+SWIFT_CLASS_NAMED("EncatchBridgeShowFormInterceptorPayload")
+@interface EncatchBridgeShowFormInterceptorPayload : NSObject
+@property (nonatomic, readonly, copy) NSString * _Nonnull formId;
+/// One of “always” / “on-complete” / “never” (<code>ResetMode.wireValue</code>).
+@property (nonatomic, readonly, copy) NSString * _Nonnull resetMode;
+/// One of “automatic” / “manual” (<code>TriggerType.wireValue</code>).
+@property (nonatomic, readonly, copy) NSString * _Nonnull triggerType;
+@property (nonatomic, readonly, copy) NSString * _Nullable prefillResponsesJSON;
+@property (nonatomic, readonly, copy) NSString * _Nullable locale;
+/// One of “light” / “dark” / “system” (<code>Theme.wireValue</code>), or nil.
+@property (nonatomic, readonly, copy) NSString * _Nullable theme;
+@property (nonatomic, readonly, copy) NSString * _Nullable contextJSON;
 - (nonnull instancetype)init SWIFT_UNAVAILABLE;
 + (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
 @end

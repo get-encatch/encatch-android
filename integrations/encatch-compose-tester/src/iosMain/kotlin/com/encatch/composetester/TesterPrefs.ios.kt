@@ -21,6 +21,10 @@ actual object TesterPrefs {
         get() = defaults.stringForKey("web_host")
         set(value) = defaults.setObject(value, forKey = "web_host")
 
+    actual var interceptorFormId: String?
+        get() = defaults.stringForKey("interceptor_form_id")
+        set(value) = defaults.setObject(value, forKey = "interceptor_form_id")
+
     actual var userName: String?
         get() = defaults.stringForKey("user_name")
         set(value) = defaults.setObject(value, forKey = "user_name")
@@ -29,7 +33,7 @@ actual object TesterPrefs {
         get() = !apiKey.isNullOrBlank() && !formId.isNullOrBlank()
 
     actual fun clear() {
-        listOf("api_key", "form_id", "api_base_url", "web_host", "user_name").forEach {
+        listOf("api_key", "form_id", "api_base_url", "web_host", "interceptor_form_id", "user_name").forEach {
             defaults.removeObjectForKey(it)
         }
     }

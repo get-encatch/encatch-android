@@ -3,6 +3,8 @@ package com.encatch.kmptester
 import com.encatch.sdk.Encatch
 import com.encatch.sdk.EncatchConfig
 import com.encatch.sdk.EventType
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
@@ -14,16 +16,43 @@ import kotlinx.serialization.json.contentOrNull
  * completion-handler methods, which Swift's importer bridges automatically) — no Kotlin/Native
  * UIKit code needed on the iOS side, unlike kmp-sample's `KmpSampleViewController.kt`.
  *
- * `:kmp-sdk`'s `EncatchConfig` has no `onBeforeShowForm` yet (see its `Types.kt`), so this tester
- * has no interceptor screen — a known gap, unlike `encatch-android-tester`/`encatch-ios-tester`.
+ * [initSdk]'s `onIntercept` param is a plain (non-`suspend`) callback, not a `suspend` function
+ * type, even though it wraps `:kmp-sdk`'s `suspend (ShowFormInterceptorPayload) -> Boolean`
+ * interceptor internally: Kotlin/Native's ObjC export only turns `suspend` *member* functions into
+ * completion-handler methods — a `suspend` function TYPE used as a parameter doesn't bridge to
+ * Swift cleanly. So the platform UI gets a plain `(formId, completion) -> Unit` callback instead
+ * (a totally ordinary Swift/Kotlin closure) and calls `completion(allow)` whenever it has an
+ * answer; [suspendCancellableCoroutine] on this side converts that back into the suspend result
+ * `:kmp-sdk` needs. Same "plain callback + explicit completion" technique
+ * `EncatchBridge.swift`/`Encatch.ios.kt` already use for this exact interceptor one boundary
+ * further out.
  */
 object TesterController {
 
     @Throws(Exception::class)
-    suspend fun initSdk(apiKey: String, baseUrl: String?, webHost: String?) {
+    suspend fun initSdk(
+        apiKey: String,
+        baseUrl: String?,
+        webHost: String?,
+        interceptorFormId: String?,
+        onIntercept: (formId: String, completion: (Boolean) -> Unit) -> Unit,
+    ) {
         Encatch.init(
             apiKey = apiKey,
-            config = EncatchConfig(apiBaseUrl = baseUrl, webHost = webHost, debugMode = true),
+            config = EncatchConfig(
+                apiBaseUrl = baseUrl,
+                webHost = webHost,
+                debugMode = true,
+                onBeforeShowForm = { payload ->
+                    if (payload.formId == interceptorFormId) {
+                        suspendCancellableCoroutine { cont ->
+                            onIntercept(payload.formId) { allow -> cont.resume(allow) }
+                        }
+                    } else {
+                        true
+                    }
+                },
+            ),
         )
     }
 

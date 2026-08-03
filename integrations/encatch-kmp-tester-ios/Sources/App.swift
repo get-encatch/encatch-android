@@ -1,9 +1,6 @@
 import SwiftUI
 
-/// Standalone iOS tester app for `:kmp-sdk`, modeled on `encatch-ios-tester`. No interceptor
-/// screen here — `:kmp-sdk`'s `EncatchConfig` has no `onBeforeShowForm` yet (see
-/// `encatch-kmp-tester/src/commonMain/.../TesterController.kt`'s doc comment), a known gap
-/// relative to the android/ios-native testers.
+/// Standalone iOS tester app for `:kmp-sdk`, modeled on `encatch-ios-tester`.
 @main
 struct EncatchKmpTesterApp: App {
     var body: some Scene {
@@ -35,6 +32,16 @@ struct RootView: View {
                 BillingView(route: route, state: state)
             case .routeNotFound(let route):
                 RouteNotFoundView(route: route, state: state)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { state.interceptedFormId != nil },
+            set: { isPresented in
+                if !isPresented { state.resolveInterceptor(allow: false) }
+            }
+        )) {
+            if let formId = state.interceptedFormId {
+                InterceptorSheet(formId: formId, onResult: state.resolveInterceptor)
             }
         }
         .onAppear { state.start() }

@@ -213,6 +213,20 @@ private fun ResetMode.toCore(): com.encatch.core.ResetMode = when (this) {
     ResetMode.NEVER -> com.encatch.core.ResetMode.NEVER
 }
 
+private fun com.encatch.core.ResetMode.toSdk(): ResetMode = ResetMode.valueOf(name)
+
+private fun com.encatch.core.TriggerType.toSdk(): TriggerType = TriggerType.valueOf(name)
+
+private fun com.encatch.core.ShowFormInterceptorPayload.toSdk(): ShowFormInterceptorPayload = ShowFormInterceptorPayload(
+    formId = formId,
+    resetMode = resetMode.toSdk(),
+    triggerType = triggerType.toSdk(),
+    prefillResponses = prefillResponses,
+    locale = locale,
+    theme = theme?.toSdk(),
+    context = context,
+)
+
 private fun ContextValue.toCore(): com.encatch.core.ContextValue = when (this) {
     is ContextValue.StringValue -> com.encatch.core.ContextValue.StringValue(value)
     is ContextValue.NumberValue -> com.encatch.core.ContextValue.NumberValue(value)
@@ -229,6 +243,9 @@ private fun EncatchConfig.toCore(): com.encatch.core.EncatchConfig {
         isFullScreen = isFullScreen,
         debugMode = debugMode,
         appVersion = appVersion,
+        onBeforeShowForm = onBeforeShowForm?.let { interceptor ->
+            { payload: com.encatch.core.ShowFormInterceptorPayload -> interceptor(payload.toSdk()) }
+        },
     )
 }
 

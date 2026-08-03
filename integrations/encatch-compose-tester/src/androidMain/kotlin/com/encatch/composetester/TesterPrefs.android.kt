@@ -32,6 +32,12 @@ actual object TesterPrefs {
             prefs.edit().putString("web_host", value).apply()
         }
 
+    actual var interceptorFormId: String?
+        get() = prefs.getString("interceptor_form_id", null)
+        set(value) {
+            prefs.edit().putString("interceptor_form_id", value).apply()
+        }
+
     actual var userName: String?
         get() = prefs.getString("user_name", null)
         set(value) {

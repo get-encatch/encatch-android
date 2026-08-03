@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +30,7 @@ import com.encatch.sdk.Encatch
 import com.encatch.sdk.EncatchConfig
 import com.encatch.sdk.EventType
 import com.encatch.sdk.compose.EncatchInlineForm
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -37,11 +39,9 @@ import kotlinx.serialization.json.contentOrNull
  * The whole tester app in one shared `commonMain` Compose UI — the simplest of the four testers,
  * since `:compose-sdk` needs no per-platform screen code at all beyond a tiny entry point
  * (`MainActivity.kt` on Android, `ComposeTesterViewController.kt` on iOS). Modeled on
- * `encatch-android-tester`'s screen set, minus two things `:compose-sdk` doesn't support yet:
- *  - No interceptor screen: `EncatchConfig` here (from `:kmp-sdk`, which `:compose-sdk` reuses)
- *    has no `onBeforeShowForm`.
- *  - No wildcard inline slot: `EncatchInlineForm(formId: String, ...)` takes a non-null `formId`
- *    — only the exact-match case is exposed as a composable.
+ * `encatch-android-tester`'s screen set, minus one thing `:compose-sdk` doesn't support yet: no
+ * wildcard inline slot — `EncatchInlineForm(formId: String, ...)` takes a non-null `formId`, only
+ * the exact-match case is exposed as a composable.
  */
 @Composable
 fun TesterApp() {
@@ -58,7 +58,20 @@ private fun TesterScreens() {
         mutableStateOf<Screen>(if (TesterPrefs.isSetupComplete) Screen.Login else Screen.Setup)
     }
     var lastEvent by remember { mutableStateOf("No events yet") }
+    var interceptedFormId by remember { mutableStateOf<String?>(null) }
+    var interceptorResume by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
+
+    interceptedFormId?.let { formId ->
+        InterceptorDialog(
+            formId = formId,
+            onResult = { allow ->
+                interceptorResume?.invoke(allow)
+                interceptedFormId = null
+                interceptorResume = null
+            },
+        )
+    }
 
     DisposableEffect(Unit) {
         val unsubscribe = Encatch.on { eventType, payload ->
@@ -79,15 +92,33 @@ private fun TesterScreens() {
 
     when (val current = screen) {
         Screen.Setup -> SetupScreen(
-            onContinue = { apiKey, formId, baseUrl, webHost ->
+            onContinue = { apiKey, formId, baseUrl, webHost, interceptorFormId ->
                 TesterPrefs.apiKey = apiKey
                 TesterPrefs.formId = formId
                 TesterPrefs.apiBaseUrl = baseUrl.ifBlank { null }
                 TesterPrefs.webHost = webHost.ifBlank { null }
+                TesterPrefs.interceptorFormId = interceptorFormId.ifBlank { null }
                 scope.launch {
                     Encatch.init(
                         apiKey,
-                        EncatchConfig(apiBaseUrl = TesterPrefs.apiBaseUrl, webHost = TesterPrefs.webHost, debugMode = true),
+                        EncatchConfig(
+                            apiBaseUrl = TesterPrefs.apiBaseUrl,
+                            webHost = TesterPrefs.webHost,
+                            debugMode = true,
+                            // Demonstrates the blocked-form / native-replacement pattern: any
+                            // showForm() call for the configured interceptor form id is held here
+                            // until the tester answers the InterceptorDialog above.
+                            onBeforeShowForm = { payload ->
+                                if (payload.formId == TesterPrefs.interceptorFormId) {
+                                    val deferred = CompletableDeferred<Boolean>()
+                                    interceptedFormId = payload.formId
+                                    interceptorResume = { deferred.complete(it) }
+                                    deferred.await()
+                                } else {
+                                    true
+                                }
+                            },
+                        ),
                     )
                     screen = Screen.Login
                 }
@@ -107,7 +138,9 @@ private fun TesterScreens() {
 
         Screen.Home -> HomeScreen(
             lastEvent = lastEvent,
+            interceptorFormId = TesterPrefs.interceptorFormId,
             onShowModalForm = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
+            onShowInterceptorForm = { id -> scope.launch { Encatch.showForm(id) } },
             onNavigate = { screen = it },
         )
 
@@ -146,11 +179,14 @@ private fun TesterScreens() {
 }
 
 @Composable
-private fun SetupScreen(onContinue: (apiKey: String, formId: String, baseUrl: String, webHost: String) -> Unit) {
+private fun SetupScreen(
+    onContinue: (apiKey: String, formId: String, baseUrl: String, webHost: String, interceptorFormId: String) -> Unit,
+) {
     var apiKey by remember { mutableStateOf("") }
     var formId by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     var webHost by remember { mutableStateOf("") }
+    var interceptorFormId by remember { mutableStateOf("") }
 
     Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
         Text("Encatch Compose Tester — Setup", style = MaterialTheme.typography.headlineSmall)
@@ -164,9 +200,16 @@ private fun SetupScreen(onContinue: (apiKey: String, formId: String, baseUrl: St
         OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("API base URL (optional)") }, modifier = Modifier.fillMaxWidth())
         Spacer(8)
         OutlinedTextField(webHost, { webHost = it }, label = { Text("Web host (optional)") }, modifier = Modifier.fillMaxWidth())
+        Spacer(8)
+        OutlinedTextField(
+            interceptorFormId,
+            { interceptorFormId = it },
+            label = { Text("Interceptor test form id (optional)") },
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer()
         Button(
-            onClick = { onContinue(apiKey.trim(), formId.trim(), baseUrl.trim(), webHost.trim()) },
+            onClick = { onContinue(apiKey.trim(), formId.trim(), baseUrl.trim(), webHost.trim(), interceptorFormId.trim()) },
             enabled = apiKey.isNotBlank() && formId.isNotBlank(),
         ) { Text("Save & continue") }
     }
@@ -188,7 +231,13 @@ private fun LoginScreen(initialUserName: String, onLogIn: (String) -> Unit) {
 }
 
 @Composable
-private fun HomeScreen(lastEvent: String, onShowModalForm: () -> Unit, onNavigate: (Screen) -> Unit) {
+private fun HomeScreen(
+    lastEvent: String,
+    interceptorFormId: String?,
+    onShowModalForm: () -> Unit,
+    onShowInterceptorForm: (String) -> Unit,
+    onNavigate: (Screen) -> Unit,
+) {
     LaunchedEffect(Unit) {
         Encatch.trackScreen("Home")
         Encatch.trackEvent("home_viewed")
@@ -200,6 +249,10 @@ private fun HomeScreen(lastEvent: String, onShowModalForm: () -> Unit, onNavigat
         Text("Last event: $lastEvent")
         Spacer()
         Button(onClick = onShowModalForm) { Text("Show form (modal)") }
+        if (!interceptorFormId.isNullOrBlank()) {
+            Spacer(8)
+            Button(onClick = { onShowInterceptorForm(interceptorFormId) }) { Text("Interceptor test") }
+        }
         Spacer()
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { onNavigate(Screen.Events) }) { Text("Events") }
@@ -252,6 +305,7 @@ private fun SettingsScreen(onLogOut: () -> Unit, onClearSetup: () -> Unit, onBac
         Text("Form id: ${TesterPrefs.formId}")
         Text("API base URL: ${TesterPrefs.apiBaseUrl ?: "(default)"}")
         Text("Web host: ${TesterPrefs.webHost ?: "(default)"}")
+        Text("Interceptor form id: ${TesterPrefs.interceptorFormId ?: "(none)"}")
         Spacer()
         Button(onClick = onLogOut) { Text("Log out") }
         Spacer(8)
@@ -285,6 +339,17 @@ private fun RouteNotFoundScreen(route: String, onGoBack: () -> Unit) {
         Spacer()
         Button(onClick = onGoBack) { Text("Go back") }
     }
+}
+
+@Composable
+private fun InterceptorDialog(formId: String, onResult: (Boolean) -> Unit) {
+    AlertDialog(
+        onDismissRequest = { onResult(false) },
+        title = { Text("Interceptor: $formId") },
+        text = { Text("onBeforeShowForm fired for this form id. Allow the SDK to render it, or deny to simulate a native replacement UI.") },
+        confirmButton = { TextButton(onClick = { onResult(true) }) { Text("Allow") } },
+        dismissButton = { TextButton(onClick = { onResult(false) }) { Text("Deny") } },
+    )
 }
 
 @Composable

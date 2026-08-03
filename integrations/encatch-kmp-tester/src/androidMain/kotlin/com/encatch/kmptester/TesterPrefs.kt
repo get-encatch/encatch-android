@@ -22,6 +22,10 @@ class TesterPrefs(context: Context) {
         get() = prefs.getString(KEY_WEB_HOST, null)
         set(value) = prefs.edit().putString(KEY_WEB_HOST, value).apply()
 
+    var interceptorFormId: String?
+        get() = prefs.getString(KEY_INTERCEPTOR_FORM_ID, null)
+        set(value) = prefs.edit().putString(KEY_INTERCEPTOR_FORM_ID, value).apply()
+
     var userName: String?
         get() = prefs.getString(KEY_USER_NAME, null)
         set(value) = prefs.edit().putString(KEY_USER_NAME, value).apply()
@@ -38,6 +42,7 @@ class TesterPrefs(context: Context) {
         const val KEY_FORM_ID = "form_id"
         const val KEY_BASE_URL = "api_base_url"
         const val KEY_WEB_HOST = "web_host"
+        const val KEY_INTERCEPTOR_FORM_ID = "interceptor_form_id"
         const val KEY_USER_NAME = "user_name"
     }
 }

@@ -8,6 +8,7 @@ import com.encatch.bridge.EncatchBridgeEventPayload
 import com.encatch.bridge.EncatchBridgeIdentifyOptions
 import com.encatch.bridge.EncatchBridgeRefineTextResponse
 import com.encatch.bridge.EncatchBridgeSecureOptions
+import com.encatch.bridge.EncatchBridgeShowFormInterceptorPayload
 import com.encatch.bridge.EncatchBridgeShowFormOptions
 import com.encatch.bridge.EncatchBridgeStartSessionOptions
 import com.encatch.bridge.EncatchBridgeUploadFileResponse
@@ -16,6 +17,9 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -352,6 +356,31 @@ private val ResetMode.wireValue: String
         ResetMode.NEVER -> "never"
     }
 
+private fun ResetMode.Companion.fromWire(value: String?): ResetMode = when (value) {
+    "on-complete" -> ResetMode.ON_COMPLETE
+    "never" -> ResetMode.NEVER
+    else -> ResetMode.ALWAYS
+}
+
+private fun TriggerType.Companion.fromWire(value: String?): TriggerType = when (value) {
+    "manual" -> TriggerType.MANUAL
+    else -> TriggerType.AUTOMATIC
+}
+
+private fun EncatchBridgeShowFormInterceptorPayload.toSdk(): ShowFormInterceptorPayload = ShowFormInterceptorPayload(
+    formId = formId(),
+    resetMode = ResetMode.fromWire(resetMode()),
+    triggerType = TriggerType.fromWire(triggerType()),
+    prefillResponses = prefillResponsesJSON()?.let { json ->
+        kotlinx.serialization.json.Json.parseToJsonElement(json) as? JsonObject
+    } ?: JsonObject(emptyMap()),
+    locale = locale(),
+    theme = theme()?.let { Theme.fromWire(it) },
+    context = contextJSON()?.let { json ->
+        kotlinx.serialization.json.Json.parseToJsonElement(json) as? JsonObject
+    },
+)
+
 /** Flattens a [JsonElement] into plain Kotlin values so it can cross the cinterop NSDictionary boundary. */
 private fun JsonElement.toPlain(): Any? = when (this) {
     is JsonNull -> null
@@ -372,6 +401,20 @@ private fun EncatchConfig.toBridge(): EncatchBridgeConfig = EncatchBridgeConfig(
     setIsFullScreen(isFullScreen)
     setAppVersion(appVersion)
     setTheme(theme.wireValue)
+    val interceptor = onBeforeShowForm
+    if (interceptor != null) {
+        // The bridge property is a plain callback, not an `async` closure — see
+        // `EncatchBridgeInterceptorCallback`'s doc comment in EncatchBridge.swift for why.
+        // `interceptor` is a suspend function; launching it in a coroutine and calling `completion`
+        // whenever it resolves is exactly the "listener implemented, auto-callback at the end"
+        // pattern this needs — no suspend/async has to cross the ObjC boundary itself.
+        setOnBeforeShowForm { bridgePayload, completion ->
+            CoroutineScope(Dispatchers.Main).launch {
+                val allow = bridgePayload?.let { interceptor(it.toSdk()) } ?: true
+                completion?.invoke(allow)
+            }
+        }
+    }
 }
 
 @Suppress("UNCHECKED_CAST")

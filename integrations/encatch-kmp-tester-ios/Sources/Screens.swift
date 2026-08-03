@@ -8,6 +8,7 @@ struct SetupView: View {
     @State private var formId = ""
     @State private var baseUrl = ""
     @State private var webHost = ""
+    @State private var interceptorFormId = ""
 
     var body: some View {
         ScrollView {
@@ -25,13 +26,15 @@ struct SetupView: View {
                 TextField("Web host (optional)", text: $webHost)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
+                TextField("Interceptor test form id (optional)", text: $interceptorFormId).textFieldStyle(.roundedBorder)
 
                 Button("Save & continue") {
                     state.saveSetupAndInit(
                         apiKey: apiKey.trimmed,
                         formId: formId.trimmed,
                         baseUrl: baseUrl.trimmed,
-                        webHost: webHost.trimmed
+                        webHost: webHost.trimmed,
+                        interceptorFormId: interceptorFormId.trimmed
                     )
                 }
                 .buttonStyle(.borderedProminent)
@@ -77,6 +80,11 @@ struct HomeView: View {
 
             Button("Show form (modal)") { state.showModalForm() }
                 .buttonStyle(.borderedProminent)
+
+            if let interceptorFormId = state.prefs.interceptorFormId, !interceptorFormId.isEmpty {
+                Button("Interceptor test") { state.showForm(interceptorFormId) }
+                    .buttonStyle(.bordered)
+            }
 
             HStack(spacing: 16) {
                 Button("Events") { state.screen = .events }
@@ -165,6 +173,7 @@ struct SettingsView: View {
             Text("Form id: \(state.prefs.formId ?? "")")
             Text("API base URL: \(state.prefs.apiBaseUrl ?? "(default)")")
             Text("Web host: \(state.prefs.webHost ?? "(default)")")
+            Text("Interceptor form id: \(state.prefs.interceptorFormId ?? "(none)")")
 
             Button("Log out") { state.logOut() }.buttonStyle(.borderedProminent)
             Button("Clear saved setup") { state.clearSetup() }.buttonStyle(.bordered)
@@ -205,5 +214,24 @@ struct RouteNotFoundView: View {
         }
         .padding()
         .onAppear { state.trackScreen("RouteNotFound") }
+    }
+}
+
+struct InterceptorSheet: View {
+    let formId: String
+    let onResult: (Bool) -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Interceptor: \(formId)").font(.headline)
+            Text("onBeforeShowForm fired for this form id. Allow the SDK to render it, or deny to simulate a native replacement UI.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 16) {
+                Button("Deny") { onResult(false) }.buttonStyle(.bordered)
+                Button("Allow") { onResult(true) }.buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
     }
 }

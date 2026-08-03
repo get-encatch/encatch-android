@@ -1,6 +1,7 @@
 package com.encatch.kmptester
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
@@ -112,11 +113,29 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
+    /**
+     * Fired from [TesterController.initSdk]'s `onIntercept` callback — may run off the main
+     * thread (it's invoked from inside the SDK's own coroutine flow), so this hops to the UI
+     * thread before touching any view.
+     */
+    private fun showInterceptorDialog(formId: String, completion: (Boolean) -> Unit) {
+        runOnUiThread {
+            AlertDialog.Builder(this)
+                .setTitle("Interceptor: $formId")
+                .setMessage("onBeforeShowForm fired for this form id. Allow the SDK to render it, or deny to simulate a native replacement UI.")
+                .setPositiveButton("Allow") { _, _ -> completion(true) }
+                .setNegativeButton("Deny") { _, _ -> completion(false) }
+                .setOnCancelListener { completion(false) }
+                .show()
+        }
+    }
+
     private fun buildSetupScreen(): View {
         val apiKeyInput = input("API key *")
         val formIdInput = input("Default form id (feedback config) *")
         val baseUrlInput = input("API base URL (optional)")
         val webHostInput = input("Web host (optional)")
+        val interceptorFormIdInput = input("Interceptor test form id (optional)")
 
         val col = column()
         col.addView(heading("Encatch KMP Tester — Setup"))
@@ -125,6 +144,7 @@ class MainActivity : Activity() {
         col.addView(formIdInput)
         col.addView(baseUrlInput)
         col.addView(webHostInput)
+        col.addView(interceptorFormIdInput)
         col.addView(
             actionButton("Save & continue") {
                 val apiKey = apiKeyInput.text.toString().trim()
@@ -134,8 +154,17 @@ class MainActivity : Activity() {
                 prefs.formId = formId
                 prefs.apiBaseUrl = baseUrlInput.text.toString().trim().ifEmpty { null }
                 prefs.webHost = webHostInput.text.toString().trim().ifEmpty { null }
+                prefs.interceptorFormId = interceptorFormIdInput.text.toString().trim().ifEmpty { null }
                 scope.launch {
-                    runCatching { TesterController.initSdk(apiKey, prefs.apiBaseUrl, prefs.webHost) }
+                    runCatching {
+                        TesterController.initSdk(
+                            apiKey,
+                            prefs.apiBaseUrl,
+                            prefs.webHost,
+                            prefs.interceptorFormId,
+                            onIntercept = { formId, completion -> showInterceptorDialog(formId, completion) },
+                        )
+                    }
                     render(Screen.Login)
                 }
             },
@@ -178,6 +207,14 @@ class MainActivity : Activity() {
                 scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } }
             },
         )
+        val interceptorFormId = prefs.interceptorFormId
+        if (!interceptorFormId.isNullOrBlank()) {
+            col.addView(
+                actionButton("Interceptor test") {
+                    scope.launch { runCatching { TesterController.showForm(interceptorFormId) } }
+                },
+            )
+        }
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         nav.addView(actionButton("Events") { render(Screen.Events) })
         nav.addView(actionButton("Inline") { render(Screen.Inline) })
@@ -235,6 +272,7 @@ class MainActivity : Activity() {
         col.addView(body("Form id: ${prefs.formId}"))
         col.addView(body("API base URL: ${prefs.apiBaseUrl ?: "(default)"}"))
         col.addView(body("Web host: ${prefs.webHost ?: "(default)"}"))
+        col.addView(body("Interceptor form id: ${prefs.interceptorFormId ?: "(none)"}"))
         col.addView(
             actionButton("Log out") {
                 scope.launch {

@@ -33,7 +33,15 @@ enum class Theme {
 }
 
 enum class ResetMode {
-    ALWAYS, ON_COMPLETE, NEVER,
+    ALWAYS, ON_COMPLETE, NEVER;
+
+    companion object
+}
+
+enum class TriggerType {
+    AUTOMATIC, MANUAL;
+
+    companion object
 }
 
 sealed class ContextValue {
@@ -45,6 +53,24 @@ sealed class ContextValue {
     data class DateValue(val epochMillis: Long) : ContextValue()
 }
 
+/**
+ * Mirrors `:core`'s `ShowFormInterceptorPayload` (and, on iOS, `EncatchBridgeShowFormInterceptorPayload`
+ * in `EncatchBridge.swift`) — passed to [EncatchConfig.onBeforeShowForm]. `formConfig` (the full
+ * form definition, `ShowFormResponse`/`ShowFormConfiguration`) is deliberately not mirrored here:
+ * an interceptor deciding whether to allow or block a form needs lightweight identifying info
+ * (which form, how it was triggered), not the whole config tree — same "flat mirror vs. JSON
+ * passthrough vs. out of scope" tradeoff [Encatch.submitForm]'s doc comment describes.
+ */
+data class ShowFormInterceptorPayload(
+    val formId: String,
+    val resetMode: ResetMode,
+    val triggerType: TriggerType,
+    val prefillResponses: Map<String, JsonElement> = emptyMap(),
+    val locale: String? = null,
+    val theme: Theme? = null,
+    val context: Map<String, JsonElement>? = null,
+)
+
 data class EncatchConfig(
     val apiBaseUrl: String? = null,
     val webHost: String? = null,
@@ -52,6 +78,14 @@ data class EncatchConfig(
     val isFullScreen: Boolean = false,
     val debugMode: Boolean = false,
     val appVersion: String? = null,
+    /**
+     * Called before any form is shown (manual or automatic). Return `false` to block the SDK form
+     * from opening — the host app can then show its own UI using [ShowFormInterceptorPayload].
+     * Free to await anything (a coroutine, user input, a network check) before answering: on iOS
+     * this is bridged as a plain callback the native side invokes whenever it has an answer, not a
+     * synchronous decision (see `Encatch.ios.kt`'s `toBridge()` for the bridging mechanics).
+     */
+    val onBeforeShowForm: (suspend (ShowFormInterceptorPayload) -> Boolean)? = null,
 )
 
 data class UserTraits(

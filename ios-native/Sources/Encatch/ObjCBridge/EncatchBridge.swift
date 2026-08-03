@@ -71,6 +71,47 @@ private struct EncatchBridgeInputError: Error, CustomStringConvertible {
     var description: String { message }
 }
 
+/// `@objc` mirror of `ShowFormInterceptorPayload`, passed to `EncatchBridgeConfig.onBeforeShowForm`.
+/// `formConfig` (the full form definition, `ShowFormResponse`) is deliberately NOT mirrored here —
+/// it isn't `Codable` (unlike `SubmitFormRequest`), and an interceptor deciding whether to allow or
+/// block a form needs lightweight identifying info (which form, how it was triggered), not the
+/// whole config tree; same "flat mirror vs. JSON passthrough vs. out of scope" tradeoff this file's
+/// top doc comment already describes for `submitForm`. `prefillResponses`/`context` are exposed as
+/// JSON strings (nil if empty), the same pattern `EncatchBridgeEventPayload.dataJSON` already uses.
+@objc(EncatchBridgeShowFormInterceptorPayload)
+public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
+    @objc public let formId: String
+    /// One of "always" / "on-complete" / "never" (`ResetMode.wireValue`).
+    @objc public let resetMode: String
+    /// One of "automatic" / "manual" (`TriggerType.wireValue`).
+    @objc public let triggerType: String
+    @objc public let prefillResponsesJSON: String?
+    @objc public let locale: String?
+    /// One of "light" / "dark" / "system" (`Theme.wireValue`), or nil.
+    @objc public let theme: String?
+    @objc public let contextJSON: String?
+
+    fileprivate init(_ payload: ShowFormInterceptorPayload) {
+        self.formId = payload.formId
+        self.resetMode = payload.resetMode.wireValue
+        self.triggerType = payload.triggerType.wireValue
+        self.prefillResponsesJSON = payload.prefillResponses.isEmpty ? nil : JSONValue.object(payload.prefillResponses).toJSONString()
+        self.locale = payload.locale
+        self.theme = payload.theme?.wireValue
+        self.contextJSON = payload.context.map { JSONValue.object($0).toJSONString() }
+        super.init()
+    }
+}
+
+/// Callback shape for `EncatchBridgeConfig.onBeforeShowForm`: the interceptor payload, plus a
+/// completion block the host app calls whenever it has an answer (immediately, or after awaiting a
+/// coroutine / a dialog tap / anything else — nothing here is on a deadline). Plain-callback shape
+/// rather than an `async` closure, since `@objc` can't express Swift `async` directly: this is the
+/// same completion-handler-passing-the-other-direction technique every other bridge method already
+/// uses (Kotlin normally receives a completion block from Swift; here Kotlin instead *hands one to*
+/// Swift, the same way `onEvent`'s callback closure already crosses this boundary from Kotlin).
+public typealias EncatchBridgeInterceptorCallback = (EncatchBridgeShowFormInterceptorPayload, @escaping (Bool) -> Void) -> Void
+
 /// `@objc`-compatible mirror of `EncatchConfig`, for Kotlin/Native cinterop callers that can't
 /// construct the Swift struct directly. Unset fields fall back to `Encatch.initialize`'s own
 /// defaults (see `EncatchConfig.init`).
@@ -84,19 +125,31 @@ public final class EncatchBridgeConfig: NSObject {
     /// One of "light" / "dark" / "system" (case-insensitive). Any other value (including nil)
     /// resolves to `.system`.
     @objc public var theme: String?
+    /// See `EncatchBridgeInterceptorCallback`'s doc comment for why this isn't an `async` closure.
+    @objc public var onBeforeShowForm: EncatchBridgeInterceptorCallback?
 
     @objc public override init() {
         super.init()
     }
 
     fileprivate func toEncatchConfig() -> EncatchConfig {
-        EncatchConfig(
+        let interceptor = onBeforeShowForm
+        return EncatchConfig(
             apiBaseUrl: apiBaseUrl ?? DEFAULT_API_BASE_URL,
             webHost: webHost ?? DEFAULT_WEB_HOST,
             theme: parseBridgeTheme(theme),
             isFullScreen: isFullScreen,
             debugMode: debugMode,
-            appVersion: appVersion
+            appVersion: appVersion,
+            onBeforeShowForm: interceptor.map { handler in
+                { (payload: ShowFormInterceptorPayload) async -> Bool in
+                    await withCheckedContinuation { continuation in
+                        handler(EncatchBridgeShowFormInterceptorPayload(payload)) { allow in
+                            continuation.resume(returning: allow)
+                        }
+                    }
+                }
+            }
         )
     }
 }

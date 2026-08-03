@@ -9,9 +9,11 @@ import EncatchKmpTester
 final class TesterState: ObservableObject {
     @Published var screen: Screen
     @Published var lastEvent = "No events yet"
+    @Published var interceptedFormId: String?
 
     let prefs = TesterPrefs()
     private var unsubscribe: (() -> Void)?
+    private var interceptorResume: ((Bool) -> Void)?
 
     init() {
         screen = prefs.isSetupComplete ? .login : .setup
@@ -33,20 +35,43 @@ final class TesterState: ObservableObject {
         }
     }
 
-    func saveSetupAndInit(apiKey: String, formId: String, baseUrl: String, webHost: String) {
+    func saveSetupAndInit(apiKey: String, formId: String, baseUrl: String, webHost: String, interceptorFormId: String) {
         prefs.apiKey = apiKey
         prefs.formId = formId
         prefs.apiBaseUrl = baseUrl.isEmpty ? nil : baseUrl
         prefs.webHost = webHost.isEmpty ? nil : webHost
+        prefs.interceptorFormId = interceptorFormId.isEmpty ? nil : interceptorFormId
 
         Task {
             do {
-                try await TesterController.shared.doInitSdk(apiKey: apiKey, baseUrl: prefs.apiBaseUrl, webHost: prefs.webHost)
+                try await TesterController.shared.doInitSdk(
+                    apiKey: apiKey,
+                    baseUrl: prefs.apiBaseUrl,
+                    webHost: prefs.webHost,
+                    interceptorFormId: prefs.interceptorFormId,
+                    // Plain (non-async) callback — see TesterController.kt's doc comment for why.
+                    // Stash the completion and resolve it later from resolveInterceptor(allow:)
+                    // once the tester answers the InterceptorSheet.
+                    onIntercept: { [weak self] formId, completion in
+                        DispatchQueue.main.async {
+                            self?.interceptedFormId = formId
+                            self?.interceptorResume = { allow in
+                                _ = completion(KotlinBoolean(bool: allow))
+                            }
+                        }
+                    }
+                )
             } catch {
                 print("TesterController.doInitSdk failed: \(error)")
             }
             await MainActor.run { self.screen = .login }
         }
+    }
+
+    func resolveInterceptor(allow: Bool) {
+        interceptorResume?(allow)
+        interceptorResume = nil
+        interceptedFormId = nil
     }
 
     func logIn(userName: String) {

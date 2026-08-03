@@ -15,13 +15,6 @@ build works for any tester or environment, no rebuild required.
 Depends on `:kmp-sdk`/`:android` as internal Gradle modules (these SDKs aren't published to a real
 Maven repo yet — see [`kmp-sdk/README.md`](../../kmp-sdk/README.md)).
 
-## Known gap: no interceptor screen
-
-`:kmp-sdk`'s `EncatchConfig` doesn't expose `onBeforeShowForm` yet (see
-`src/commonMain/kotlin/com/encatch/kmptester/TesterController.kt`'s doc comment) — unlike the
-android/ios-native testers, this app has no interceptor demo. Add the field to `:kmp-sdk`'s
-`EncatchConfig`/`Encatch.ios.kt` first if you need to test that path here.
-
 ## Run in an emulator (Android)
 
 ```bash
@@ -47,15 +40,22 @@ build/run instructions.
 
 ## Features
 
-Same feature set as `encatch-android-tester`/`encatch-ios-tester` minus the interceptor demo (see
-above):
+Same feature set as `encatch-android-tester`/`encatch-ios-tester`:
 
-- **Setup** — API key, default form id, optional API base URL / web host. Saved locally
-  (`SharedPreferences` on Android, `UserDefaults` on iOS) and restored on next launch until
-  cleared from Settings.
+- **Setup** — API key, default form id, optional API base URL / web host / interceptor test form
+  id. Saved locally (`SharedPreferences` on Android, `UserDefaults` on iOS) and restored on next
+  launch until cleared from Settings.
 - **Login** — Mock login calls `TesterController.identify(userName)`.
 - **Home** — Tracks `home_viewed` on load. **Show form (modal)** calls `showForm` with the
-  configured default form id.
+  configured default form id. **Interceptor test** (shown only if an interceptor form id was set)
+  calls `showForm` for that id, which is held by `TesterController.initSdk`'s `onIntercept`
+  callback until you answer the on-screen Allow/Deny dialog — demonstrates replacing the SDK form
+  with native UI. See `TesterController.kt`'s doc comment for how this is bridged: `onIntercept` is
+  a plain (non-`suspend`) callback rather than a `suspend` function type, since Kotlin/Native's
+  ObjC export doesn't turn `suspend` function-type *parameters* into completion-handler methods the
+  way it does for `suspend` member functions — the platform UI calls `completion(allow)` whenever
+  it has an answer, and a `suspendCancellableCoroutine` on the Kotlin side converts that back into
+  the suspend result `:kmp-sdk`'s interceptor needs.
 - **Events** — Buttons for `button_clicked`, `feature_used`, `purchase_started`, `survey_viewed`.
 - **Inline** — An exact-match `EncatchInlineFormView` claiming the default form id, and a wildcard
   slot you can target by typing any other form id. Both platforms embed the real native inline
@@ -72,7 +72,7 @@ above):
 
 ## Manual test checklist
 
-Same steps as [`encatch-android-tester`'s checklist](../encatch-android-tester/README.md#manual-test-checklist)
-minus the interceptor step (step 4) — run it on both the Android app and the
+Same steps as [`encatch-android-tester`'s checklist](../encatch-android-tester/README.md#manual-test-checklist) —
+run it on both the Android app and the
 [`encatch-kmp-tester-ios`](../encatch-kmp-tester-ios/README.md) host to confirm both native UIs
 behave identically off the same shared `TesterController`.
