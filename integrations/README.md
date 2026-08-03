@@ -4,10 +4,14 @@ Standalone tester apps you can run in an emulator/simulator and hand to real tes
 an Encatch SDK end-to-end — separate from `sample-app`/`compose-sample`/`kmp-sample`/`ios-sample`
 (which are minimal manual-verification harnesses used by this repo's own regression tests).
 
-Modeled on the `integrations/encatch-expo-tester` app in the `encatch-typescript` monorepo: a
-runtime **Setup** screen where a tester enters their own API key/config (no rebuild needed per
-tester or environment), then screens covering login, event tracking, modal/inline forms, CTA
-navigation, and settings/logout.
+Modeled on the richer `encatch-flutter-tester` reference app in the sibling `schema-definition`
+repo (itself descended from `integrations/encatch-expo-tester` in `encatch-typescript`): a runtime
+**Setup** screen where a tester enters their own API key/config and picks an environment
+(Dev/UAT/Prod) — no rebuild needed per tester or environment — then a bottom-nav flow covering
+locally-saved test-user login/edit-profile, event/screen tracking, prefilled + modal + inline
+forms, an interceptor carousel that hands blocked forms off to a fully custom native form
+renderer, header-level theme cycling and locale/country setters, CTA navigation, and
+settings/logout.
 
 | App | SDK under test |
 |---|---|
@@ -16,4 +20,6 @@ navigation, and settings/logout.
 | [`encatch-kmp-tester`](encatch-kmp-tester/README.md) + [`encatch-kmp-tester-ios`](encatch-kmp-tester-ios/README.md) | `com.encatch:kmp-sdk` (Android app + iOS host, one shared `commonMain` layer) |
 | [`encatch-compose-tester`](encatch-compose-tester/README.md) + [`encatch-compose-tester-ios`](encatch-compose-tester-ios/README.md) | `com.encatch:compose-sdk` (Android app + iOS host, one shared Compose UI) |
 
-All four SDK packages now have a tester app.
+All four SDK packages now have a tester app at this richer level of parity. The one accepted gap:
+`encatch-compose-tester` has no wildcard inline slot, since `:compose-sdk`'s `EncatchInlineForm`
+requires a non-null `formId` (see that tester's README for detail).

@@ -56,10 +56,13 @@ sealed class ContextValue {
 /**
  * Mirrors `:core`'s `ShowFormInterceptorPayload` (and, on iOS, `EncatchBridgeShowFormInterceptorPayload`
  * in `EncatchBridge.swift`) — passed to [EncatchConfig.onBeforeShowForm]. `formConfig` (the full
- * form definition, `ShowFormResponse`/`ShowFormConfiguration`) is deliberately not mirrored here:
- * an interceptor deciding whether to allow or block a form needs lightweight identifying info
- * (which form, how it was triggered), not the whole config tree — same "flat mirror vs. JSON
- * passthrough vs. out of scope" tradeoff [Encatch.submitForm]'s doc comment describes.
+ * form definition, `ShowFormResponse`/`ShowFormConfiguration`) is not mirrored as a typed field
+ * here — same "flat mirror vs. JSON passthrough vs. out of scope" tradeoff [Encatch.submitForm]'s
+ * doc comment describes — but [formConfigJson] exposes its `questionnaireFields` (plus enough of
+ * the config tree to read a form title) as a JSON-string passthrough, the same pattern
+ * [prefillResponses]/[context] use one layer further in, so a host app can hand-render its own
+ * form UI from the interceptor payload alone (see [buildSubmitRequest] for the matching submit
+ * path).
  */
 data class ShowFormInterceptorPayload(
     val formId: String,
@@ -69,6 +72,8 @@ data class ShowFormInterceptorPayload(
     val locale: String? = null,
     val theme: Theme? = null,
     val context: Map<String, JsonElement>? = null,
+    /** JSON encoding of `:core`'s `ShowFormResponse` (the full form config), or `null` if unavailable. */
+    val formConfigJson: String? = null,
 )
 
 data class EncatchConfig(

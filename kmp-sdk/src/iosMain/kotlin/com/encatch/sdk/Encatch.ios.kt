@@ -379,6 +379,7 @@ private fun EncatchBridgeShowFormInterceptorPayload.toSdk(): ShowFormInterceptor
     context = contextJSON()?.let { json ->
         kotlinx.serialization.json.Json.parseToJsonElement(json) as? JsonObject
     },
+    formConfigJson = formConfigJSON(),
 )
 
 /** Flattens a [JsonElement] into plain Kotlin values so it can cross the cinterop NSDictionary boundary. */

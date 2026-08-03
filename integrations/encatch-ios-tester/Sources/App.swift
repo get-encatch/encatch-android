@@ -27,28 +27,14 @@ struct RootView: View {
                 SetupView(state: state)
             case .login:
                 LoginView(state: state)
-            case .home:
-                HomeView(state: state)
-            case .events:
-                EventsView(state: state)
-            case .inline:
-                InlineView(state: state)
-            case .settings:
-                SettingsView(state: state)
+            case .editProfile(let username):
+                EditProfileView(username: username, state: state)
+            case .main:
+                MainTabView(state: state)
             case .billing(let route):
                 BillingView(route: route, state: state)
             case .routeNotFound(let route):
                 RouteNotFoundView(route: route, state: state)
-            }
-        }
-        .sheet(isPresented: Binding(
-            get: { state.interceptedFormId != nil },
-            set: { isPresented in
-                if !isPresented { state.resolveInterceptor(allow: false) }
-            }
-        )) {
-            if let formId = state.interceptedFormId {
-                InterceptorSheet(formId: formId, onResult: state.resolveInterceptor)
             }
         }
         .onAppear { state.start() }

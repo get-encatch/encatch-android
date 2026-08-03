@@ -1,6 +1,7 @@
 package com.encatch.composetester
 
 import android.content.Context
+import kotlinx.serialization.json.Json
 
 /** Set once from [MainActivity] before first use — see that file's `onCreate`. */
 internal lateinit var appContext: Context
@@ -38,6 +39,12 @@ actual object TesterPrefs {
             prefs.edit().putString("interceptor_form_id", value).apply()
         }
 
+    actual var environment: TesterEnvironment
+        get() = TesterEnvironment.fromName(prefs.getString("environment", null))
+        set(value) {
+            prefs.edit().putString("environment", value.name).apply()
+        }
+
     actual var userName: String?
         get() = prefs.getString("user_name", null)
         set(value) {
@@ -49,5 +56,28 @@ actual object TesterPrefs {
 
     actual fun clear() {
         prefs.edit().clear().apply()
+    }
+}
+
+actual object TestUsersStore {
+    private val prefs get() = appContext.getSharedPreferences("encatch_compose_tester_users", Context.MODE_PRIVATE)
+
+    actual fun list(): List<TestUser> {
+        val raw = prefs.getString("saved_users", null) ?: return emptyList()
+        return runCatching { Json.decodeFromString<List<TestUser>>(raw) }.getOrDefault(emptyList())
+    }
+
+    actual fun add(user: TestUser) {
+        val updated = list().filterNot { it.username == user.username } + user
+        save(updated)
+    }
+
+    actual fun update(user: TestUser) {
+        val updated = list().map { if (it.username == user.username) user else it }
+        save(updated)
+    }
+
+    private fun save(users: List<TestUser>) {
+        prefs.edit().putString("saved_users", Json.encodeToString(users)).apply()
     }
 }

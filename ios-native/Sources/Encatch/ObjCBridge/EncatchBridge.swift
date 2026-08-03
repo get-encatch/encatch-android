@@ -72,12 +72,11 @@ private struct EncatchBridgeInputError: Error, CustomStringConvertible {
 }
 
 /// `@objc` mirror of `ShowFormInterceptorPayload`, passed to `EncatchBridgeConfig.onBeforeShowForm`.
-/// `formConfig` (the full form definition, `ShowFormResponse`) is deliberately NOT mirrored here —
-/// it isn't `Codable` (unlike `SubmitFormRequest`), and an interceptor deciding whether to allow or
-/// block a form needs lightweight identifying info (which form, how it was triggered), not the
-/// whole config tree; same "flat mirror vs. JSON passthrough vs. out of scope" tradeoff this file's
-/// top doc comment already describes for `submitForm`. `prefillResponses`/`context` are exposed as
-/// JSON strings (nil if empty), the same pattern `EncatchBridgeEventPayload.dataJSON` already uses.
+/// `formConfig` (the full form definition, `ShowFormResponse`) isn't mirrored as typed `@objc`
+/// properties — it isn't `Codable` (unlike `SubmitFormRequest`) — but its `questionnaireFields`
+/// (the structured question/section tree a host needs to hand-render its own form UI) is exposed
+/// as a JSON string via `formConfigJSON`, the same pattern `prefillResponsesJSON`/`contextJSON`
+/// already use one layer further in for `payload.prefillResponses`/`payload.context`.
 @objc(EncatchBridgeShowFormInterceptorPayload)
 public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
     @objc public let formId: String
@@ -90,6 +89,8 @@ public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
     /// One of "light" / "dark" / "system" (`Theme.wireValue`), or nil.
     @objc public let theme: String?
     @objc public let contextJSON: String?
+    /// JSON encoding of `payload.formConfig.questionnaireFields`, or nil if the form config had none.
+    @objc public let formConfigJSON: String?
 
     fileprivate init(_ payload: ShowFormInterceptorPayload) {
         self.formId = payload.formId
@@ -99,6 +100,7 @@ public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
         self.locale = payload.locale
         self.theme = payload.theme?.wireValue
         self.contextJSON = payload.context.map { JSONValue.object($0).toJSONString() }
+        self.formConfigJSON = payload.formConfig.questionnaireFields?.toJSONString()
         super.init()
     }
 }

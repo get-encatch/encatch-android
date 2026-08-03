@@ -225,6 +225,7 @@ private fun com.encatch.core.ShowFormInterceptorPayload.toSdk(): ShowFormInterce
     locale = locale,
     theme = theme?.toSdk(),
     context = context,
+    formConfigJson = formConfig.questionnaireFields?.toString(),
 )
 
 private fun ContextValue.toCore(): com.encatch.core.ContextValue = when (this) {

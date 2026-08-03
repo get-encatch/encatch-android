@@ -8,15 +8,22 @@ import EncatchKmpTester
 /// bridges automatically to `async throws`, so this reads just like calling a native Swift API.
 final class TesterState: ObservableObject {
     @Published var screen: Screen
+    @Published var tab: TesterTab = .home
     @Published var lastEvent = "No events yet"
-    @Published var interceptedFormId: String?
+    @Published var savedUsers: [TestUser] = []
+    @Published var selectedUsername: String?
+    @Published var currentTheme = "SYSTEM"
+    @Published var blockedForms: [BlockedFormItem] = []
+    @Published var openedForm: BlockedFormItem?
 
     let prefs = TesterPrefs()
+    let usersStore = TestUsersStore()
     private var unsubscribe: (() -> Void)?
-    private var interceptorResume: ((Bool) -> Void)?
 
     init() {
         screen = prefs.isSetupComplete ? .login : .setup
+        selectedUsername = prefs.userName
+        savedUsers = usersStore.list()
     }
 
     /// Registered once for the process lifetime, same as a real host app would at startup.
@@ -35,29 +42,29 @@ final class TesterState: ObservableObject {
         }
     }
 
-    func saveSetupAndInit(apiKey: String, formId: String, baseUrl: String, webHost: String, interceptorFormId: String) {
+    func saveSetupAndInit(environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) {
+        prefs.environment = environment
         prefs.apiKey = apiKey
         prefs.formId = formId
-        prefs.apiBaseUrl = baseUrl.isEmpty ? nil : baseUrl
-        prefs.webHost = webHost.isEmpty ? nil : webHost
+        prefs.apiBaseUrl = environment.apiBaseUrl
+        prefs.webHost = environment.webHost
         prefs.interceptorFormId = interceptorFormId.isEmpty ? nil : interceptorFormId
 
         Task {
             do {
                 try await TesterController.shared.doInitSdk(
                     apiKey: apiKey,
-                    baseUrl: prefs.apiBaseUrl,
-                    webHost: prefs.webHost,
+                    baseUrl: environment.apiBaseUrl,
+                    webHost: environment.webHost,
                     interceptorFormId: prefs.interceptorFormId,
-                    // Plain (non-async) callback — see TesterController.kt's doc comment for why.
-                    // Stash the completion and resolve it later from resolveInterceptor(allow:)
-                    // once the tester answers the InterceptorSheet.
-                    onIntercept: { [weak self] formId, completion in
+                    // Unconditionally blocks the configured interceptor form id and queues it for
+                    // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
+                    // custom-rendered native form. Plain (non-async) callback — see
+                    // TesterController.kt's doc comment for why.
+                    onIntercept: { [weak self] formId, formConfigJson, completion in
                         DispatchQueue.main.async {
-                            self?.interceptedFormId = formId
-                            self?.interceptorResume = { allow in
-                                _ = completion(KotlinBoolean(bool: allow))
-                            }
+                            self?.blockedForms.append(BlockedFormItem(formId: formId, title: formId, formConfigJson: formConfigJson))
+                            _ = completion(KotlinBoolean(bool: false))
                         }
                     }
                 )
@@ -68,22 +75,57 @@ final class TesterState: ObservableObject {
         }
     }
 
-    func resolveInterceptor(allow: Bool) {
-        interceptorResume?(allow)
-        interceptorResume = nil
-        interceptedFormId = nil
+    func dismissBlockedForm(_ formId: String) {
+        blockedForms.removeAll { $0.formId == formId }
     }
 
-    func logIn(userName: String) {
-        prefs.userName = userName
-        Task {
-            try? await TesterController.shared.identify(userName: userName)
-            await MainActor.run { self.screen = .home }
+    func selectUser(_ user: TestUser) {
+        selectedUsername = user.username
+    }
+
+    func saveNewUser(_ user: TestUser) {
+        usersStore.add(user)
+        savedUsers = usersStore.list()
+        selectedUsername = user.username
+    }
+
+    func updateUser(_ user: TestUser) {
+        usersStore.update(user)
+        savedUsers = usersStore.list()
+        if selectedUsername == user.username {
+            Task { try? await TesterController.shared.identify(userName: user.username, email: user.email, displayName: user.displayName) }
         }
+    }
+
+    func identify() {
+        guard let username = selectedUsername else { return }
+        let user = savedUsers.first { $0.username == username }
+        Task {
+            try? await TesterController.shared.identify(userName: username, email: user?.email, displayName: user?.displayName)
+            prefs.userName = username
+            await MainActor.run {
+                self.screen = .main
+                self.tab = .home
+            }
+        }
+    }
+
+    func cycleTheme() {
+        currentTheme = TesterController.shared.cycleTheme()
     }
 
     func showModalForm() {
         guard let formId = prefs.formId else { return }
+        showForm(formId)
+    }
+
+    func showPrefilledForm() {
+        guard let formId = prefs.formId else { return }
+        Task { try? await TesterController.shared.showPrefilledForm(formId: formId, questionId: "prefill-question", value: "hello") }
+    }
+
+    func showInterceptorForm() {
+        guard let formId = prefs.interceptorFormId else { return }
         showForm(formId)
     }
 
@@ -106,6 +148,14 @@ final class TesterState: ObservableObject {
         }
     }
 
+    func setLocaleFrFr() {
+        TesterController.shared.setLocale(locale: "fr-FR")
+    }
+
+    func setCountryFr() {
+        TesterController.shared.setCountry(country: "FR")
+    }
+
     func logOut() {
         Task {
             try? await TesterController.shared.resetUser()
@@ -115,7 +165,7 @@ final class TesterState: ObservableObject {
 
     func clearSetup() {
         Task {
-            try? await TesterController.shared.clearAll()
+            try? await TesterController.shared.resetUser()
             prefs.clear()
             await MainActor.run { self.screen = .setup }
         }

@@ -493,12 +493,11 @@ SWIFT_CLASS_NAMED("EncatchBridgeSecureOptions")
 @end
 
 /// <code>@objc</code> mirror of <code>ShowFormInterceptorPayload</code>, passed to <code>EncatchBridgeConfig.onBeforeShowForm</code>.
-/// <code>formConfig</code> (the full form definition, <code>ShowFormResponse</code>) is deliberately NOT mirrored here —
-/// it isn’t <code>Codable</code> (unlike <code>SubmitFormRequest</code>), and an interceptor deciding whether to allow or
-/// block a form needs lightweight identifying info (which form, how it was triggered), not the
-/// whole config tree; same “flat mirror vs. JSON passthrough vs. out of scope” tradeoff this file’s
-/// top doc comment already describes for <code>submitForm</code>. <code>prefillResponses</code>/<code>context</code> are exposed as
-/// JSON strings (nil if empty), the same pattern <code>EncatchBridgeEventPayload.dataJSON</code> already uses.
+/// <code>formConfig</code> (the full form definition, <code>ShowFormResponse</code>) isn’t mirrored as typed <code>@objc</code>
+/// properties — it isn’t <code>Codable</code> (unlike <code>SubmitFormRequest</code>) — but its <code>questionnaireFields</code>
+/// (the structured question/section tree a host needs to hand-render its own form UI) is exposed
+/// as a JSON string via <code>formConfigJSON</code>, the same pattern <code>prefillResponsesJSON</code>/<code>contextJSON</code>
+/// already use one layer further in for <code>payload.prefillResponses</code>/<code>payload.context</code>.
 SWIFT_CLASS_NAMED("EncatchBridgeShowFormInterceptorPayload")
 @interface EncatchBridgeShowFormInterceptorPayload : NSObject
 @property (nonatomic, readonly, copy) NSString * _Nonnull formId;
@@ -511,6 +510,8 @@ SWIFT_CLASS_NAMED("EncatchBridgeShowFormInterceptorPayload")
 /// One of “light” / “dark” / “system” (<code>Theme.wireValue</code>), or nil.
 @property (nonatomic, readonly, copy) NSString * _Nullable theme;
 @property (nonatomic, readonly, copy) NSString * _Nullable contextJSON;
+/// JSON encoding of <code>payload.formConfig.questionnaireFields</code>, or nil if the form config had none.
+@property (nonatomic, readonly, copy) NSString * _Nullable formConfigJSON;
 - (nonnull instancetype)init SWIFT_UNAVAILABLE;
 + (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
 @end
