@@ -1,0 +1,41 @@
+name: EncatchIosTester
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "15.0"
+
+packages:
+  Encatch:
+    path: ../../ios-native
+
+targets:
+  EncatchIosTester:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: Encatch
+        product: Encatch
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch Tester"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.iostester
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+schemes:
+  EncatchIosTester:
+    build:
+      targets:
+        EncatchIosTester: all
+    run:
+      config: Debug
+    archive:
+      config: Release

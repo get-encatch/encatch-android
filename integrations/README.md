@@ -12,5 +12,6 @@ navigation, and settings/logout.
 | App | SDK under test |
 |---|---|
 | [`encatch-android-tester`](encatch-android-tester/README.md) | `com.encatch:android` |
+| [`encatch-ios-tester`](encatch-ios-tester/README.md) | `ios-native` (Swift Package) |
 
-Testers for `ios-native`, `kmp-sdk`, and `compose-sdk` are planned but not built yet.
+Testers for `kmp-sdk` and `compose-sdk` are planned but not built yet.
