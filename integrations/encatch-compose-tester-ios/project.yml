@@ -1,0 +1,41 @@
+name: EncatchComposeTester
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  EncatchComposeTesterApp:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - framework: ../encatch-compose-tester/build/XCFrameworks/debug/EncatchComposeTester.xcframework
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch Compose Tester"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # Required by Compose Multiplatform's iOS UIKit target — without it,
+        # ComposeUIViewController's PlistSanityCheck aborts the process on iPhone.
+        CADisableMinimumFrameDurationOnPhone: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.composetester.ios
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+schemes:
+  EncatchComposeTesterApp:
+    build:
+      targets:
+        EncatchComposeTesterApp: all
+    run:
+      config: Debug
+    archive:
+      config: Release

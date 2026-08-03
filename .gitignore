@@ -18,3 +18,4 @@ ios-native/.xcbuild-dev/
 ios-native/.xcbuild-sim/
 integrations/encatch-ios-tester/*.xcodeproj/
 integrations/encatch-kmp-tester-ios/*.xcodeproj/
+integrations/encatch-compose-tester-ios/*.xcodeproj/

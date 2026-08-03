@@ -14,5 +14,6 @@ navigation, and settings/logout.
 | [`encatch-android-tester`](encatch-android-tester/README.md) | `com.encatch:android` |
 | [`encatch-ios-tester`](encatch-ios-tester/README.md) | `ios-native` (Swift Package) |
 | [`encatch-kmp-tester`](encatch-kmp-tester/README.md) + [`encatch-kmp-tester-ios`](encatch-kmp-tester-ios/README.md) | `com.encatch:kmp-sdk` (Android app + iOS host, one shared `commonMain` layer) |
+| [`encatch-compose-tester`](encatch-compose-tester/README.md) + [`encatch-compose-tester-ios`](encatch-compose-tester-ios/README.md) | `com.encatch:compose-sdk` (Android app + iOS host, one shared Compose UI) |
 
-A tester for `compose-sdk` is planned but not built yet.
+All four SDK packages now have a tester app.
