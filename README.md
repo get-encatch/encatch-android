@@ -44,6 +44,8 @@ customer get the same "few lines, no plumbing" experience a plain native custome
 - `mock-server/` — a local mock backend for development/testing (`./gradlew :mock-server:run`).
 - `sample-app/`, `compose-sample/`, `kmp-sample/`, `ios-sample/`, `ios-compose-sample/`,
   `ios-kmp-sample/` — example apps exercising each package above; not part of the published SDKs.
+- `integrations/` — standalone tester apps with a runtime setup screen, buildable to an APK/build
+  you can hand to a real tester (see [`integrations/README.md`](integrations/README.md)).
 - `scripts/test-all-variants.sh` — one-command build/test/screenshot pass across every sample app.
 
 ## License
