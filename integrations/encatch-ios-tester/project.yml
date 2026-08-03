@@ -20,7 +20,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: "Encatch Tester"
+        CFBundleDisplayName: "Encatch Native Tester"
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -29,6 +29,14 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.encatch.iostester
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
+        # Free (non-paid) Apple ID — automatic signing lets Xcode create/manage the dev
+        # provisioning profile against devices connected to this Mac. No Ad Hoc/TestFlight
+        # export is possible without a paid Apple Developer Program membership. Build/install to
+        # a real device via Xcode itself (Product > Run with the device selected) — Apple's
+        # automatic-signing handshake requires an interactive Xcode session and doesn't work
+        # from a plain `xcodebuild` CLI invocation on a free account.
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: F727LM57W2
 
 schemes:
   EncatchIosTester:
