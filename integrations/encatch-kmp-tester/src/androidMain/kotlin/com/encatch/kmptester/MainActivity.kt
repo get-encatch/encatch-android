@@ -1,13 +1,14 @@
 package com.encatch.kmptester
 
 import android.app.Activity
-import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -39,7 +40,8 @@ private data class NetworkLogRow(val status: Int, val name: String, val duration
  * `encatch-android-tester`'s Compose-based screen-state approach but without a UI framework
  * dependency. Modeled on the richer `encatch-flutter-tester` reference app: saved test users,
  * environment presets, bottom-tab navigation, header theme cycling, and an interceptor carousel
- * that hands off to a fully custom native form renderer (`NativeForm.kt`).
+ * that hands off to a fully custom native form renderer (`NativeForm.kt`). Visual styling lives
+ * in `Theme.kt` and mirrors the Uber-style design system of `encatch-ios-tester`.
  */
 class MainActivity : Activity() {
     private lateinit var prefs: TesterPrefs
@@ -61,7 +63,9 @@ class MainActivity : Activity() {
         usersStore = TestUsersStore(this)
         selectedUsername = prefs.userName
         root = FrameLayout(this)
+        root.setBackgroundColor(surface())
         setContentView(root)
+        applySystemBarStyle()
 
         unsubscribe = TesterController.onEvent { eventWireValue, formId, action, route ->
             runOnUiThread {
@@ -87,6 +91,17 @@ class MainActivity : Activity() {
         render(if (prefs.isSetupComplete) Screen.Login else Screen.Setup)
     }
 
+    /** Match the monochrome surface: white/black status bar with legible icons in both modes. */
+    @Suppress("DEPRECATION")
+    private fun applySystemBarStyle() {
+        window.statusBarColor = surface()
+        window.navigationBarColor = surface()
+        if (!isNightMode()) {
+            window.decorView.systemUiVisibility =
+                window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+    }
+
     override fun onDestroy() {
         unsubscribe?.invoke()
         super.onDestroy()
@@ -108,29 +123,42 @@ class MainActivity : Activity() {
 
     private fun column(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(48, 120, 48, 48)
+        setBackgroundColor(surface())
+        setPadding(dp(20f), dp(40f), dp(20f), dp(24f))
+    }
+
+    /** Content column for Main-screen tabs — the header already provides the top inset. */
+    private fun tabColumn(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(surface())
+        setPadding(dp(20f), dp(8f), dp(20f), dp(24f))
     }
 
     private fun heading(text: String): TextView = TextView(this).apply {
         this.text = text
-        textSize = 22f
-        setPadding(0, 0, 0, 24)
+        textSize = 24f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(ink())
+        setPadding(0, 0, 0, dp(8f))
     }
 
     private fun body(text: String): TextView = TextView(this).apply {
         this.text = text
-        setPadding(0, 0, 0, 16)
-        setTextColor(Color.DKGRAY)
+        textSize = 14f
+        setTextColor(secondaryText())
+        setPadding(0, 0, 0, dp(8f))
     }
 
-    private fun input(hintText: String): EditText = EditText(this).apply {
-        hint = hintText
-        setPadding(24, 24, 24, 24)
-    }
+    private fun input(hintText: String): EditText = filledField(hintText)
 
-    private fun actionButton(text: String, onClick: () -> Unit): Button = Button(this).apply {
-        this.text = text
-        setOnClickListener { onClick() }
+    /** Horizontal, scrollable row of compact chips — Uber's preset idiom. */
+    private fun chipRow(build: (LinearLayout) -> Unit): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        build(row)
+        return HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }
     }
 
     private fun buildSetupScreen(): View {
@@ -140,29 +168,39 @@ class MainActivity : Activity() {
         val interceptorFormIdInput = input("Interceptor test form id (optional)")
 
         val col = column()
-        col.addView(heading("Encatch KMP Tester — Setup"))
+        col.addView(heading("Encatch KMP Tester"))
         col.addView(body("Enter your own API key and default form id. Saved locally on this device — this same APK works for any tester or environment."))
 
-        col.addView(body("Environment"))
-        val envRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val envLabel = TextView(this).apply { text = "${environment.apiBaseUrl} · ${environment.webHost}"; textSize = 12f }
-        TesterEnvironment.entries.forEach { env ->
-            envRow.addView(actionButton(env.label) {
-                environment = env
-                envLabel.text = "${env.apiBaseUrl} · ${env.webHost}"
-            })
+        col.addView(sectionHeader("Environment"))
+        val envLabel = body("${environment.apiBaseUrl} · ${environment.webHost}").apply { textSize = 12f }
+        lateinit var refreshEnvChips: () -> Unit
+        val envRowView = chipRow { row ->
+            refreshEnvChips = {
+                row.removeAllViews()
+                TesterEnvironment.entries.forEach { env ->
+                    row.addView(chipButton(env.label, selected = env == environment) {
+                        environment = env
+                        envLabel.text = "${env.apiBaseUrl} · ${env.webHost}"
+                        refreshEnvChips()
+                    })
+                }
+            }
+            refreshEnvChips()
         }
-        col.addView(envRow)
+        col.addView(envRowView)
         col.addView(envLabel)
 
-        col.addView(apiKeyInput)
-        col.addView(formIdInput)
-        col.addView(interceptorFormIdInput)
+        col.addView(fieldLabel("API key *"))
+        col.addView(apiKeyInput.apply { hint = null })
+        col.addView(fieldLabel("Default form id (feedback config) *"))
+        col.addView(formIdInput.apply { hint = null })
+        col.addView(fieldLabel("Interceptor test form id (optional)"))
+        col.addView(interceptorFormIdInput.apply { hint = null })
         col.addView(
-            actionButton("Save & continue") {
+            primaryButton("Save & continue") {
                 val apiKey = apiKeyInput.text.toString().trim()
                 val formId = formIdInput.text.toString().trim()
-                if (apiKey.isEmpty() || formId.isEmpty()) return@actionButton
+                if (apiKey.isEmpty() || formId.isEmpty()) return@primaryButton
                 prefs.environment = environment
                 prefs.apiKey = apiKey
                 prefs.formId = formId
@@ -192,7 +230,7 @@ class MainActivity : Activity() {
                 }
             },
         )
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildLoginScreen(): View {
@@ -200,16 +238,34 @@ class MainActivity : Activity() {
         col.addView(heading("Log in"))
         col.addView(body("Mock login — calls TesterController.identify(userName). Saved users are local to this tester, independent of the SDK."))
 
-        col.addView(body("Saved users"))
+        col.addView(sectionHeader("Saved users"))
         val users = usersStore.list()
         if (users.isEmpty()) col.addView(body("No saved users yet."))
         users.forEach { user ->
-            val userView = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
-            userView.addView(TextView(this).apply { text = user.username; textSize = 16f })
+            val selected = selectedUsername == user.username
+            val userView = card()
+            userView.addView(TextView(this).apply {
+                text = user.username
+                textSize = 16f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(ink())
+            })
             if (user.displayName.isNotBlank() || user.email.isNotBlank()) {
-                userView.addView(TextView(this).apply { text = listOf(user.displayName, user.email).filter { it.isNotBlank() }.joinToString(" · ") })
+                userView.addView(TextView(this).apply {
+                    text = listOf(user.displayName, user.email).filter { it.isNotBlank() }.joinToString(" · ")
+                    textSize = 13f
+                    setTextColor(secondaryText())
+                })
             }
-            if (selectedUsername == user.username) userView.addView(TextView(this).apply { text = "Selected" })
+            if (selected) {
+                userView.addView(TextView(this).apply {
+                    text = "Selected"
+                    textSize = 13f
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(TesterTheme.GREEN)
+                    setPadding(0, dp(2f), 0, 0)
+                })
+            }
             userView.setOnClickListener { selectedUsername = user.username; render(Screen.Login) }
             col.addView(userView)
         }
@@ -220,18 +276,21 @@ class MainActivity : Activity() {
         val newUserForm = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            addView(newUsernameInput)
-            addView(newEmailInput)
-            addView(newDisplayNameInput)
+            addView(fieldLabel("Username"))
+            addView(newUsernameInput.apply { hint = null })
+            addView(fieldLabel("Email"))
+            addView(newEmailInput.apply { hint = null })
+            addView(fieldLabel("Display name"))
+            addView(newDisplayNameInput.apply { hint = null })
         }
         col.addView(
-            actionButton("+ New user") { newUserForm.visibility = View.VISIBLE },
+            secondaryButton("+ New user") { newUserForm.visibility = View.VISIBLE },
         )
         col.addView(newUserForm)
         col.addView(
-            actionButton("Save user") {
+            secondaryButton("Save user") {
                 val username = newUsernameInput.text.toString().trim()
-                if (username.isEmpty()) return@actionButton
+                if (username.isEmpty()) return@secondaryButton
                 val user = TestUser(username, newEmailInput.text.toString().trim(), newDisplayNameInput.text.toString().trim())
                 usersStore.add(user)
                 selectedUsername = username
@@ -240,12 +299,12 @@ class MainActivity : Activity() {
         )
 
         selectedUsername?.let { username ->
-            col.addView(actionButton("Edit profile before sign in") { render(Screen.EditProfile(username)) })
+            col.addView(quietButton("Edit profile before sign in") { render(Screen.EditProfile(username)) })
         }
 
         col.addView(
-            actionButton("Identify user") {
-                val username = selectedUsername ?: return@actionButton
+            primaryButton("Identify user") {
+                val username = selectedUsername ?: return@primaryButton
                 val user = usersStore.list().find { it.username == username }
                 scope.launch {
                     runCatching { TesterController.identify(username, user?.email, user?.displayName) }
@@ -256,7 +315,7 @@ class MainActivity : Activity() {
             },
         )
         col.addView(
-            actionButton("Change API key & setup") {
+            quietButton("Change API key & setup") {
                 scope.launch {
                     runCatching { TesterController.resetUser() }
                     prefs.clear()
@@ -264,21 +323,23 @@ class MainActivity : Activity() {
                 }
             },
         )
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildEditProfileScreen(username: String): View {
         val existing = usersStore.list().find { it.username == username }
-        val emailInput = input("Email").apply { setText(existing?.email ?: "") }
-        val displayNameInput = input("Display name").apply { setText(existing?.displayName ?: "") }
+        val emailInput = input("Email").apply { setText(existing?.email ?: ""); hint = null }
+        val displayNameInput = input("Display name").apply { setText(existing?.displayName ?: ""); hint = null }
 
         val col = column()
         col.addView(heading("Edit profile"))
         col.addView(body("Username: $username"))
+        col.addView(fieldLabel("Email"))
         col.addView(emailInput)
+        col.addView(fieldLabel("Display name"))
         col.addView(displayNameInput)
         col.addView(
-            actionButton("Save & identify") {
+            primaryButton("Save & identify") {
                 val updated = TestUser(username, emailInput.text.toString().trim(), displayNameInput.text.toString().trim())
                 usersStore.update(updated)
                 if (selectedUsername == username) {
@@ -287,20 +348,30 @@ class MainActivity : Activity() {
                 render(Screen.Login)
             },
         )
-        col.addView(actionButton("Back") { render(Screen.Login) })
+        col.addView(quietButton("Back") { render(Screen.Login) })
         return col
     }
 
     private fun buildMainScreen(): View {
-        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val outer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(surface()) }
 
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(24, 96, 24, 24) }
-        header.addView(TextView(this).apply { text = tab.label; textSize = 18f; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-        header.addView(actionButton(currentTheme) {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20f), dp(40f), dp(20f), dp(12f))
+        }
+        header.addView(TextView(this).apply {
+            text = tab.label
+            textSize = 22f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(ink())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        header.addView(chipButton(currentTheme) {
             currentTheme = TesterController.cycleTheme()
             render(Screen.Main)
         })
-        header.addView(actionButton("Logout") {
+        header.addView(chipButton("Logout") {
             scope.launch {
                 runCatching { TesterController.resetUser() }
                 render(Screen.Login)
@@ -340,12 +411,22 @@ class MainActivity : Activity() {
         )
         outer.addView(carouselContainer)
 
-        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        // Monochrome bottom navigation: selected = ink bold, unselected = gray.
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(surface())
+            setPadding(dp(4f), dp(6f), dp(4f), dp(10f))
+        }
         TesterTab.entries.forEach { t ->
+            val selected = t == tab
             nav.addView(
-                Button(this).apply {
+                TextView(this).apply {
                     text = t.label
                     textSize = 10f
+                    gravity = Gravity.CENTER
+                    typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    setTextColor(if (selected) ink() else secondaryText())
+                    setPadding(0, dp(8f), 0, dp(8f))
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     setOnClickListener { tab = t; render(Screen.Main) }
                 },
@@ -363,66 +444,78 @@ class MainActivity : Activity() {
                 TesterController.trackEvent("home_viewed")
             }
         }
-        val col = column()
+        val col = tabColumn()
         prefs.userName?.let { userName ->
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(TextView(this).apply { text = "Signed in as $userName" })
-            row.addView(actionButton("Edit profile") { render(Screen.EditProfile(userName)) })
+            val row = card()
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.addView(TextView(this).apply {
+                text = "Signed in as $userName"
+                textSize = 14f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(ink())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(chipButton("Edit profile") { render(Screen.EditProfile(userName)) }.apply {
+                background = pillBackground(surface())
+            })
             col.addView(row)
         }
         col.addView(body("Last event: $lastEvent"))
-        col.addView(actionButton("Show Form") { scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } } })
+        col.addView(primaryButton("Show Form") { scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } } })
         col.addView(
-            actionButton("Show Form (prefilled)") {
+            secondaryButton("Show Form (prefilled)") {
                 scope.launch { runCatching { TesterController.showPrefilledForm(prefs.formId.orEmpty(), "prefill-question", "hello") } }
             },
         )
         val interceptorFormId = prefs.interceptorFormId
         if (!interceptorFormId.isNullOrBlank()) {
             col.addView(
-                actionButton("Show Form (interceptor test)") {
+                secondaryButton("Show Form (interceptor test)") {
                     scope.launch { runCatching { TesterController.showForm(interceptorFormId) } }
                 },
             )
         }
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildEventsTab(): View {
         scope.launch { runCatching { TesterController.trackScreen("Events") } }
-        val col = column()
-        col.addView(body("trackEvent presets"))
-        listOf("button_clicked", "feature_used", "purchase_started", "survey_viewed", "home_viewed").forEach { name ->
-            col.addView(actionButton(name) { scope.launch { runCatching { TesterController.trackEvent(name) } } })
-        }
-        val customEvent = input("Custom event").apply { setText("test_event") }
+        val col = tabColumn()
+        col.addView(sectionHeader("trackEvent presets"))
+        col.addView(chipRow { row ->
+            listOf("button_clicked", "feature_used", "purchase_started", "survey_viewed", "home_viewed").forEach { name ->
+                row.addView(chipButton(name) { scope.launch { runCatching { TesterController.trackEvent(name) } } })
+            }
+        })
+        val customEvent = input("Custom event").apply { setText("test_event"); hint = null }
+        col.addView(fieldLabel("Custom event"))
         col.addView(customEvent)
-        col.addView(actionButton("Fire") { scope.launch { runCatching { TesterController.trackEvent(customEvent.text.toString().trim()) } } })
+        col.addView(primaryButton("Fire") { scope.launch { runCatching { TesterController.trackEvent(customEvent.text.toString().trim()) } } })
 
-        col.addView(body("trackScreen presets"))
-        listOf("/home", "/dashboard", "/settings", "/dashboard/encatch-test").forEach { path ->
-            col.addView(actionButton(path) { scope.launch { runCatching { TesterController.trackScreen(path) } } })
-        }
-        val customScreen = input("Custom screen").apply { setText("/dashboard/encatch-test") }
+        col.addView(sectionHeader("trackScreen presets"))
+        col.addView(chipRow { row ->
+            listOf("/home", "/dashboard", "/settings", "/dashboard/encatch-test").forEach { path ->
+                row.addView(chipButton(path) { scope.launch { runCatching { TesterController.trackScreen(path) } } })
+            }
+        })
+        val customScreen = input("Custom screen").apply { setText("/dashboard/encatch-test"); hint = null }
+        col.addView(fieldLabel("Custom screen"))
         col.addView(customScreen)
-        col.addView(actionButton("Track") { scope.launch { runCatching { TesterController.trackScreen(customScreen.text.toString().trim()) } } })
-        return ScrollView(this).apply { addView(col) }
+        col.addView(primaryButton("Track") { scope.launch { runCatching { TesterController.trackScreen(customScreen.text.toString().trim()) } } })
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildLogsTab(): View {
-        val col = column()
-        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val col = tabColumn()
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         header.addView(body("${networkLogs.size} requests · newest first").apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
-        header.addView(Button(this).apply {
-            text = "Copy all"
-            setOnClickListener { copyToClipboard(networkLogs.joinToString("\n\n============\n\n") { it.fullText }) }
+        header.addView(chipButton("Copy all") {
+            copyToClipboard(networkLogs.joinToString("\n\n============\n\n") { it.fullText })
         })
-        header.addView(Button(this).apply {
-            text = "Clear"
-            setOnClickListener { networkLogs.clear(); render(Screen.Main) }
-        })
+        header.addView(chipButton("Clear") { networkLogs.clear(); render(Screen.Main) })
         col.addView(header)
 
         if (networkLogs.isEmpty()) {
@@ -431,34 +524,34 @@ class MainActivity : Activity() {
         networkLogs.forEach { row ->
             val rowView = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 12, 0, 12)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6f), 0, dp(6f))
                 setOnClickListener { showLogDetail(row) }
             }
             rowView.addView(TextView(this).apply {
                 text = if (row.status == 0) "ERR" else row.status.toString()
-                setTextColor(if (row.status in 200..299) 0xFF06C167.toInt() else 0xFFDC2626.toInt())
-                typeface = android.graphics.Typeface.MONOSPACE
-                setPadding(0, 0, 24, 0)
+                setTextColor(if (row.status in 200..299) TesterTheme.GREEN else TesterTheme.RED)
+                typeface = Typeface.MONOSPACE
+                textSize = 13f
+                setPadding(0, 0, dp(12f), 0)
             })
             rowView.addView(body("${row.name} · ${row.durationMs}ms").apply {
+                setPadding(0, 0, 0, 0)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             })
-            rowView.addView(Button(this).apply {
-                text = "Copy"
-                setOnClickListener { copyToClipboard(row.fullText) }
-            })
+            rowView.addView(chipButton("Copy") { copyToClipboard(row.fullText) })
             col.addView(rowView)
         }
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun showLogDetail(row: NetworkLogRow) {
         val content = ScrollView(this).apply {
             addView(TextView(this@MainActivity).apply {
                 text = row.fullText
-                typeface = android.graphics.Typeface.MONOSPACE
+                typeface = Typeface.MONOSPACE
                 textSize = 11f
-                setPadding(32, 16, 32, 16)
+                setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
                 setTextIsSelectable(true)
             })
         }
@@ -477,51 +570,73 @@ class MainActivity : Activity() {
 
     private fun buildInlineExactTab(): View {
         scope.launch { runCatching { TesterController.trackScreen("InlineExact") } }
-        val col = column()
+        val col = tabColumn()
         col.addView(body("Claims \"${prefs.formId}\" — only renders inline when that exact form id is shown."))
-        col.addView(actionButton("Show Exact Form (renders inline below)") {
+        col.addView(primaryButton("Show Exact Form (renders inline below)") {
             scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } }
         })
         val exactForm = EncatchInlineFormView(this).apply { formId = prefs.formId }
         // No fixed height — the SDK view drives its own layoutParams height (skeleton
         // placeholder, then live form:resize values).
         col.addView(exactForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildInlineAnyTab(): View {
         scope.launch { runCatching { TesterController.trackScreen("InlineAny") } }
-        val col = column()
+        val col = tabColumn()
         col.addView(body("Catches any form id not exactly claimed elsewhere."))
-        val wildcardInput = input("Form id")
+        val wildcardInput = input("Form id").apply { hint = null }
+        col.addView(fieldLabel("Form id"))
         col.addView(wildcardInput)
         col.addView(
-            actionButton("Show Form (renders inline below)") {
+            primaryButton("Show Form (renders inline below)") {
                 val id = wildcardInput.text.toString().trim()
-                if (id.isEmpty()) return@actionButton
+                if (id.isEmpty()) return@primaryButton
                 scope.launch { runCatching { TesterController.showForm(id) } }
             },
         )
-        col.addView(actionButton("Trigger unmatched form → modal fallback") {
+        col.addView(secondaryButton("Trigger unmatched form → modal fallback") {
             scope.launch { runCatching { TesterController.showForm("modal-fallback-demo") } }
         })
         val wildcardForm = EncatchInlineFormView(this).apply { formId = null }
         col.addView(wildcardForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildSettingsTab(): View {
         scope.launch { runCatching { TesterController.trackScreen("Settings") } }
-        val col = column()
-        col.addView(body("Environment: ${prefs.environment.label}"))
-        col.addView(body("Form id: ${prefs.formId}"))
-        col.addView(body("API base URL: ${prefs.apiBaseUrl ?: "(default)"}"))
-        col.addView(body("Web host: ${prefs.webHost ?: "(default)"}"))
-        col.addView(body("Interceptor form id: ${prefs.interceptorFormId ?: "(none)"}"))
-        col.addView(actionButton("Set Locale → fr-FR") { TesterController.setLocale("fr-FR") })
-        col.addView(actionButton("Set Country → FR") { TesterController.setCountry("FR") })
+        val col = tabColumn()
+        val info = card()
+        fun infoRow(label: String, value: String) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(2f), 0, dp(2f)) }
+            row.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                setTextColor(secondaryText())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            row.addView(TextView(this).apply {
+                text = value
+                textSize = 13f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setTextColor(ink())
+                gravity = Gravity.END
+            })
+            info.addView(row)
+        }
+        infoRow("Environment", prefs.environment.label)
+        infoRow("Form id", prefs.formId ?: "(none)")
+        infoRow("API base URL", prefs.apiBaseUrl ?: "(default)")
+        infoRow("Web host", prefs.webHost ?: "(default)")
+        infoRow("Interceptor form id", prefs.interceptorFormId ?: "(none)")
+        col.addView(info)
+        col.addView(chipRow { row ->
+            row.addView(chipButton("Set Locale → fr-FR") { TesterController.setLocale("fr-FR") })
+            row.addView(chipButton("Set Country → FR") { TesterController.setCountry("FR") })
+        })
         col.addView(
-            actionButton("Change API key & setup") {
+            quietButton("Change API key & setup") {
                 scope.launch {
                     runCatching { TesterController.resetUser() }
                     prefs.clear()
@@ -529,7 +644,7 @@ class MainActivity : Activity() {
                 }
             },
         )
-        return ScrollView(this).apply { addView(col) }
+        return ScrollView(this).apply { setBackgroundColor(surface()); addView(col) }
     }
 
     private fun buildBillingScreen(route: String): View {
@@ -537,7 +652,7 @@ class MainActivity : Activity() {
         val col = column()
         col.addView(heading("Billing"))
         col.addView(body("Reached via CTA app_navigate route: \"$route\""))
-        col.addView(actionButton("Back to home") { render(Screen.Main) })
+        col.addView(primaryButton("Back to home") { render(Screen.Main) })
         return col
     }
 
@@ -546,7 +661,7 @@ class MainActivity : Activity() {
         val col = column()
         col.addView(heading("Route not found"))
         col.addView(body("The CTA requested an unmapped route: \"$route\""))
-        col.addView(actionButton("Go back") { render(Screen.Main) })
+        col.addView(primaryButton("Go back") { render(Screen.Main) })
         return col
     }
 }

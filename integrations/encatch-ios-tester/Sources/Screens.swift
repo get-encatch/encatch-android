@@ -86,6 +86,7 @@ struct SetupView: View {
                 .disabled(apiKey.trimmed.isEmpty || formId.trimmed.isEmpty)
             }
             .padding()
+            .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
     }
@@ -211,6 +212,7 @@ struct LoginView: View {
                 }
             }
             .padding()
+            .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
     }
@@ -271,6 +273,7 @@ struct EditProfileView: View {
                     .buttonStyle(QuietButtonStyle())
             }
             .padding()
+            .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
     }
@@ -508,6 +511,7 @@ struct EventsTabView: View {
                 }
             }
             .padding()
+            .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
         .onAppear { state.trackScreen("Events") }
@@ -613,6 +617,7 @@ struct InlineAnyTabView: View {
                 InlineFormSlot(formId: nil)
             }
             .padding()
+            .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
         .onAppear { state.trackScreen("InlineAny") }

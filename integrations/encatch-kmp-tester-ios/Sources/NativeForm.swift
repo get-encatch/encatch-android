@@ -53,28 +53,45 @@ struct InterceptorCarousel: View {
                 HStack(spacing: 12) {
                     ForEach(items) { item in
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text(item.title).font(.headline).lineLimit(2)
+                            HStack(alignment: .top) {
+                                Image(systemName: "hand.raised.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(TesterTheme.accent)
+                                Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
                                 Spacer()
                                 Button(action: { onDismiss(item.formId) }) {
                                     Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(Color(.systemGray3))
                                 }
                             }
                             Text("Blocked by interceptor — tap to open custom UI")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            Button("Open") { onOpen(item) }
-                                .buttonStyle(.borderedProminent)
+                            Button(action: { onOpen(item) }) {
+                                Text("Open")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(TesterTheme.accent)
+                                    .foregroundColor(.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            }
                         }
                         .padding(12)
-                        .frame(width: 220)
-                        .background(Color(.secondarySystemBackground))
-                        .cornerRadius(12)
+                        .frame(width: 230)
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: TesterTheme.cornerRadius, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: TesterTheme.cornerRadius, style: .continuous)
+                                .stroke(TesterTheme.accent.opacity(0.25))
+                        )
+                        .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
                     }
                 }
                 .padding(12)
             }
-            .background(Color(.systemBackground).shadow(radius: 4))
+            .background(.thinMaterial)
+            .overlay(Divider(), alignment: .top)
         }
     }
 }
@@ -128,12 +145,17 @@ struct NativeFormModal: View {
     private var welcomeStep: some View {
         VStack(spacing: 16) {
             Spacer()
-            Text(item.title).font(.title2).bold()
+            Image(systemName: "sparkles")
+                .font(.system(size: 40))
+                .foregroundColor(TesterTheme.accent)
+            Text(item.title).font(.title2.weight(.bold)).multilineTextAlignment(.center)
             Text("A custom-rendered form, built entirely from the interceptor payload's questionnaireFields — not the SDK's WebView.")
+                .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
             Button("Start") { step = 1 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(PrimaryButtonStyle())
+                .padding(.top, 8)
             Spacer()
         }
     }
@@ -141,7 +163,13 @@ struct NativeFormModal: View {
     private var thankYouStep: some View {
         VStack(spacing: 16) {
             Spacer()
-            Text("Thank you!").font(.title2).bold()
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 44))
+                .foregroundColor(.green)
+            Text("Thank you!").font(.title2.weight(.bold))
+            Text("Your answers are ready to submit.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
             Button("Submit") {
                 let questionIds = questions.map { $0.id }
                 let types = questions.map { $0.type }
@@ -154,36 +182,48 @@ struct NativeFormModal: View {
                     await MainActor.run { onClose() }
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(PrimaryButtonStyle())
+            .padding(.top, 8)
             Spacer()
         }
     }
 
     @ViewBuilder
     private func questionStep(_ question: NativeFormQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(question.title).font(.title3).bold()
-            switch question.type {
-            case "rating":
-                HStack {
-                    ForEach(1...5, id: \.self) { star in
-                        Button(action: { answers[question.id] = String(star) }) {
-                            Image(systemName: (Double(answers[question.id] ?? "0") ?? 0) >= Double(star) ? "star.fill" : "star")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Question \(step) of \(questions.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(TesterTheme.accent)
+                Text(question.title).font(.title3.weight(.bold))
+                switch question.type {
+                case "rating":
+                    HStack(spacing: 10) {
+                        ForEach(1...5, id: \.self) { star in
+                            Button(action: { answers[question.id] = String(star) }) {
+                                Image(systemName: (Double(answers[question.id] ?? "0") ?? 0) >= Double(star) ? "star.fill" : "star")
+                                    .foregroundColor(.yellow)
+                            }
+                            .font(.title)
                         }
-                        .font(.title2)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                case "long_text":
+                    TextEditor(text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                        .frame(height: 120)
+                        .padding(6)
+                        .background(Color(.tertiarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                default:
+                    TextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
+                        .textFieldStyle(FilledFieldStyle())
                 }
-            case "long_text":
-                TextEditor(text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
-                    .frame(height: 120)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4)))
-            default:
-                TextField("Answer", text: Binding(get: { answers[question.id] ?? "" }, set: { answers[question.id] = $0 }))
-                    .textFieldStyle(.roundedBorder)
+                Button("Next") { step += 1 }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.top, 8)
             }
-            Spacer()
-            Button("Next") { step += 1 }
-                .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
         }
     }
 }

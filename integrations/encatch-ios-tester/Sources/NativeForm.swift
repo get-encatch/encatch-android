@@ -199,43 +199,46 @@ struct NativeFormModal: View {
 
     @ViewBuilder
     private func questionStep(_ question: NativeFormQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Question \(step) of \(questions.count)")
-                .font(.caption.weight(.semibold))
-                .foregroundColor(TesterTheme.accent)
-            Text(question.title).font(.title3.weight(.bold))
-            switch question.type {
-            case "rating":
-                HStack(spacing: 10) {
-                    ForEach(1...5, id: \.self) { star in
-                        Button(action: { answers[question.id] = Double(star) }) {
-                            Image(systemName: (answers[question.id] as? Double ?? 0) >= Double(star) ? "star.fill" : "star")
-                                .foregroundColor(.yellow)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Question \(step) of \(questions.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(TesterTheme.accent)
+                Text(question.title).font(.title3.weight(.bold))
+                switch question.type {
+                case "rating":
+                    HStack(spacing: 10) {
+                        ForEach(1...5, id: \.self) { star in
+                            Button(action: { answers[question.id] = Double(star) }) {
+                                Image(systemName: (answers[question.id] as? Double ?? 0) >= Double(star) ? "star.fill" : "star")
+                                    .foregroundColor(.yellow)
+                            }
+                            .font(.title)
                         }
-                        .font(.title)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                case "long_text":
+                    TextEditor(text: Binding(
+                        get: { answers[question.id] as? String ?? "" },
+                        set: { answers[question.id] = $0 }
+                    ))
+                    .frame(height: 120)
+                    .padding(6)
+                    .background(Color(.tertiarySystemFill))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                default:
+                    TextField("Answer", text: Binding(
+                        get: { answers[question.id] as? String ?? "" },
+                        set: { answers[question.id] = $0 }
+                    ))
+                    .textFieldStyle(FilledFieldStyle())
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-            case "long_text":
-                TextEditor(text: Binding(
-                    get: { answers[question.id] as? String ?? "" },
-                    set: { answers[question.id] = $0 }
-                ))
-                .frame(height: 120)
-                .padding(6)
-                .background(Color(.tertiarySystemFill))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            default:
-                TextField("Answer", text: Binding(
-                    get: { answers[question.id] as? String ?? "" },
-                    set: { answers[question.id] = $0 }
-                ))
-                .textFieldStyle(FilledFieldStyle())
+                Button("Next") { step += 1 }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .padding(.top, 8)
             }
-            Spacer()
-            Button("Next") { step += 1 }
-                .buttonStyle(PrimaryButtonStyle())
+            .padding(.top, 4)
         }
     }
 }

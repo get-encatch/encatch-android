@@ -1,10 +1,10 @@
 package com.encatch.kmptester
 
 import android.app.Activity
-import android.graphics.Color
+import android.graphics.Typeface
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -65,23 +65,41 @@ fun Activity.renderInterceptorCarousel(
 ) {
     container.removeAllViews()
     if (items.isEmpty()) return
-    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+    val row = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(dp(20f), dp(4f), dp(20f), dp(8f))
+    }
     items.forEach { item ->
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
-            setBackgroundColor(Color.LTGRAY)
-            layoutParams = LinearLayout.LayoutParams(560, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = 24 }
+            setPadding(dp(16f), dp(16f), dp(16f), dp(12f))
+            background = roundedBackground(surfaceVariant())
+            layoutParams = LinearLayout.LayoutParams(dp(260f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12f) }
         }
-        card.addView(TextView(this).apply { text = item.title; textSize = 16f })
-        card.addView(TextView(this).apply { text = "Blocked by interceptor — tap to open custom UI"; textSize = 12f })
+        card.addView(TextView(this).apply {
+            text = item.title
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(ink())
+        })
+        card.addView(TextView(this).apply {
+            text = "Blocked by interceptor — tap to open custom UI"
+            textSize = 12f
+            setTextColor(secondaryText())
+            setPadding(0, dp(2f), 0, dp(8f))
+        })
         val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        buttons.addView(Button(this).apply { text = "Open"; setOnClickListener { onOpen(item) } })
-        buttons.addView(Button(this).apply { text = "Dismiss"; setOnClickListener { onDismiss(item.formId) } })
+        buttons.addView(chipButton("Open", selected = true) { onOpen(item) })
+        buttons.addView(chipButton("Dismiss") { onDismiss(item.formId) }.apply {
+            background = pillBackground(surface())
+        })
         card.addView(buttons)
         row.addView(card)
     }
-    container.addView(HorizontalScrollView(this).apply { addView(row) })
+    container.addView(HorizontalScrollView(this).apply {
+        isHorizontalScrollBarEnabled = false
+        addView(row)
+    })
 }
 
 /**
@@ -100,82 +118,109 @@ fun Activity.buildNativeFormModal(item: BlockedFormItem, scope: CoroutineScope, 
 
     val root = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(48, 120, 48, 48)
-        setBackgroundColor(Color.WHITE)
+        setPadding(dp(20f), dp(48f), dp(20f), dp(24f))
+        setBackgroundColor(surface())
     }
 
-    val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-    header.addView(TextView(this).apply { text = "Custom native form"; textSize = 18f; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) })
-    val closeButton = Button(this).apply {
-        text = "Close"
-        setOnClickListener {
-            TesterController.emitEvent("form:close", item.formId)
-            scope.launch { runCatching { TesterController.dismissForm(item.formId) } }
-            onClose()
-        }
+    val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+    header.addView(TextView(this).apply {
+        text = "Custom native form"
+        textSize = 20f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(ink())
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+    })
+    val closeButton = chipButton("Close") {
+        TesterController.emitEvent("form:close", item.formId)
+        scope.launch { runCatching { TesterController.dismissForm(item.formId) } }
+        onClose()
     }
     header.addView(closeButton)
     root.addView(header)
 
-    val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 48, 0, 0) }
+    val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(24f), 0, 0) }
     root.addView(content)
 
     fun renderStep() {
         content.removeAllViews()
         when {
             step == 0 -> {
-                content.addView(TextView(this).apply { text = item.title; textSize = 20f })
-                content.addView(TextView(this).apply { text = "A custom-rendered form, built entirely from the interceptor payload's questionnaireFields — not the SDK's WebView." })
-                content.addView(Button(this).apply { text = "Start"; setOnClickListener { step = 1; renderStep() } })
+                content.addView(TextView(this).apply {
+                    text = item.title
+                    textSize = 22f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(ink())
+                    setPadding(0, 0, 0, dp(8f))
+                })
+                content.addView(TextView(this).apply {
+                    text = "A custom-rendered form, built entirely from the interceptor payload's questionnaireFields — not the SDK's WebView."
+                    textSize = 14f
+                    setTextColor(secondaryText())
+                    setPadding(0, 0, 0, dp(12f))
+                })
+                content.addView(primaryButton("Start") { step = 1; renderStep() })
             }
             step <= questions.size -> {
                 val q = questions[step - 1]
-                content.addView(TextView(this).apply { text = q.title; textSize = 18f })
+                content.addView(TextView(this).apply {
+                    text = q.title
+                    textSize = 18f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(ink())
+                    setPadding(0, 0, 0, dp(12f))
+                })
                 when (q.type) {
                     "rating" -> {
                         val ratingRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                         (1..5).forEach { star ->
-                            ratingRow.addView(Button(this).apply {
-                                text = if ((answers[q.id]?.toDoubleOrNull() ?: 0.0) >= star) "★" else "☆"
-                                setOnClickListener { answers[q.id] = star.toString(); renderStep() }
-                            })
+                            val filled = (answers[q.id]?.toDoubleOrNull() ?: 0.0) >= star
+                            val chip = chipButton(if (filled) "★" else "☆") {
+                                answers[q.id] = star.toString(); renderStep()
+                            }
+                            if (filled) {
+                                chip.background = pillBackground(TesterTheme.GREEN)
+                                chip.setTextColor(0xFFFFFFFF.toInt())
+                            }
+                            chip.textSize = 18f
+                            ratingRow.addView(chip)
                         }
                         content.addView(ratingRow)
                     }
                     else -> {
-                        val field = EditText(this).apply { setText(answers[q.id] ?: "") }
+                        // Kept at child index 1 — the Next handler below reads it back by position.
+                        val field = filledField(null).apply { setText(answers[q.id] ?: "") }
                         content.addView(field)
                         field.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) answers[q.id] = field.text.toString() }
                     }
                 }
-                content.addView(Button(this).apply {
-                    text = "Next"
-                    setOnClickListener {
-                        if (content.getChildAt(1) is EditText) answers[q.id] = (content.getChildAt(1) as EditText).text.toString()
-                        step += 1
-                        renderStep()
-                    }
+                content.addView(primaryButton("Next") {
+                    if (content.getChildAt(1) is EditText) answers[q.id] = (content.getChildAt(1) as EditText).text.toString()
+                    step += 1
+                    renderStep()
                 })
             }
             else -> {
-                content.addView(TextView(this).apply { text = "Thank you!"; textSize = 20f })
-                content.addView(Button(this).apply {
-                    text = "Submit"
-                    setOnClickListener {
-                        scope.launch {
-                            TesterController.emitEvent("form:submit", item.formId)
-                            runCatching {
-                                TesterController.submitNativeForm(
-                                    item.formId,
-                                    questions.map { it.id },
-                                    questions.map { it.type },
-                                    questions.map { answers[it.id] },
-                                )
-                            }
-                            TesterController.emitEvent("form:complete", item.formId)
-                            runCatching { TesterController.dismissForm(item.formId) }
-                            onClose()
+                content.addView(TextView(this).apply {
+                    text = "Thank you!"
+                    textSize = 22f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(ink())
+                    setPadding(0, 0, 0, dp(12f))
+                })
+                content.addView(primaryButton("Submit") {
+                    scope.launch {
+                        TesterController.emitEvent("form:submit", item.formId)
+                        runCatching {
+                            TesterController.submitNativeForm(
+                                item.formId,
+                                questions.map { it.id },
+                                questions.map { it.type },
+                                questions.map { answers[it.id] },
+                            )
                         }
+                        TesterController.emitEvent("form:complete", item.formId)
+                        runCatching { TesterController.dismissForm(item.formId) }
+                        onClose()
                     }
                 })
             }
@@ -183,5 +228,5 @@ fun Activity.buildNativeFormModal(item: BlockedFormItem, scope: CoroutineScope, 
     }
     renderStep()
 
-    return ScrollView(this).apply { addView(root) }
+    return ScrollView(this).apply { setBackgroundColor(surface()); addView(root) }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Encatch
 
 /// Screen state + all SDK calls the tester UI makes, mirroring `encatch-android-tester`'s
@@ -14,6 +15,10 @@ final class TesterState: ObservableObject {
     @Published var openedForm: BlockedFormItem?
     /// Rolling capture of every SDK HTTP call (newest first), fed by Encatch.onNetworkLog.
     @Published var networkLogs: [NetworkLogItem] = []
+    /// Current keyboard height, tracked so form screens can extend their scrollable area past it
+    /// — plain SwiftUI `ScrollView`s don't grow their scroll range to compensate for the keyboard,
+    /// so without this, fields near the bottom of a form are unreachable while the keyboard is up.
+    @Published var keyboardHeight: CGFloat = 0
 
     let prefs = TesterPrefs()
     let usersStore = TestUsersStore()
@@ -26,6 +31,8 @@ final class TesterState: ObservableObject {
 
     /// Registered once for the process lifetime, same as a real host app would at startup.
     func start() {
+        observeKeyboard()
+
         // Capture every SDK request/response for the Logs tab. Survives re-initialize().
         Encatch.shared.onNetworkLog = { [weak self] entry in
             DispatchQueue.main.async {
@@ -63,6 +70,26 @@ final class TesterState: ObservableObject {
     private func stringValue(_ value: JSONValue?) -> String? {
         if case .string(let s)? = value { return s }
         return nil
+    }
+
+    /// Extends `keyboardHeight` on show/hide so form screens can add matching bottom scroll room
+    /// (see `View.avoidsKeyboard` in Theme.swift) — SwiftUI's `ScrollView` doesn't do this itself,
+    /// so without it a field near the bottom of a long form has nowhere to scroll to once the
+    /// keyboard covers it.
+    private func observeKeyboard() {
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self, let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let screenHeight = UIScreen.main.bounds.height
+            let height = max(0, screenHeight - endFrame.origin.y)
+            withAnimation(.easeOut(duration: 0.25)) { self.keyboardHeight = height }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            withAnimation(.easeOut(duration: 0.25)) { self?.keyboardHeight = 0 }
+        }
     }
 
     func saveSetupAndInit(environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) {

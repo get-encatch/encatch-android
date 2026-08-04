@@ -1,29 +1,38 @@
 package com.encatch.composetester
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer as LayoutSpacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -32,8 +41,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.encatch.sdk.Encatch
 import com.encatch.sdk.EncatchConfig
 import com.encatch.sdk.EventType
@@ -52,11 +67,13 @@ import kotlinx.serialization.json.contentOrNull
  * `encatch-flutter-tester` reference app, minus one thing `:compose-sdk` doesn't support yet: no
  * wildcard inline slot — `EncatchInlineForm(formId: String, ...)` takes a non-null `formId`, only
  * the exact-match case is exposed as a composable (see README's Known gap).
+ *
+ * Visual language lives in `Theme.kt` and mirrors the iOS tester's Uber-style monochrome design.
  */
 @Composable
 fun TesterApp() {
-    MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
+    EncatchTesterTheme {
+        Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
             TesterScreens()
         }
     }
@@ -200,64 +217,72 @@ private fun TesterScreens() {
         }
 
         Screen.Main -> Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
             topBar = {
                 TopAppBar(
-                    title = { Text(tab.label) },
+                    title = { Text(tab.label, fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    ),
                     actions = {
-                        TextButton(onClick = { cycleTheme() }) { Text(currentTheme.name) }
-                        TextButton(onClick = { logOut() }) { Text("Logout") }
+                        QuietTextButton(
+                            text = currentTheme.name.lowercase().replaceFirstChar { it.uppercase() },
+                            onClick = { cycleTheme() },
+                            color = MaterialTheme.colorScheme.ink,
+                            modifier = Modifier.width(76.dp),
+                        )
+                        QuietTextButton(
+                            text = "Log out",
+                            onClick = { logOut() },
+                            color = MaterialTheme.colorScheme.ink,
+                            modifier = Modifier.width(76.dp),
+                        )
                     },
                 )
             },
             bottomBar = {
-                NavigationBar {
-                    TesterTab.entries.forEach { t ->
-                        NavigationBarItem(
-                            selected = tab == t,
-                            onClick = { tab = t },
-                            icon = {},
-                            label = { Text(t.label) },
-                        )
-                    }
-                }
+                TesterTabBar(selected = tab, onSelect = { tab = it })
             },
         ) { padding ->
             Column(Modifier.padding(padding)) {
-                when (tab) {
-                    TesterTab.HOME -> HomeScreen(
-                        userName = TesterPrefs.userName,
-                        lastEvent = lastEvent,
-                        interceptorFormId = TesterPrefs.interceptorFormId,
-                        onShowModalForm = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
-                        onShowPrefilledForm = {
-                            scope.launch {
-                                Encatch.addToResponse("prefill-question", "hello")
-                                Encatch.showForm(TesterPrefs.formId.orEmpty())
-                            }
-                        },
-                        onShowInterceptorForm = { id -> scope.launch { Encatch.showForm(id) } },
-                        onEditProfile = { TesterPrefs.userName?.let { screen = Screen.EditProfile(it) } },
-                    )
-                    TesterTab.EVENTS -> EventsScreen(
-                        onTrackEvent = { name -> scope.launch { Encatch.trackEvent(name) } },
-                        onTrackScreen = { name -> scope.launch { Encatch.trackScreen(name) } },
-                    )
-                    TesterTab.LOGS -> LogsScreen()
-                    TesterTab.SETTINGS -> SettingsScreen(
-                        onSetLocale = { Encatch.setLocale("fr-FR") },
-                        onSetCountry = { Encatch.setCountry("FR") },
-                        onChangeSetup = {
-                            scope.launch {
-                                Encatch.resetUser()
-                                TesterPrefs.clear()
-                                screen = Screen.Setup
-                            }
-                        },
-                    )
-                    TesterTab.INLINE_EXACT -> InlineExactScreen(
-                        formId = TesterPrefs.formId.orEmpty(),
-                        onShowExact = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
-                    )
+                Box(Modifier.weight(1f, fill = true)) {
+                    when (tab) {
+                        TesterTab.HOME -> HomeScreen(
+                            userName = TesterPrefs.userName,
+                            lastEvent = lastEvent,
+                            interceptorFormId = TesterPrefs.interceptorFormId,
+                            onShowModalForm = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
+                            onShowPrefilledForm = {
+                                scope.launch {
+                                    Encatch.addToResponse("prefill-question", "hello")
+                                    Encatch.showForm(TesterPrefs.formId.orEmpty())
+                                }
+                            },
+                            onShowInterceptorForm = { id -> scope.launch { Encatch.showForm(id) } },
+                            onEditProfile = { TesterPrefs.userName?.let { screen = Screen.EditProfile(it) } },
+                        )
+                        TesterTab.EVENTS -> EventsScreen(
+                            onTrackEvent = { name -> scope.launch { Encatch.trackEvent(name) } },
+                            onTrackScreen = { name -> scope.launch { Encatch.trackScreen(name) } },
+                        )
+                        TesterTab.LOGS -> LogsScreen()
+                        TesterTab.SETTINGS -> SettingsScreen(
+                            onSetLocale = { Encatch.setLocale("fr-FR") },
+                            onSetCountry = { Encatch.setCountry("FR") },
+                            onChangeSetup = {
+                                scope.launch {
+                                    Encatch.resetUser()
+                                    TesterPrefs.clear()
+                                    screen = Screen.Setup
+                                }
+                            },
+                        )
+                        TesterTab.INLINE_EXACT -> InlineExactScreen(
+                            formId = TesterPrefs.formId.orEmpty(),
+                            onShowExact = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
+                        )
+                    }
                 }
 
                 InterceptorCarousel(
@@ -292,6 +317,62 @@ private fun TestUser.toTraits(): UserTraits? {
     return if (fields.isEmpty()) null else UserTraits(set = fields)
 }
 
+/** Monochrome bottom bar: selected ink + semibold, unselected gray, no indicator pill. */
+@Composable
+private fun TesterTabBar(selected: TesterTab, onSelect: (TesterTab) -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxWidth().background(cs.background)) {
+        HorizontalDivider(thickness = 1.dp, color = cs.onBackground.copy(alpha = 0.08f))
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(top = 10.dp, bottom = 8.dp)) {
+            TesterTab.entries.forEach { t ->
+                val active = selected == t
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { onSelect(t) },
+                        )
+                        .padding(vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        t.label,
+                        fontSize = 12.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                        color = if (active) cs.ink else cs.onSurfaceVariant,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Centered hero block used on Setup/Login: brand mark, bold title, secondary caption. */
+@Composable
+private fun HeroHeader(title: String, subtitle: String) {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        BrandMark()
+        Spacer(10)
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = cs.onBackground)
+        Spacer(6)
+        Text(
+            subtitle,
+            fontSize = 13.sp,
+            color = cs.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+    }
+}
+
 @Composable
 private fun SetupScreen(
     initialEnvironment: TesterEnvironment,
@@ -301,42 +382,68 @@ private fun SetupScreen(
     var apiKey by remember { mutableStateOf("") }
     var formId by remember { mutableStateOf("") }
     var interceptorFormId by remember { mutableStateOf("") }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("Encatch Compose Tester — Setup", style = MaterialTheme.typography.headlineSmall)
-        Spacer()
-        Text("Enter your own API key and default form id. Saved locally on this device — this same build works for any tester or environment.")
-        Spacer()
-
-        Text("Environment", style = MaterialTheme.typography.labelLarge)
-        Spacer(4)
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            TesterEnvironment.entries.forEachIndexed { index, env ->
-                SegmentedButton(
-                    selected = environment == env,
-                    onClick = { environment = env },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = TesterEnvironment.entries.size),
-                ) { Text(env.label) }
-            }
-        }
-        Text("${environment.apiBaseUrl} · ${environment.webHost}", style = MaterialTheme.typography.bodySmall)
-
-        Spacer()
-        OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API key *") }, modifier = Modifier.fillMaxWidth())
-        Spacer(8)
-        OutlinedTextField(formId, { formId = it }, label = { Text("Default form id (feedback config) *") }, modifier = Modifier.fillMaxWidth())
-        Spacer(8)
-        OutlinedTextField(
-            interceptorFormId,
-            { interceptorFormId = it },
-            label = { Text("Interceptor test form id (optional)") },
-            modifier = Modifier.fillMaxWidth(),
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
+        HeroHeader(
+            title = "Encatch Tester",
+            subtitle = "Enter your API key and default form id. Saved locally on this device — the same build works for any tester or environment.",
         )
-        Spacer()
-        Button(
+        Spacer(24)
+
+        SectionHeader("Environment")
+        Spacer(8)
+        TesterCard {
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                TesterEnvironment.entries.forEachIndexed { index, env ->
+                    SegmentedButton(
+                        selected = environment == env,
+                        onClick = { environment = env },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = TesterEnvironment.entries.size),
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = cs.ink,
+                            activeContentColor = cs.background,
+                            activeBorderColor = cs.outline,
+                            inactiveContainerColor = cs.background.copy(alpha = 0f),
+                            inactiveContentColor = cs.onBackground,
+                            inactiveBorderColor = cs.outline,
+                        ),
+                        icon = {},
+                    ) { Text(env.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                }
+            }
+            Spacer(10)
+            Text(
+                "${environment.apiBaseUrl} · ${environment.webHost}",
+                fontSize = 12.sp,
+                color = cs.onSurfaceVariant,
+            )
+        }
+
+        Spacer(20)
+        SectionHeader("Credentials")
+        Spacer(8)
+        TesterCard {
+            FieldLabel("API key", required = true)
+            Spacer(6)
+            FilledField(apiKey, { apiKey = it }, placeholder = "en_dev_…")
+            Spacer(14)
+            FieldLabel("Default form id (feedback config)", required = true)
+            Spacer(6)
+            FilledField(formId, { formId = it }, placeholder = "form id")
+            Spacer(14)
+            FieldLabel("Interceptor test form id (optional)")
+            Spacer(6)
+            FilledField(interceptorFormId, { interceptorFormId = it }, placeholder = "form id")
+        }
+
+        Spacer(24)
+        PrimaryPillButton(
+            text = "Save & continue",
             onClick = { onContinue(environment, apiKey.trim(), formId.trim(), interceptorFormId.trim()) },
             enabled = apiKey.isNotBlank() && formId.isNotBlank(),
-        ) { Text("Save & continue") }
+        )
+        Spacer(24)
     }
 }
 
@@ -354,64 +461,96 @@ private fun LoginScreen(
     var newUsername by remember { mutableStateOf("") }
     var newEmail by remember { mutableStateOf("") }
     var newDisplayName by remember { mutableStateOf("") }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("Log in", style = MaterialTheme.typography.headlineSmall)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
+        HeroHeader(
+            title = "Log in",
+            subtitle = "Mock login — calls Encatch.identifyUser(username). Saved users are local to this tester, independent of the SDK.",
+        )
+        Spacer(24)
+
+        SectionHeader("Saved users")
         Spacer(8)
-        Text("Mock login — calls Encatch.identifyUser(username). Saved users are local to this tester, independent of the SDK.")
-        Spacer()
+        TesterCard {
+            if (savedUsers.isEmpty()) {
+                Text(
+                    "No saved users yet — add one below.",
+                    fontSize = 13.sp,
+                    color = cs.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            }
+            savedUsers.forEach { user ->
+                val selected = selectedUsername == user.username
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (selected) cs.inkSoft else cs.onBackground.copy(alpha = 0.04f))
+                        .clickable { onSelectUser(user) }
+                        .padding(10.dp),
+                ) {
+                    InitialsAvatar(name = user.displayName.ifBlank { user.username })
+                    LayoutSpacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(user.username, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = cs.onBackground)
+                        val detail = listOf(user.displayName, user.email).filter { it.isNotBlank() }.joinToString(" · ")
+                        if (detail.isNotEmpty()) {
+                            Text(detail, fontSize = 12.sp, color = cs.onSurfaceVariant, maxLines = 1)
+                        }
+                    }
+                    Text(
+                        if (selected) "✓" else "○",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (selected) cs.ink else cs.onSurfaceVariant.copy(alpha = 0.5f),
+                    )
+                }
+            }
 
-        Text("Saved users", style = MaterialTheme.typography.labelLarge)
-        Spacer(4)
-        if (savedUsers.isEmpty()) {
-            Text("No saved users yet.", style = MaterialTheme.typography.bodySmall)
-        }
-        savedUsers.forEach { user ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), onClick = { onSelectUser(user) }) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(user.username, style = MaterialTheme.typography.titleSmall)
-                    if (user.displayName.isNotBlank() || user.email.isNotBlank()) {
-                        Text(listOf(user.displayName, user.email).filter { it.isNotBlank() }.joinToString(" · "))
-                    }
-                    if (selectedUsername == user.username) {
-                        Text("Selected", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    }
+            if (!showNewUserForm) {
+                QuietTextButton(text = "+ New user", onClick = { showNewUserForm = true }, color = cs.ink)
+            } else {
+                Spacer(8)
+                FilledField(newUsername, { newUsername = it }, placeholder = "Username")
+                Spacer(10)
+                FilledField(newEmail, { newEmail = it }, placeholder = "Email")
+                Spacer(10)
+                FilledField(newDisplayName, { newDisplayName = it }, placeholder = "Display name")
+                Spacer(10)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SecondaryPillButton(
+                        text = "Save user",
+                        onClick = {
+                            onSaveNewUser(TestUser(newUsername.trim(), newEmail.trim(), newDisplayName.trim()))
+                            showNewUserForm = false
+                            newUsername = ""; newEmail = ""; newDisplayName = ""
+                        },
+                        enabled = newUsername.isNotBlank(),
+                        fullWidth = false,
+                        modifier = Modifier.weight(1f),
+                    )
+                    QuietTextButton(
+                        text = "Cancel",
+                        onClick = { showNewUserForm = false },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
 
-        Spacer(8)
-        if (!showNewUserForm) {
-            TextButton(onClick = { showNewUserForm = true }) { Text("+ New user") }
-        } else {
-            OutlinedTextField(newUsername, { newUsername = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
-            Spacer(8)
-            OutlinedTextField(newEmail, { newEmail = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-            Spacer(8)
-            OutlinedTextField(newDisplayName, { newDisplayName = it }, label = { Text("Display name") }, modifier = Modifier.fillMaxWidth())
-            Spacer(8)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        onSaveNewUser(TestUser(newUsername.trim(), newEmail.trim(), newDisplayName.trim()))
-                        showNewUserForm = false
-                        newUsername = ""; newEmail = ""; newDisplayName = ""
-                    },
-                    enabled = newUsername.isNotBlank(),
-                ) { Text("Save user") }
-                TextButton(onClick = { showNewUserForm = false }) { Text("Cancel") }
-            }
-        }
-
+        Spacer(24)
         if (selectedUsername != null) {
-            Spacer()
-            TextButton(onClick = { onEditProfile(selectedUsername) }) { Text("Edit profile before sign in") }
+            SecondaryPillButton(text = "Edit profile before sign in", onClick = { onEditProfile(selectedUsername) })
+            Spacer(10)
         }
-
-        Spacer()
-        Button(onClick = onIdentify, enabled = selectedUsername != null) { Text("Identify user") }
-        Spacer(8)
-        TextButton(onClick = onChangeSetup) { Text("Change API key & setup") }
+        PrimaryPillButton(text = "Identify user", onClick = onIdentify, enabled = selectedUsername != null)
+        Spacer(4)
+        QuietTextButton(text = "Change API key & setup", onClick = onChangeSetup)
+        Spacer(24)
     }
 }
 
@@ -425,19 +564,38 @@ private fun EditProfileScreen(
 ) {
     var email by remember { mutableStateOf(initialEmail) }
     var displayName by remember { mutableStateOf(initialDisplayName) }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp)) {
-        Text("Edit profile", style = MaterialTheme.typography.headlineSmall)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            InitialsAvatar(name = displayName.ifBlank { username }, size = 64.dp)
+            Spacer(10)
+            Text("Edit profile", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = cs.onBackground)
+            Spacer(4)
+            Text("@$username", fontSize = 14.sp, color = cs.onSurfaceVariant)
+        }
+        Spacer(24)
+
+        SectionHeader("Profile traits")
         Spacer(8)
-        Text("Username: $username")
-        Spacer()
-        OutlinedTextField(email, { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
-        Spacer(8)
-        OutlinedTextField(displayName, { displayName = it }, label = { Text("Display name") }, modifier = Modifier.fillMaxWidth())
-        Spacer()
-        Button(onClick = { onSave(email.trim(), displayName.trim()) }) { Text("Save & identify") }
-        Spacer(8)
-        TextButton(onClick = onBack) { Text("Back") }
+        TesterCard {
+            FieldLabel("Email")
+            Spacer(6)
+            FilledField(email, { email = it }, placeholder = "name@example.com")
+            Spacer(14)
+            FieldLabel("Display name")
+            Spacer(6)
+            FilledField(displayName, { displayName = it }, placeholder = "Display name")
+        }
+
+        Spacer(24)
+        PrimaryPillButton(text = "Save & identify", onClick = { onSave(email.trim(), displayName.trim()) })
+        Spacer(4)
+        QuietTextButton(text = "Back", onClick = onBack)
+        Spacer(24)
     }
 }
 
@@ -455,125 +613,262 @@ private fun HomeScreen(
         Encatch.trackScreen("Home")
         Encatch.trackEvent("home_viewed")
     }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp)) {
-        Text("Home", style = MaterialTheme.typography.headlineSmall)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+        Spacer(16)
         if (!userName.isNullOrBlank()) {
-            Spacer(4)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Signed in as $userName")
-                TextButton(onClick = onEditProfile) { Text("Edit profile") }
+            TesterCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    InitialsAvatar(name = userName, size = 44.dp)
+                    LayoutSpacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Signed in as", fontSize = 12.sp, color = cs.onSurfaceVariant)
+                        Text(userName, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = cs.onBackground)
+                    }
+                    Text(
+                        "Edit profile",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = cs.ink,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onEditProfile)
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            Spacer(20)
+        }
+
+        SectionHeader("Last SDK event")
+        Spacer(8)
+        TesterCard {
+            Text(
+                lastEvent,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                color = cs.onSurfaceVariant,
+                maxLines = 2,
+            )
+        }
+
+        Spacer(20)
+        SectionHeader("Forms")
+        Spacer(8)
+        TesterCard {
+            PrimaryPillButton(text = "Show Form", onClick = onShowModalForm)
+            Spacer(10)
+            SecondaryPillButton(text = "Show Form (prefilled)", onClick = onShowPrefilledForm)
+            if (!interceptorFormId.isNullOrBlank()) {
+                Spacer(10)
+                SecondaryPillButton(
+                    text = "Show Form (interceptor test)",
+                    onClick = { onShowInterceptorForm(interceptorFormId) },
+                )
             }
         }
-        Spacer(8)
-        Text("Last event: $lastEvent")
-        Spacer()
-        Button(onClick = onShowModalForm) { Text("Show Form") }
-        Spacer(8)
-        Button(onClick = onShowPrefilledForm) { Text("Show Form (prefilled)") }
-        if (!interceptorFormId.isNullOrBlank()) {
-            Spacer(8)
-            Button(onClick = { onShowInterceptorForm(interceptorFormId) }) { Text("Show Form (interceptor test)") }
-        }
+        Spacer(24)
     }
 }
 
 private val TRACK_EVENT_PRESETS = listOf("button_clicked", "feature_used", "purchase_started", "survey_viewed", "home_viewed")
 private val TRACK_SCREEN_PRESETS = listOf("/home", "/dashboard", "/settings", "/dashboard/encatch-test")
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EventsScreen(onTrackEvent: (String) -> Unit, onTrackScreen: (String) -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("Events") }
     var customEvent by remember { mutableStateOf("test_event") }
     var customScreen by remember { mutableStateOf("/dashboard/encatch-test") }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("Events", style = MaterialTheme.typography.headlineSmall)
-        Spacer()
-
-        Text("trackEvent presets", style = MaterialTheme.typography.labelLarge)
-        TRACK_EVENT_PRESETS.forEach { name ->
-            Button(onClick = { onTrackEvent(name) }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Text(name) }
-        }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(horizontal = 20.dp)) {
+        Spacer(16)
+        SectionHeader("trackEvent presets")
         Spacer(8)
-        OutlinedTextField(customEvent, { customEvent = it }, label = { Text("Custom event") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { onTrackEvent(customEvent.trim()) }, enabled = customEvent.isNotBlank()) { Text("Fire") }
-
-        Spacer()
-        Text("trackScreen presets", style = MaterialTheme.typography.labelLarge)
-        TRACK_SCREEN_PRESETS.forEach { path ->
-            Button(onClick = { onTrackScreen(path) }, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Text(path) }
+        TesterCard {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TRACK_EVENT_PRESETS.forEach { name ->
+                    ChipButton(text = name, onClick = { onTrackEvent(name) })
+                }
+            }
+            Spacer(12)
+            HorizontalDivider(color = cs.onBackground.copy(alpha = 0.08f))
+            Spacer(12)
+            FieldLabel("Custom event")
+            Spacer(6)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledField(customEvent, { customEvent = it }, placeholder = "event_name", modifier = Modifier.weight(1f))
+                SecondaryPillButton(
+                    text = "Fire",
+                    onClick = { onTrackEvent(customEvent.trim()) },
+                    enabled = customEvent.isNotBlank(),
+                    fullWidth = false,
+                )
+            }
         }
+
+        Spacer(20)
+        SectionHeader("trackScreen presets")
         Spacer(8)
-        OutlinedTextField(customScreen, { customScreen = it }, label = { Text("Custom screen") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { onTrackScreen(customScreen.trim()) }, enabled = customScreen.isNotBlank()) { Text("Track") }
+        TesterCard {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                TRACK_SCREEN_PRESETS.forEach { path ->
+                    ChipButton(text = path, onClick = { onTrackScreen(path) })
+                }
+            }
+            Spacer(12)
+            HorizontalDivider(color = cs.onBackground.copy(alpha = 0.08f))
+            Spacer(12)
+            FieldLabel("Custom screen")
+            Spacer(6)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledField(customScreen, { customScreen = it }, placeholder = "/path", modifier = Modifier.weight(1f))
+                SecondaryPillButton(
+                    text = "Track",
+                    onClick = { onTrackScreen(customScreen.trim()) },
+                    enabled = customScreen.isNotBlank(),
+                    fullWidth = false,
+                )
+            }
+        }
+        Spacer(24)
     }
 }
 
 @Composable
 private fun InlineExactScreen(formId: String, onShowExact: () -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("InlineExact") }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp).verticalScroll(rememberScrollState())) {
-        Text("Inline (Exact)", style = MaterialTheme.typography.headlineSmall)
-        Spacer()
-        Text("Claims \"$formId\" — :compose-sdk's EncatchInlineForm only supports exact-match form ids, no wildcard slot.")
-        Button(onClick = onShowExact) { Text("Show Exact Form (renders inline below)") }
-        Spacer()
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+        Spacer(16)
+        TesterCard {
+            Text(
+                "Claims \"$formId\" — :compose-sdk's EncatchInlineForm only supports exact-match form ids, no wildcard slot.",
+                fontSize = 13.sp,
+                color = cs.onSurfaceVariant,
+            )
+        }
+        Spacer(16)
+        PrimaryPillButton(text = "Show Exact Form (renders inline below)", onClick = onShowExact)
+        Spacer(16)
         // No fixed height — the SDK view self-sizes (skeleton placeholder, then live
         // form:resize values) on both platforms.
-        EncatchInlineForm(formId = formId, modifier = Modifier.fillMaxWidth())
+        EncatchInlineForm(
+            formId = formId,
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(CardCornerRadius)),
+        )
+        Spacer(24)
     }
 }
 
 @Composable
 private fun SettingsScreen(onSetLocale: () -> Unit, onSetCountry: () -> Unit, onChangeSetup: () -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("Settings") }
+    val cs = MaterialTheme.colorScheme
 
-    Column(Modifier.padding(24.dp)) {
-        Text("Settings", style = MaterialTheme.typography.headlineSmall)
-        Spacer()
-        Text("Environment: ${TesterPrefs.environment.label}")
-        Text("Form id: ${TesterPrefs.formId}")
-        Text("API base URL: ${TesterPrefs.apiBaseUrl ?: "(default)"}")
-        Text("Web host: ${TesterPrefs.webHost ?: "(default)"}")
-        Text("Interceptor form id: ${TesterPrefs.interceptorFormId ?: "(none)"}")
-        Spacer()
-        Button(onClick = onSetLocale) { Text("Set Locale → fr-FR") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+        Spacer(16)
+        SectionHeader("Current configuration")
         Spacer(8)
-        Button(onClick = onSetCountry) { Text("Set Country → FR") }
-        Spacer()
-        TextButton(onClick = onChangeSetup) { Text("Change API key & setup") }
+        TesterCard {
+            InfoRow("Environment", TesterPrefs.environment.label)
+            SettingsDivider()
+            InfoRow("Form id", TesterPrefs.formId ?: "—")
+            SettingsDivider()
+            InfoRow("API base URL", TesterPrefs.apiBaseUrl ?: "(default)")
+            SettingsDivider()
+            InfoRow("Web host", TesterPrefs.webHost ?: "(default)")
+            SettingsDivider()
+            InfoRow("Interceptor form id", TesterPrefs.interceptorFormId ?: "(none)")
+        }
+
+        Spacer(20)
+        SectionHeader("Localization")
+        Spacer(8)
+        TesterCard {
+            SecondaryPillButton(text = "Set Locale → fr-FR", onClick = onSetLocale)
+            Spacer(10)
+            SecondaryPillButton(text = "Set Country → FR", onClick = onSetCountry)
+        }
+
+        Spacer(20)
+        QuietTextButton(text = "Change API key & setup", onClick = onChangeSetup, color = cs.error)
+        Spacer(24)
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f),
+        modifier = Modifier.padding(vertical = 6.dp),
+    )
+}
+
+/** Full-screen centered notice with an ink glyph circle — Billing / RouteNotFound destinations. */
+@Composable
+private fun RouteNotice(
+    glyph: String,
+    title: String,
+    subtitle: String,
+    buttonText: String,
+    onButton: () -> Unit,
+) {
+    val cs = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier.size(72.dp).clip(CircleShape).background(cs.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(glyph, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = cs.ink)
+        }
+        Spacer(16)
+        Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = cs.onBackground)
+        Spacer(8)
+        Text(subtitle, fontSize = 13.sp, color = cs.onSurfaceVariant, textAlign = TextAlign.Center)
+        Spacer(24)
+        PrimaryPillButton(text = buttonText, onClick = onButton)
     }
 }
 
 @Composable
 private fun BillingScreen(route: String, onBackToHome: () -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("Billing") }
-
-    Column(Modifier.padding(24.dp)) {
-        Text("Billing", style = MaterialTheme.typography.headlineSmall)
-        Spacer(8)
-        Text("Reached via CTA app_navigate route: \"$route\"")
-        Spacer()
-        Button(onClick = onBackToHome) { Text("Back to home") }
-    }
+    RouteNotice(
+        glyph = "$",
+        title = "Billing",
+        subtitle = "Reached via CTA app_navigate route: \"$route\"",
+        buttonText = "Back to home",
+        onButton = onBackToHome,
+    )
 }
 
 @Composable
 private fun RouteNotFoundScreen(route: String, onGoBack: () -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("RouteNotFound") }
-
-    Column(Modifier.padding(24.dp)) {
-        Text("Route not found", style = MaterialTheme.typography.headlineSmall)
-        Spacer(8)
-        Text("The CTA requested an unmapped route: \"$route\"")
-        Spacer()
-        Button(onClick = onGoBack) { Text("Go back") }
-    }
+    RouteNotice(
+        glyph = "?",
+        title = "Route not found",
+        subtitle = "The CTA requested an unmapped route: \"$route\"",
+        buttonText = "Go back",
+        onButton = onGoBack,
+    )
 }
 
 @Composable
-private fun Spacer(dp: Int = 16) {
-    androidx.compose.foundation.layout.Spacer(Modifier.height(dp.dp))
+internal fun Spacer(dp: Int = 16) {
+    LayoutSpacer(Modifier.height(dp.dp))
 }

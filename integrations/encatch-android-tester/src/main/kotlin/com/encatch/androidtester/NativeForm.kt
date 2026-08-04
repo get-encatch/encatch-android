@@ -1,5 +1,7 @@
 package com.encatch.androidtester
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,11 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +31,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.encatch.core.BuildSubmitRequestOptions
 import com.encatch.core.Encatch
@@ -94,22 +99,50 @@ private val RENDERABLE_TYPES = setOf("rating", "short_answer", "long_text")
 @Composable
 fun InterceptorCarousel(items: List<BlockedFormItem>, onOpen: (BlockedFormItem) -> Unit, onDismiss: (String) -> Unit) {
     if (items.isEmpty()) return
-    Surface(shadowElevation = 8.dp, modifier = Modifier.fillMaxWidth()) {
-        LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Surface(color = MaterialTheme.colorScheme.background, shadowElevation = 8.dp, modifier = Modifier.fillMaxWidth()) {
+        LazyRow(contentPadding = PaddingValues(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(items, key = { it.formId }) { item ->
-                Card(modifier = Modifier.width(220.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Text(item.title, style = MaterialTheme.typography.titleSmall)
-                            IconButton(onClick = { onDismiss(item.formId) }) {
-                                Text("✕")
-                            }
+                // Flat gray tile with a faint ink outline — mirrors the iOS carousel card.
+                Column(
+                    Modifier
+                        .width(230.dp)
+                        .clip(RoundedCornerShape(TesterTheme.CornerRadius))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.ink.copy(alpha = 0.25f),
+                            RoundedCornerShape(TesterTheme.CornerRadius),
+                        )
+                        .padding(12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            item.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { onDismiss(item.formId) }) {
+                            Text("✕", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Spacer(Modifier.height(8.dp))
-                        Text("Blocked by interceptor — tap to open custom UI", style = MaterialTheme.typography.bodySmall)
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = { onOpen(item) }) { Text("Open") }
                     }
+                    Text(
+                        "Blocked by interceptor — tap to open custom UI",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = { onOpen(item) },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.background,
+                        ),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Open", fontWeight = FontWeight.SemiBold) }
                 }
             }
         }
@@ -138,15 +171,19 @@ fun NativeFormModal(item: BlockedFormItem, onClose: () -> Unit) {
         Encatch.emitEvent(EventType.FORM_STARTED, EventPayload(formId = item.formId, timestamp = 0))
     }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().padding(24.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text("Custom native form", style = MaterialTheme.typography.titleMedium)
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Custom native form", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 TextButton(onClick = {
                     Encatch.emitEvent(EventType.FORM_CLOSE, EventPayload(formId = item.formId, timestamp = 0))
                     scope.launch { runCatching { Encatch.dismissForm(item.formId) } }
                     onClose()
-                }) { Text("Close") }
+                }) { Text("Close", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold) }
             }
             Spacer(Modifier.height(16.dp))
 
@@ -189,27 +226,32 @@ fun NativeFormModal(item: BlockedFormItem, onClose: () -> Unit) {
 @Composable
 private fun WelcomeStep(title: String, onNext: () -> Unit) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
+        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text("A custom-rendered form, built entirely from the interceptor payload's questionnaireFields — not the SDK's WebView.")
+        Text(
+            "A custom-rendered form, built entirely from the interceptor payload's questionnaireFields — not the SDK's WebView.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onNext) { Text("Start") }
+        PrimaryPillButton("Start", onClick = onNext)
     }
 }
 
 @Composable
 private fun ThankYouStep(onSubmit: () -> Unit) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Thank you!", style = MaterialTheme.typography.headlineSmall)
+        Text("Thank you!", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onSubmit) { Text("Submit") }
+        PrimaryPillButton("Submit", onClick = onSubmit)
     }
 }
 
 @Composable
 private fun QuestionStep(question: NativeFormQuestion, value: Any?, onValueChange: (Any?) -> Unit, onNext: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        Text(question.title, style = MaterialTheme.typography.titleMedium)
+        Text(question.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(16.dp))
         when (question.type) {
             "rating" -> {
@@ -217,24 +259,28 @@ private fun QuestionStep(question: NativeFormQuestion, value: Any?, onValueChang
                     for (star in 1..5) {
                         val filled = (value as? Double ?: 0.0) >= star
                         TextButton(onClick = { onValueChange(star.toDouble()) }) {
-                            Text(if (filled) "★" else "☆", style = MaterialTheme.typography.headlineSmall)
+                            Text(
+                                if (filled) "★" else "☆",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = if (filled) MaterialTheme.colorScheme.ink
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            )
                         }
                     }
                 }
             }
-            "long_text" -> OutlinedTextField(
+            "long_text" -> FilledField(
                 value = value as? String ?: "",
                 onValueChange = onValueChange,
+                singleLine = false,
                 minLines = 4,
-                modifier = Modifier.fillMaxWidth(),
             )
-            else -> OutlinedTextField(
+            else -> FilledField(
                 value = value as? String ?: "",
                 onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
             )
         }
         Spacer(Modifier.height(24.dp))
-        Button(onClick = onNext) { Text("Next") }
+        PrimaryPillButton("Next", onClick = onNext)
     }
 }

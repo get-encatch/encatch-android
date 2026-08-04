@@ -7,16 +7,31 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -47,8 +62,11 @@ class MainActivity : ComponentActivity() {
         val usersStore = TestUsersStore(this)
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            EncatchTesterTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
                     TesterApp(prefs = prefs, usersStore = usersStore, scope = lifecycleScope)
                 }
             }
@@ -197,23 +215,64 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
             }
 
             Screen.Main -> Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
                 topBar = {
                     TopAppBar(
-                        title = { Text(tab.label) },
+                        title = { Text(tab.label, fontWeight = FontWeight.Bold) },
+                        colors = TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.background,
+                            titleContentColor = MaterialTheme.colorScheme.onBackground,
+                            actionIconContentColor = MaterialTheme.colorScheme.onBackground,
+                        ),
                         actions = {
-                            TextButton(onClick = { cycleTheme() }) { Text(currentTheme.name) }
-                            TextButton(onClick = { logOut() }) { Text("Logout") }
+                            TextButton(onClick = { cycleTheme() }) {
+                                Text(
+                                    currentTheme.name.lowercase().replaceFirstChar { it.uppercase() },
+                                    color = MaterialTheme.colorScheme.ink,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                            TextButton(onClick = { logOut() }) {
+                                Text(
+                                    "Logout",
+                                    color = MaterialTheme.colorScheme.ink,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
                         },
                     )
                 },
                 bottomBar = {
-                    NavigationBar {
+                    NavigationBar(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        tonalElevation = 0.dp,
+                    ) {
                         TesterTab.entries.forEach { t ->
                             NavigationBarItem(
                                 selected = tab == t,
                                 onClick = { tab = t },
-                                icon = {},
-                                label = { Text(t.label) },
+                                icon = {
+                                    Icon(
+                                        t.icon,
+                                        contentDescription = t.label,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        t.label,
+                                        fontSize = 10.sp,
+                                        fontWeight = if (tab == t) FontWeight.SemiBold else FontWeight.Normal,
+                                        maxLines = 1,
+                                    )
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.ink,
+                                    selectedTextColor = MaterialTheme.colorScheme.ink,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    indicatorColor = MaterialTheme.colorScheme.inkSoft,
+                                ),
                             )
                         }
                     }
@@ -286,6 +345,17 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
         }
     }
 }
+
+/** Presentation-only glyph for each bottom-nav destination — mirrors the iOS tab bar. */
+private val TesterTab.icon: ImageVector
+    get() = when (this) {
+        TesterTab.HOME -> Icons.Filled.Home
+        TesterTab.EVENTS -> Icons.Filled.PlayArrow
+        TesterTab.LOGS -> Icons.AutoMirrored.Filled.List
+        TesterTab.SETTINGS -> Icons.Filled.Settings
+        TesterTab.INLINE_ANY -> Icons.Filled.KeyboardArrowDown
+        TesterTab.INLINE_EXACT -> Icons.Filled.Place
+    }
 
 private fun TestUser.toTraits(): UserTraits? {
     val fields = buildMap<String, kotlinx.serialization.json.JsonElement> {
