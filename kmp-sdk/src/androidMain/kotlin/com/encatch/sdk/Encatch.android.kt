@@ -170,6 +170,27 @@ actual object Encatch {
         com.encatch.core.Encatch.emitEvent(eventType.toCore(), payload.toCore())
     }
 
+    actual fun setOnNetworkLog(callback: ((NetworkLogEntry) -> Unit)?) {
+        com.encatch.core.Encatch.onNetworkLog = callback?.let { cb ->
+            { entry ->
+                cb(
+                    NetworkLogEntry(
+                        timestampMs = entry.timestampMs,
+                        method = entry.method,
+                        endpoint = entry.endpoint,
+                        url = entry.url,
+                        requestHeaders = entry.requestHeaders,
+                        requestBody = entry.requestBody,
+                        status = entry.status,
+                        responseBody = entry.responseBody,
+                        durationMs = entry.durationMs,
+                        error = entry.error,
+                    ),
+                )
+            }
+        }
+    }
+
     actual fun stop() {
         com.encatch.core.Encatch.stop()
     }

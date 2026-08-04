@@ -15,6 +15,9 @@ final class TesterState: ObservableObject {
     @Published var currentTheme = "SYSTEM"
     @Published var blockedForms: [BlockedFormItem] = []
     @Published var openedForm: BlockedFormItem?
+    /// Rolling capture of every SDK HTTP call (newest first), fed by TesterController's
+    /// flattened setOnNetworkLog passthrough. Only populates in debugMode.
+    @Published var networkLogs: [NetworkLogItem] = []
 
     let prefs = TesterPrefs()
     let usersStore = TestUsersStore()
@@ -28,6 +31,22 @@ final class TesterState: ObservableObject {
 
     /// Registered once for the process lifetime, same as a real host app would at startup.
     func start() {
+        TesterController.shared.setOnNetworkLog { [weak self] status, endpointName, durationMs, fullText in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.networkLogs.insert(
+                    NetworkLogItem(
+                        status: Int(truncating: status),
+                        name: endpointName,
+                        durationMs: Int(truncating: durationMs),
+                        fullText: fullText
+                    ),
+                    at: 0
+                )
+                if self.networkLogs.count > 200 { self.networkLogs.removeLast() }
+            }
+        }
+
         unsubscribe = TesterController.shared.onEvent { [weak self] eventWireValue, formId, action, route in
             DispatchQueue.main.async {
                 guard let self else { return }

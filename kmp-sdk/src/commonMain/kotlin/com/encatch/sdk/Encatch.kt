@@ -149,6 +149,16 @@ expect object Encatch {
      */
     fun on(callback: EventCallback): () -> Unit
 
+    /**
+     * Debug hook: [callback] receives every completed SDK HTTP call (request + response); pass
+     * null to clear. Only fires when `EncatchConfig.debugMode` is enabled — payloads include
+     * full bodies, so they never leave the SDK in production configurations (the API key header
+     * is always masked to its last 5 characters). Assignment-style (last caller wins), survives
+     * re-`init()` — set it once at app startup for in-app network inspectors. May be invoked on
+     * any thread.
+     */
+    fun setOnNetworkLog(callback: ((NetworkLogEntry) -> Unit)?)
+
     fun emitEvent(eventType: EventType, payload: EventPayload)
 
     fun stop()

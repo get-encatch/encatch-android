@@ -179,6 +179,7 @@ struct MainTabView: View {
                     switch state.tab {
                     case .home: HomeTabView(state: state)
                     case .events: EventsTabView(state: state)
+                    case .logs: LogsTabView(state: state)
                     case .settings: SettingsTabView(state: state)
                     case .inlineAny: InlineAnyTabView(state: state)
                     case .inlineExact: InlineExactTabView(state: state)

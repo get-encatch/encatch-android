@@ -328,6 +328,37 @@ public final class EncatchBridgeEventPayload: NSObject {
 /// e.g. `"form:complete"`) plus the event payload.
 public typealias EncatchBridgeEventCallback = (String, EncatchBridgeEventPayload) -> Void
 
+public typealias EncatchBridgeNetworkLogCallback = (EncatchBridgeNetworkLogEntry) -> Void
+
+/// ObjC mirror of `EncatchNetworkLogEntry` for `setOnNetworkLog`. `requestHeaders` crosses the
+/// boundary as a JSON string (`requestHeadersJSON`), same pattern as `prefillResponsesJSON`.
+@objc(EncatchBridgeNetworkLogEntry)
+public final class EncatchBridgeNetworkLogEntry: NSObject {
+    @objc public let timestampMs: Int64
+    @objc public let method: String
+    @objc public let endpoint: String
+    @objc public let url: String
+    @objc public let requestHeadersJSON: String
+    @objc public let requestBody: String
+    @objc public let status: Int
+    @objc public let responseBody: String
+    @objc public let durationMs: Int
+    @objc public let error: String?
+
+    init(_ entry: EncatchNetworkLogEntry) {
+        self.timestampMs = Int64(entry.timestamp.timeIntervalSince1970 * 1000)
+        self.method = entry.method
+        self.endpoint = entry.endpoint
+        self.url = entry.url
+        self.requestHeadersJSON = JSONValue.object(entry.requestHeaders.mapValues { .string($0) }).toJSONString()
+        self.requestBody = entry.requestBody
+        self.status = entry.status
+        self.responseBody = entry.responseBody
+        self.durationMs = entry.durationMs
+        self.error = entry.error
+    }
+}
+
 /// The Kotlin/Native-facing entry point onto the pure-Swift `Encatch` singleton. See file-level
 /// doc comment above for the full design rationale and the `submitForm`/`refineText`/`uploadFile`/
 /// `on`-`off` tradeoffs specifically.
@@ -709,6 +740,16 @@ public final class EncatchBridge: NSObject {
     /// There is no separate `off(callback)` entry point — see the file-level doc comment's "Design
     /// constraints" section for why (Swift closures aren't `Equatable`, and `Core/Emitter.swift`
     /// already made the same call for the pure-Swift `Encatch.on` API this wraps).
+    /// Mirrors `Encatch.shared.onNetworkLog` (assignment-style, so nil clears it). Only fires
+    /// when `debugMode` is enabled; the API key header arrives pre-masked to its last 5 chars.
+    @objc public func setOnNetworkLog(_ callback: EncatchBridgeNetworkLogCallback?) {
+        if let callback {
+            Encatch.shared.onNetworkLog = { entry in callback(EncatchBridgeNetworkLogEntry(entry)) }
+        } else {
+            Encatch.shared.onNetworkLog = nil
+        }
+    }
+
     @discardableResult
     @objc public func onEvent(_ callback: @escaping EncatchBridgeEventCallback) -> () -> Void {
         Encatch.shared.on { eventType, payload in

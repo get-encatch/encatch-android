@@ -316,6 +316,7 @@ typedef unsigned int swift_uint4  __attribute__((__ext_vector_type__(4)));
 @class NSData;
 @class EncatchBridgeUploadFileResponse;
 @class EncatchBridgeStartSessionOptions;
+@class EncatchBridgeNetworkLogEntry;
 @class EncatchBridgeEventPayload;
 /// The Kotlin/Native-facing entry point onto the pure-Swift <code>Encatch</code> singleton. See file-level
 /// doc comment above for the full design rationale and the <code>submitForm</code>/<code>refineText</code>/<code>uploadFile</code>/
@@ -400,6 +401,9 @@ SWIFT_CLASS_PROPERTY(@property (nonatomic, class, readonly, strong) EncatchBridg
 /// There is no separate <code>off(callback)</code> entry point — see the file-level doc comment’s “Design
 /// constraints” section for why (Swift closures aren’t <code>Equatable</code>, and <code>Core/Emitter.swift</code>
 /// already made the same call for the pure-Swift <code>Encatch.on</code> API this wraps).
+/// Mirrors <code>Encatch.shared.onNetworkLog</code> (assignment-style, so nil clears it). Only fires
+/// when <code>debugMode</code> is enabled; the API key header arrives pre-masked to its last 5 chars.
+- (void)setOnNetworkLog:(void (^ _Nullable)(EncatchBridgeNetworkLogEntry * _Nonnull))callback;
 - (void (^ _Nonnull)(void))onEvent:(void (^ _Nonnull)(NSString * _Nonnull, EncatchBridgeEventPayload * _Nonnull))callback;
 /// Mirrors <code>Encatch.shared.emitEvent(_:_:)</code>. <code>eventType</code> must be one of <code>EventType.wireValue</code>’s
 /// wire strings (e.g. <code>"form:complete"</code>) — unrecognized values are silently ignored, matching
@@ -467,6 +471,24 @@ SWIFT_CLASS_NAMED("EncatchBridgeIdentifyOptions")
 @property (nonatomic, copy) NSString * _Nullable country;
 @property (nonatomic, strong) EncatchBridgeSecureOptions * _Nullable secure;
 - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
+@end
+
+/// ObjC mirror of <code>EncatchNetworkLogEntry</code> for <code>setOnNetworkLog</code>. <code>requestHeaders</code> crosses the
+/// boundary as a JSON string (<code>requestHeadersJSON</code>), same pattern as <code>prefillResponsesJSON</code>.
+SWIFT_CLASS_NAMED("EncatchBridgeNetworkLogEntry")
+@interface EncatchBridgeNetworkLogEntry : NSObject
+@property (nonatomic, readonly) int64_t timestampMs;
+@property (nonatomic, readonly, copy) NSString * _Nonnull method;
+@property (nonatomic, readonly, copy) NSString * _Nonnull endpoint;
+@property (nonatomic, readonly, copy) NSString * _Nonnull url;
+@property (nonatomic, readonly, copy) NSString * _Nonnull requestHeadersJSON;
+@property (nonatomic, readonly, copy) NSString * _Nonnull requestBody;
+@property (nonatomic, readonly) NSInteger status;
+@property (nonatomic, readonly, copy) NSString * _Nonnull responseBody;
+@property (nonatomic, readonly) NSInteger durationMs;
+@property (nonatomic, readonly, copy) NSString * _Nullable error;
+- (nonnull instancetype)init SWIFT_UNAVAILABLE;
++ (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
 @end
 
 @class NSNumber;

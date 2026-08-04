@@ -78,6 +78,7 @@ private fun TesterScreens() {
     val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
+        NetworkLogStore.install()
         val unsubscribe = Encatch.on { eventType, payload ->
             lastEvent = "${eventType.wireValue} (formId=${payload.formId})"
             if (eventType == EventType.FORM_CTA_TRIGGERED) {
@@ -241,6 +242,7 @@ private fun TesterScreens() {
                         onTrackEvent = { name -> scope.launch { Encatch.trackEvent(name) } },
                         onTrackScreen = { name -> scope.launch { Encatch.trackScreen(name) } },
                     )
+                    TesterTab.LOGS -> LogsScreen()
                     TesterTab.SETTINGS -> SettingsScreen(
                         onSetLocale = { Encatch.setLocale("fr-FR") },
                         onSetCountry = { Encatch.setCountry("FR") },

@@ -153,6 +153,39 @@ object TesterController {
      * `action`/`route` fields are pre-extracted for convenience — callers don't need to touch
      * `kotlinx.serialization.json` types themselves.
      */
+    /**
+     * Flattened passthrough of `Encatch.setOnNetworkLog` for the platform hosts (same
+     * primitives-only convention as [onEvent] to keep the Kotlin/Native↔Swift boundary simple):
+     * status code, short endpoint name, duration, and a preformatted full request/response dump
+     * ready for copy buttons. Only fires in debugMode; pass null to clear.
+     */
+    fun setOnNetworkLog(callback: ((status: Int, endpointName: String, durationMs: Long, fullText: String) -> Unit)?) {
+        if (callback == null) {
+            Encatch.setOnNetworkLog(null)
+            return
+        }
+        Encatch.setOnNetworkLog { entry ->
+            callback(entry.status, entry.endpoint.substringAfterLast('/'), entry.durationMs, entry.networkLogFullText())
+        }
+    }
+
+    private fun com.encatch.sdk.NetworkLogEntry.networkLogFullText(): String = buildString {
+        val name = endpoint.substringAfterLast('/')
+        val statusLabel = if (status == 0) (if (error != null) "ERR" else "—") else status.toString()
+        appendLine("$method $name — $statusLabel in ${durationMs}ms")
+        appendLine("Timestamp (epoch ms): $timestampMs")
+        appendLine("URL: $url")
+        appendLine()
+        appendLine("--- Request headers ---")
+        requestHeaders.entries.sortedBy { it.key }.forEach { (k, v) -> appendLine("$k: $v") }
+        appendLine()
+        appendLine("--- Request body ---")
+        appendLine(requestBody)
+        appendLine()
+        appendLine("--- Response ($statusLabel) ---")
+        append(responseBody.ifEmpty { error ?: "(empty)" })
+    }
+
     fun onEvent(callback: (eventWireValue: String, formId: String?, ctaAction: String?, ctaRoute: String?) -> Unit): () -> Unit {
         return Encatch.on { eventType, payload ->
             var action: String? = null

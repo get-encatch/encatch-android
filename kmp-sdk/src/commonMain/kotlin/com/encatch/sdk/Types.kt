@@ -106,6 +106,25 @@ data class SecureOptions(
     val generatedDateTimeInUtc: String? = null,
 )
 
+/**
+ * One completed SDK HTTP call (request + response), delivered to `Encatch.setOnNetworkLog`
+ * callbacks for host-app debugging tools. Only emitted when `EncatchConfig.debugMode` is
+ * enabled; the API key header is always masked to its last 5 characters. Covers all JSON POST
+ * endpoints — the multipart upload and the Q&A-with-AI SSE stream are not logged.
+ */
+data class NetworkLogEntry(
+    val timestampMs: Long,
+    val method: String,
+    val endpoint: String,
+    val url: String,
+    val requestHeaders: Map<String, String>,
+    val requestBody: String,
+    val status: Int,
+    val responseBody: String,
+    val durationMs: Long,
+    val error: String?,
+)
+
 data class IdentifyOptions(
     val locale: String? = null,
     val country: String? = null,

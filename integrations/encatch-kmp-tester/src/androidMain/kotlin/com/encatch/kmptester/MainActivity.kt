@@ -26,8 +26,11 @@ private sealed class Screen {
 }
 
 private enum class TesterTab(val label: String) {
-    HOME("Home"), EVENTS("Events"), SETTINGS("Settings"), INLINE_ANY("Inline (Any)"), INLINE_EXACT("Inline (Exact)")
+    HOME("Home"), EVENTS("Events"), LOGS("Logs"), SETTINGS("Settings"), INLINE_ANY("Inline (Any)"), INLINE_EXACT("Inline (Exact)")
 }
+
+/** One captured SDK HTTP call, flattened by TesterController.setOnNetworkLog. */
+private data class NetworkLogRow(val status: Int, val name: String, val durationMs: Long, val fullText: String)
 
 /**
  * Plain Android Views (no Compose) — deliberately, to prove `:kmp-sdk` needs nothing beyond
@@ -49,6 +52,7 @@ class MainActivity : Activity() {
     private var selectedUsername: String? = null
     private var currentTheme = "SYSTEM"
     private val blockedForms = mutableListOf<BlockedFormItem>()
+    private val networkLogs = mutableListOf<NetworkLogRow>()
     private var unsubscribe: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +73,14 @@ class MainActivity : Activity() {
                         render(Screen.RouteNotFound(route ?: "(none)"))
                     screen == Screen.Main && tab == TesterTab.HOME -> render(Screen.Main)
                 }
+            }
+        }
+
+        TesterController.setOnNetworkLog { status, endpointName, durationMs, fullText ->
+            runOnUiThread {
+                networkLogs.add(0, NetworkLogRow(status, endpointName, durationMs, fullText))
+                if (networkLogs.size > 200) networkLogs.removeAt(networkLogs.size - 1)
+                if (screen == Screen.Main && tab == TesterTab.LOGS) render(Screen.Main)
             }
         }
 
@@ -303,6 +315,7 @@ class MainActivity : Activity() {
             when (tab) {
                 TesterTab.HOME -> buildHomeTab()
                 TesterTab.EVENTS -> buildEventsTab()
+                TesterTab.LOGS -> buildLogsTab()
                 TesterTab.SETTINGS -> buildSettingsTab()
                 TesterTab.INLINE_ANY -> buildInlineAnyTab()
                 TesterTab.INLINE_EXACT -> buildInlineExactTab()
@@ -394,6 +407,72 @@ class MainActivity : Activity() {
         col.addView(customScreen)
         col.addView(actionButton("Track") { scope.launch { runCatching { TesterController.trackScreen(customScreen.text.toString().trim()) } } })
         return ScrollView(this).apply { addView(col) }
+    }
+
+    private fun buildLogsTab(): View {
+        val col = column()
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        header.addView(body("${networkLogs.size} requests · newest first").apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        header.addView(Button(this).apply {
+            text = "Copy all"
+            setOnClickListener { copyToClipboard(networkLogs.joinToString("\n\n============\n\n") { it.fullText }) }
+        })
+        header.addView(Button(this).apply {
+            text = "Clear"
+            setOnClickListener { networkLogs.clear(); render(Screen.Main) }
+        })
+        col.addView(header)
+
+        if (networkLogs.isEmpty()) {
+            col.addView(body("No SDK requests yet"))
+        }
+        networkLogs.forEach { row ->
+            val rowView = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, 12, 0, 12)
+                setOnClickListener { showLogDetail(row) }
+            }
+            rowView.addView(TextView(this).apply {
+                text = if (row.status == 0) "ERR" else row.status.toString()
+                setTextColor(if (row.status in 200..299) 0xFF06C167.toInt() else 0xFFDC2626.toInt())
+                typeface = android.graphics.Typeface.MONOSPACE
+                setPadding(0, 0, 24, 0)
+            })
+            rowView.addView(body("${row.name} · ${row.durationMs}ms").apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            rowView.addView(Button(this).apply {
+                text = "Copy"
+                setOnClickListener { copyToClipboard(row.fullText) }
+            })
+            col.addView(rowView)
+        }
+        return ScrollView(this).apply { addView(col) }
+    }
+
+    private fun showLogDetail(row: NetworkLogRow) {
+        val content = ScrollView(this).apply {
+            addView(TextView(this@MainActivity).apply {
+                text = row.fullText
+                typeface = android.graphics.Typeface.MONOSPACE
+                textSize = 11f
+                setPadding(32, 16, 32, 16)
+                setTextIsSelectable(true)
+            })
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(row.name)
+            .setView(content)
+            .setPositiveButton("Copy") { _, _ -> copyToClipboard(row.fullText) }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun copyToClipboard(text: String) {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Encatch logs", text))
     }
 
     private fun buildInlineExactTab(): View {

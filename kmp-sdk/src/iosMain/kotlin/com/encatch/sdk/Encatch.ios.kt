@@ -311,6 +311,35 @@ actual object Encatch {
         EncatchBridge.shared().emitEvent(eventType.wireValue, payload.formId, dataJson)
     }
 
+    actual fun setOnNetworkLog(callback: ((NetworkLogEntry) -> Unit)?) {
+        if (callback == null) {
+            EncatchBridge.shared().setOnNetworkLog(null)
+            return
+        }
+        EncatchBridge.shared().setOnNetworkLog { entry ->
+            if (entry != null) {
+                val headers = runCatching {
+                    (kotlinx.serialization.json.Json.parseToJsonElement(entry.requestHeadersJSON()) as? JsonObject)
+                        ?.mapValues { (it.value as? JsonPrimitive)?.content ?: it.value.toString() }
+                }.getOrNull() ?: emptyMap()
+                callback(
+                    NetworkLogEntry(
+                        timestampMs = entry.timestampMs(),
+                        method = entry.method(),
+                        endpoint = entry.endpoint(),
+                        url = entry.url(),
+                        requestHeaders = headers,
+                        requestBody = entry.requestBody(),
+                        status = entry.status().toInt(),
+                        responseBody = entry.responseBody(),
+                        durationMs = entry.durationMs(),
+                        error = entry.error(),
+                    ),
+                )
+            }
+        }
+    }
+
     actual fun stop() {
         EncatchBridge.shared().stop()
     }
