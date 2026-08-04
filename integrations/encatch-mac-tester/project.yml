@@ -1,0 +1,56 @@
+name: EncatchMacTester
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "17.0"
+
+packages:
+  Encatch:
+    path: ../../ios-native
+
+targets:
+  EncatchMacTester:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: Encatch
+        product: Encatch
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch Mac Tester"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # SwiftUI's `Settings{}`/`Window(_:id:)` Scene types are hard-unavailable under Mac
+        # Catalyst (verified via a real build, not assumed) — the Preferences window uses a
+        # second `WindowGroup(id:)` + `openWindow(id:)` instead, which silently fails to open a
+        # second window without this key (Xcode normally auto-injects it for SwiftUI-lifecycle
+        # apps, but a custom `info.path` like this one bypasses that).
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.mactester
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SUPPORTS_MACCATALYST: YES
+        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
+        # Mac-only: this app is a Catalyst tester for the Mac form of the SDK, not a second
+        # iPhone/iPad tester (encatch-ios-tester already covers those) — restricting the device
+        # family keeps "My Mac" as the only run destination Xcode offers.
+        TARGETED_DEVICE_FAMILY: "6"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: F727LM57W2
+
+schemes:
+  EncatchMacTester:
+    build:
+      targets:
+        EncatchMacTester: all
+    run:
+      config: Debug
+    archive:
+      config: Release
