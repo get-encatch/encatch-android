@@ -404,7 +404,9 @@ class MainActivity : Activity() {
             scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } }
         })
         val exactForm = EncatchInlineFormView(this).apply { formId = prefs.formId }
-        col.addView(exactForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 640))
+        // No fixed height — the SDK view drives its own layoutParams height (skeleton
+        // placeholder, then live form:resize values).
+        col.addView(exactForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return ScrollView(this).apply { addView(col) }
     }
 
@@ -425,7 +427,7 @@ class MainActivity : Activity() {
             scope.launch { runCatching { TesterController.showForm("modal-fallback-demo") } }
         })
         val wildcardForm = EncatchInlineFormView(this).apply { formId = null }
-        col.addView(wildcardForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 640))
+        col.addView(wildcardForm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         return ScrollView(this).apply { addView(col) }
     }
 

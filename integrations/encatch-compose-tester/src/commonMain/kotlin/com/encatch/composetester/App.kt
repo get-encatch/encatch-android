@@ -518,7 +518,9 @@ private fun InlineExactScreen(formId: String, onShowExact: () -> Unit) {
         Text("Claims \"$formId\" — :compose-sdk's EncatchInlineForm only supports exact-match form ids, no wildcard slot.")
         Button(onClick = onShowExact) { Text("Show Exact Form (renders inline below)") }
         Spacer()
-        EncatchInlineForm(formId = formId, modifier = Modifier.fillMaxWidth().height(320.dp))
+        // No fixed height — the SDK view self-sizes (skeleton placeholder, then live
+        // form:resize values) on both platforms.
+        EncatchInlineForm(formId = formId, modifier = Modifier.fillMaxWidth())
     }
 }
 

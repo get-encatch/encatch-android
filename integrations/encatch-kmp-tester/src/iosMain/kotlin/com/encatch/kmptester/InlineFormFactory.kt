@@ -16,5 +16,11 @@ import platform.UIKit.UIView
  * header's Objective-C `@property` declarations — hence `setFormId(...)` instead of `formId = ...`.
  */
 @Suppress("unused")
-fun makeInlineFormView(formId: String?): UIView =
-    EncatchInlineFormView().apply { setFormId(formId) }
+fun makeInlineFormView(formId: String?, onHeightChange: (Double) -> Unit): UIView =
+    EncatchInlineFormView().apply {
+        setFormId(formId)
+        // Bridge the view's self-sized height (skeleton placeholder, live form:resize values)
+        // out to the SwiftUI host, which can't reach the Swift closure property through the
+        // plain-UIView return type.
+        setOnHeightChange { height -> onHeightChange(height) }
+    }

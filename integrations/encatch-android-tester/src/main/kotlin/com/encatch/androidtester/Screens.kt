@@ -273,7 +273,7 @@ fun InlineExactScreen(exactFormId: String, onShowExact: () -> Unit) {
         // unlike Flutter's tester, no enabled-gating is needed here.
         AndroidView(
             factory = { context -> EncatchInlineFormView(context).apply { formId = exactFormId } },
-            modifier = Modifier.fillMaxWidth().height(280.dp),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }
@@ -299,7 +299,7 @@ fun InlineAnyScreen(onShowWildcard: (String) -> Unit, onTriggerFallback: () -> U
         Spacer(Modifier.height(16.dp))
         AndroidView(
             factory = { context -> EncatchInlineFormView(context).apply { formId = null } },
-            modifier = Modifier.fillMaxWidth().height(280.dp),
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

@@ -20,4 +20,15 @@ enum TesterTab: CaseIterable {
         case .inlineExact: return "Inline (Exact)"
         }
     }
+
+    /// SF Symbol shown in the bottom tab bar.
+    var icon: String {
+        switch self {
+        case .home: return "house.fill"
+        case .events: return "bolt.fill"
+        case .settings: return "gearshape.fill"
+        case .inlineAny: return "square.dashed"
+        case .inlineExact: return "square.grid.2x2.fill"
+        }
+    }
 }

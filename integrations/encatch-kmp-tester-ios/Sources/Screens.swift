@@ -289,12 +289,29 @@ struct EventsTabView: View {
 
 private struct InlineFormRepresentable: UIViewRepresentable {
     let formId: String?
+    @Binding var height: CGFloat
 
     func makeUIView(context: Context) -> UIView {
-        InlineFormFactoryKt.makeInlineFormView(formId: formId)
+        InlineFormFactoryKt.makeInlineFormView(formId: formId, onHeightChange: { [binding = $height] newHeight in
+            DispatchQueue.main.async { binding.wrappedValue = CGFloat(truncating: newHeight) }
+        })
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+/// Auto-height container: follows the SDK view's own reported height (0 when idle, skeleton
+/// placeholder while loading, then live form:resize values) instead of pinning a fixed frame.
+private struct InlineFormSlot: View {
+    let formId: String?
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        InlineFormRepresentable(formId: formId, height: $height)
+            .frame(height: max(height, 64))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(height > 64 ? 0 : 0.4)))
+            .animation(.easeOut(duration: 0.2), value: height)
+    }
 }
 
 struct InlineExactTabView: View {
@@ -306,9 +323,7 @@ struct InlineExactTabView: View {
                 Text("Claims \"\(state.prefs.formId ?? "")\" — only renders inline when that exact form id is shown.")
                     .font(.footnote)
                 Button("Show Exact Form (renders inline below)") { state.showModalForm() }.buttonStyle(.borderedProminent)
-                InlineFormRepresentable(formId: state.prefs.formId)
-                    .frame(height: 280)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4)))
+                InlineFormSlot(formId: state.prefs.formId)
             }
             .padding()
         }
@@ -329,9 +344,7 @@ struct InlineAnyTabView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(wildcardFormId.trimmed.isEmpty)
                 Button("Trigger unmatched form → modal fallback") { state.showForm("modal-fallback-demo") }
-                InlineFormRepresentable(formId: nil)
-                    .frame(height: 280)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4)))
+                InlineFormSlot(formId: nil)
             }
             .padding()
         }

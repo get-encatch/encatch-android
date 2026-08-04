@@ -39,6 +39,14 @@ final class TesterState: ObservableObject {
                 }
             }
         }
+
+        // `initialize()` only ever runs from Setup's "Save & continue" — on a fresh process
+        // launch that skips Setup (isSetupComplete already true from a prior session), the SDK
+        // would otherwise stay uninitialized and every call would silently no-op. A real host
+        // app calls initialize() unconditionally at startup; mirror that here from stored prefs.
+        if prefs.isSetupComplete, let apiKey = prefs.apiKey {
+            Task { await initializeSdk(apiKey: apiKey, environment: prefs.environment, interceptorFormId: prefs.interceptorFormId) }
+        }
     }
 
     private func stringValue(_ value: JSONValue?) -> String? {
@@ -55,32 +63,38 @@ final class TesterState: ObservableObject {
         prefs.interceptorFormId = interceptorFormId.isEmpty ? nil : interceptorFormId
 
         Task {
-            let config = EncatchConfig(
-                apiBaseUrl: environment.apiBaseUrl,
-                webHost: environment.webHost,
-                debugMode: true,
-                // Unconditionally blocks the configured interceptor form id and queues it for the
-                // InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
-                // custom-rendered native form.
-                onBeforeShowForm: { [weak self] payload in
-                    guard let self, payload.formId == self.prefs.interceptorFormId else { return true }
-                    let title = self.formTitle(from: payload.formConfig) ?? payload.formId
-                    await MainActor.run {
-                        self.blockedForms.append(BlockedFormItem(
-                            formId: payload.formId,
-                            title: title,
-                            questionnaireFields: payload.formConfig.questionnaireFields
-                        ))
-                    }
-                    return false
-                }
-            )
-            do {
-                try await Encatch.shared.initialize(apiKey: apiKey, config: config)
-            } catch {
-                print("Encatch.initialize failed: \(error)")
-            }
+            await initializeSdk(apiKey: apiKey, environment: environment, interceptorFormId: prefs.interceptorFormId)
             await MainActor.run { self.screen = .login }
+        }
+    }
+
+    /// Shared by `saveSetupAndInit` (fresh Setup entry) and `start()` (a plain relaunch that
+    /// skips Setup because it was already completed in a prior session).
+    private func initializeSdk(apiKey: String, environment: TesterEnvironment, interceptorFormId: String?) async {
+        let config = EncatchConfig(
+            apiBaseUrl: environment.apiBaseUrl,
+            webHost: environment.webHost,
+            debugMode: true,
+            // Unconditionally blocks the configured interceptor form id and queues it for the
+            // InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
+            // custom-rendered native form.
+            onBeforeShowForm: { [weak self] payload in
+                guard let self, payload.formId == self.prefs.interceptorFormId else { return true }
+                let title = self.formTitle(from: payload.formConfig) ?? payload.formId
+                await MainActor.run {
+                    self.blockedForms.append(BlockedFormItem(
+                        formId: payload.formId,
+                        title: title,
+                        questionnaireFields: payload.formConfig.questionnaireFields
+                    ))
+                }
+                return false
+            }
+        )
+        do {
+            try await Encatch.shared.initialize(apiKey: apiKey, config: config)
+        } catch {
+            print("Encatch.initialize failed: \(error)")
         }
     }
 
