@@ -28,6 +28,11 @@ final class EncatchWebView: WKWebView {
     )
 
     var bridge: FormWebViewBridge?
+    /// Fired when the form page can no longer possibly become interactive: a main-frame load
+    /// failure, or WebKit's web-content process dying. Hosts must tear the form UI down —
+    /// without this the close button (which lives inside the web page) can never appear and
+    /// the user is trapped behind the overlay.
+    var onUnrecoverableFailure: ((String) -> Void)?
     private var loadedUrl: String = ""
     private let messageReceiver = ScriptMessageReceiver()
 
@@ -96,6 +101,21 @@ extension EncatchWebView: WKNavigationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.bridge?.handleFormReady()
         }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // NSURLErrorCancelled fires for ordinary in-page navigation cancellations — not fatal.
+        guard (error as NSError).code != NSURLErrorCancelled else { return }
+        onUnrecoverableFailure?("load failed: \(error.localizedDescription)")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard (error as NSError).code != NSURLErrorCancelled else { return }
+        onUnrecoverableFailure?("load failed: \(error.localizedDescription)")
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        onUnrecoverableFailure?("web content process terminated")
     }
 }
 

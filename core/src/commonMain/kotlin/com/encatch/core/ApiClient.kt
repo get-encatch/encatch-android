@@ -96,6 +96,25 @@ internal fun createHttpClient(engine: HttpClientEngine): HttpClient = HttpClient
 }
 
 /**
+ * One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
+ * host-app debugging tools. Covers all JSON POST endpoints; the multipart upload and the
+ * Q&A-with-AI SSE stream are not logged (binary/streaming payloads). The API key header is
+ * masked to its last 5 characters.
+ */
+data class EncatchNetworkLogEntry(
+    val timestampMs: Long,
+    val method: String,
+    val endpoint: String,
+    val url: String,
+    val requestHeaders: Map<String, String>,
+    val requestBody: String,
+    val status: Int,
+    val responseBody: String,
+    val durationMs: Long,
+    val error: String?,
+)
+
+/**
  * Thin Ktor-backed HTTP layer mirroring `_post`/`_buildHeaders` from the RN SDK's
  * `encatch.ts`, plus the SSE (`streamQnaWithAi`) and multipart (`uploadFile`) calls.
  */
@@ -105,6 +124,7 @@ class EncatchApiClient internal constructor(
     private val authStateProvider: () -> AuthState,
     private val onUserPendingRetryExhausted: suspend () -> Unit = {},
     private val logger: EncatchLogger = DefaultEncatchLogger { false },
+    private val networkLogSink: (EncatchNetworkLogEntry) -> Unit = {},
 ) {
     private fun buildAuthHeaders(signatureTime: String? = null): Map<String, String> {
         val auth = authStateProvider()
@@ -132,14 +152,43 @@ class EncatchApiClient internal constructor(
         logger.debug("Request headers:\n${redactedHeadersForLog(authHeaders)}")
         logger.debug("Request body:\n$body")
 
-        val response: HttpResponse = httpClient.post(url) {
-            headers { authHeaders.forEach { (k, v) -> append(k, v) } }
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        val startedAt = currentTimeMillis()
+        // Even in debugMode, never expose the full API key — keep just the last 5 characters
+        // so entries can be matched to a key without being usable as one.
+        val logHeaders = authHeaders.mapValues { (k, v) ->
+            if (k == "X-Api-Key") "•••${v.takeLast(5)}" else v
+        } + ("Content-Type" to "application/json")
+        fun emitLog(status: Int, responseBody: String, error: String?) {
+            networkLogSink(
+                EncatchNetworkLogEntry(
+                    timestampMs = startedAt,
+                    method = "POST",
+                    endpoint = endpoint,
+                    url = url,
+                    requestHeaders = logHeaders,
+                    requestBody = body.toString(),
+                    status = status,
+                    responseBody = responseBody,
+                    durationMs = currentTimeMillis() - startedAt,
+                    error = error,
+                ),
+            )
+        }
+
+        val response: HttpResponse = try {
+            httpClient.post(url) {
+                headers { authHeaders.forEach { (k, v) -> append(k, v) } }
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+        } catch (err: Throwable) {
+            emitLog(status = 0, responseBody = "", error = err.message ?: err.toString())
+            throw err
         }
 
         val responseText = response.bodyAsText()
         val parsed = runCatching { EncatchJson.parseToJsonElement(responseText).jsonObject }.getOrNull()
+        emitLog(status = response.status.value, responseBody = responseText, error = null)
 
         logger.debug("POST $endpoint <- ${response.status.value}")
         logger.debug("Response body:\n${parsed ?: responseText}")

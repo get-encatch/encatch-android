@@ -9,12 +9,13 @@ enum Screen {
 
 /// Bottom-tab destinations inside `.main`.
 enum TesterTab: CaseIterable {
-    case home, events, settings, inlineAny, inlineExact
+    case home, events, logs, settings, inlineAny, inlineExact
 
     var label: String {
         switch self {
         case .home: return "Home"
         case .events: return "Events"
+        case .logs: return "Logs"
         case .settings: return "Settings"
         case .inlineAny: return "Inline (Any)"
         case .inlineExact: return "Inline (Exact)"
@@ -26,6 +27,7 @@ enum TesterTab: CaseIterable {
         switch self {
         case .home: return "house.fill"
         case .events: return "bolt.fill"
+        case .logs: return "list.bullet.rectangle"
         case .settings: return "gearshape.fill"
         case .inlineAny: return "square.dashed"
         case .inlineExact: return "square.grid.2x2.fill"

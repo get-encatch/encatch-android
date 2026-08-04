@@ -20,6 +20,22 @@ public struct EncatchApiException: Error, Sendable, CustomStringConvertible {
     public var description: String { message }
 }
 
+/// One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
+/// host-app debugging tools. Covers all JSON POST endpoints; the multipart upload and the
+/// Q&A-with-AI SSE stream are not logged (binary/streaming payloads).
+public struct EncatchNetworkLogEntry: Sendable {
+    public let timestamp: Date
+    public let method: String
+    public let endpoint: String
+    public let url: String
+    public let requestHeaders: [String: String]
+    public let requestBody: String
+    public let status: Int
+    public let responseBody: String
+    public let durationMs: Int
+    public let error: String?
+}
+
 /// Thrown when a public method is called before `Encatch.initialize`.
 public struct EncatchNotInitializedException: Error, Sendable, CustomStringConvertible {
     public init() {}
@@ -115,19 +131,22 @@ final class EncatchApiClient: @unchecked Sendable {
     private let authStateProvider: @Sendable () -> AuthState
     private let onUserPendingRetryExhausted: @Sendable () async -> Void
     private let logger: EncatchLogger
+    private let networkLogSink: @Sendable (EncatchNetworkLogEntry) -> Void
 
     init(
         session: URLSession = .shared,
         baseUrlProvider: @escaping @Sendable () -> String,
         authStateProvider: @escaping @Sendable () -> AuthState,
         onUserPendingRetryExhausted: @escaping @Sendable () async -> Void = {},
-        logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false })
+        logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false }),
+        networkLogSink: @escaping @Sendable (EncatchNetworkLogEntry) -> Void = { _ in }
     ) {
         self.session = session
         self.baseUrlProvider = baseUrlProvider
         self.authStateProvider = authStateProvider
         self.onUserPendingRetryExhausted = onUserPendingRetryExhausted
         self.logger = logger
+        self.networkLogSink = networkLogSink
     }
 
     private func buildAuthHeaders(signatureTime: String? = nil) throws -> [String: String] {
@@ -166,11 +185,35 @@ final class EncatchApiClient: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
 
+        let startedAt = Date()
+        var logHeaders = authHeaders
+        logHeaders["Content-Type"] = "application/json"
+        // Even in debugMode, never expose the full API key — keep just the last 5 characters
+        // so entries can be matched to a key without being usable as one.
+        if let apiKey = logHeaders["X-Api-Key"] {
+            logHeaders["X-Api-Key"] = "•••\(apiKey.suffix(5))"
+        }
+        func emitLog(status: Int, responseBody: String, error: String?) {
+            networkLogSink(EncatchNetworkLogEntry(
+                timestamp: startedAt,
+                method: "POST",
+                endpoint: endpoint,
+                url: urlString,
+                requestHeaders: logHeaders,
+                requestBody: body.toJSONString(),
+                status: status,
+                responseBody: responseBody,
+                durationMs: Int(Date().timeIntervalSince(startedAt) * 1000),
+                error: error
+            ))
+        }
+
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            emitLog(status: 0, responseBody: "", error: error.localizedDescription)
             let apiError = EncatchApiException(endpoint: endpoint, status: 0, responseBody: error.localizedDescription)
             logger.warn(apiError.message)
             throw apiError
@@ -179,6 +222,7 @@ final class EncatchApiClient: @unchecked Sendable {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         let responseText = String(data: data, encoding: .utf8) ?? ""
         let parsed = JSONValue.parse(responseText)
+        emitLog(status: statusCode, responseBody: responseText, error: nil)
 
         logger.debug("POST \(endpoint) <- \(statusCode)")
         logger.debug("Response body:\n\(parsed?.toJSONString() ?? responseText)")

@@ -118,12 +118,26 @@ public final class EncatchInlineFormView: UIView {
             },
             onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height)) },
             onForceFullHeight: { [weak self] force in self?.applyForceFullHeight(force) },
-            onReady: { [weak self] in self?.skeleton?.stop(); self?.skeleton?.removeFromSuperview(); self?.skeleton = nil },
+            onReady: { [weak self] in
+                // Fade the skeleton over the rendered form, then remove it — removing
+                // immediately would cut the crossfade and make the handoff feel jerky.
+                guard let self, let fadingSkeleton = self.skeleton else { return }
+                self.skeleton = nil
+                fadingSkeleton.stop()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    fadingSkeleton.removeFromSuperview()
+                }
+            },
             sendToWebView: { [weak self] message in self?.webView?.sendToWebView(message) },
             redirectOpener: redirectBrowser,
             openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
         )
         newWebView.bridge = newBridge
+        newWebView.onUnrecoverableFailure = { [weak self] reason in
+            NSLog("[Encatch] clearing inline form: \(reason)")
+            Encatch.shared.setFormVisible(false)
+            self?.clearForm()
+        }
         newWebView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(newWebView)
         NSLayoutConstraint.activate([
@@ -209,7 +223,7 @@ public final class EncatchInlineFormView: UIView {
         if overlayActive { return }
         let resolved = resolveContentHeight(height)
         contentHeight = resolved
-        setShellHeight(resolved)
+        setShellHeight(resolved, animated: true)
     }
 
     private func applyForceFullHeight(_ force: Bool) {
@@ -229,10 +243,17 @@ public final class EncatchInlineFormView: UIView {
 
     /// Single funnel for every height change: drives the Auto Layout constraint, refreshes
     /// `intrinsicContentSize` for hosts that size by intrinsics, and notifies `onHeightChange`.
-    private func setShellHeight(_ height: CGFloat) {
+    /// Bridge-driven resizes animate so Auto Layout hosts glide instead of snapping (SwiftUI
+    /// hosts animate on their side via the `onHeightChange` value).
+    private func setShellHeight(_ height: CGFloat, animated: Bool = false) {
         guard heightConstraint?.constant != height else { return }
         heightConstraint?.constant = height
         invalidateIntrinsicContentSize()
+        if animated, window != nil {
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                (self.superview ?? self).layoutIfNeeded()
+            }
+        }
         onHeightChange?(height)
     }
 

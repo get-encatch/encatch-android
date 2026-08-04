@@ -105,6 +105,15 @@ fun resolveDarkOverlayFromFormConfig(appearanceProperties: JsonElement?): Boolea
         ?: obj?.obj("featureSettings")?.bool("darkOverlay")) == true
 }
 
+/** Reads inApp.closeButton with legacy featureSettings.closeButton fallback. When enabled, the
+ * form shows a close affordance — native hosts additionally treat a tap on the overlay area
+ * outside the card as a close. */
+fun resolveCloseButtonFromFormConfig(appearanceProperties: JsonElement?): Boolean {
+    val obj = appearanceProperties as? JsonObject
+    return (obj?.obj("inApp")?.bool("closeButton")
+        ?: obj?.obj("featureSettings")?.bool("closeButton")) == true
+}
+
 /** Reads featureSettings.maxDialogHeightPercentInApp, defaulting to 0.8 (80%). */
 fun resolveMaxDialogHeightFraction(appearanceProperties: JsonElement?): Double {
     val obj = appearanceProperties as? JsonObject

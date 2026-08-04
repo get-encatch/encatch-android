@@ -89,6 +89,13 @@ public final class Encatch: @unchecked Sendable {
     /// Set by the UI layer so exit_form CTAs can open `SFSafariViewController` / the system browser.
     public var pendingCtaScheduler: PendingCompletionCtaScheduler?
 
+    /// Debug hook: receives every completed SDK HTTP call (request + response). Only fires when
+    /// `EncatchConfig.debugMode` is enabled — payloads include the API key and full bodies, so
+    /// they never leave the SDK in production configurations. Survives re-`initialize()` — set
+    /// it once at app startup for in-app network inspectors. May be invoked on any thread; hop
+    /// to the main queue before touching UI.
+    public var onNetworkLog: ((EncatchNetworkLogEntry) -> Void)?
+
     // ============================================================================
     // Initialisation
     // ============================================================================
@@ -153,7 +160,13 @@ public final class Encatch: @unchecked Sendable {
                 sessionManager?.stopPingInterval()
                 try? await resetUser()
             },
-            logger: logger
+            logger: logger,
+            // Full request/response payloads (including the API key) only leave the SDK when
+            // the host explicitly opted into debugMode — same gate as the debug logger.
+            networkLogSink: { [self] entry in
+                guard debugModeState else { return }
+                onNetworkLog?(entry)
+            }
         )
         self.retryQueue = RetryQueue(storage: storage)
         self.sessionManager = SessionManager(

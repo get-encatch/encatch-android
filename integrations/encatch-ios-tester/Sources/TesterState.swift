@@ -12,6 +12,8 @@ final class TesterState: ObservableObject {
     @Published var currentTheme: Theme = .system
     @Published var blockedForms: [BlockedFormItem] = []
     @Published var openedForm: BlockedFormItem?
+    /// Rolling capture of every SDK HTTP call (newest first), fed by Encatch.onNetworkLog.
+    @Published var networkLogs: [NetworkLogItem] = []
 
     let prefs = TesterPrefs()
     let usersStore = TestUsersStore()
@@ -24,6 +26,15 @@ final class TesterState: ObservableObject {
 
     /// Registered once for the process lifetime, same as a real host app would at startup.
     func start() {
+        // Capture every SDK request/response for the Logs tab. Survives re-initialize().
+        Encatch.shared.onNetworkLog = { [weak self] entry in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.networkLogs.insert(NetworkLogItem(entry: entry), at: 0)
+                if self.networkLogs.count > 200 { self.networkLogs.removeLast() }
+            }
+        }
+
         _ = Encatch.shared.on { [weak self] eventType, payload in
             DispatchQueue.main.async {
                 guard let self else { return }

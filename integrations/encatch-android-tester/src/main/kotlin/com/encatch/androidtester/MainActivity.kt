@@ -239,6 +239,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                             onTrackEvent = { name -> scope.launch { Encatch.trackEvent(name) } },
                             onTrackScreen = { name -> scope.launch { Encatch.trackScreen(name) } },
                         )
+                        TesterTab.LOGS -> LogsScreen()
                         TesterTab.SETTINGS -> SettingsScreen(
                             prefs = prefs,
                             onSetLocale = { Encatch.setLocale("fr-FR") },

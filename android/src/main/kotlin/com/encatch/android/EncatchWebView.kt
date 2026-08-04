@@ -27,6 +27,15 @@ class EncatchWebView(context: Context) : WebView(context) {
     var bridge: FormWebViewBridge? = null
     var onLoadFallbackReady: (() -> Unit)? = null
 
+    /**
+     * Fired when the form page can no longer possibly become interactive: a main-frame load
+     * failure, or the WebView render process dying. Hosts must tear the form UI down — the
+     * close button lives inside the web page, so without this the user is trapped behind the
+     * overlay. NOTE: handling onRenderProcessGone is also load-bearing on Android — the default
+     * behavior kills the entire host app process.
+     */
+    var onUnrecoverableFailure: ((String) -> Unit)? = null
+
     init {
         settings.apply {
             javaScriptEnabled = true
@@ -68,6 +77,17 @@ class EncatchWebView(context: Context) : WebView(context) {
                     view.evaluateJavascript(INLINE_WEBVIEW_SIZING_FIX_SCRIPT, null)
                 }
                 postDelayed({ bridge?.handleFormReady() }, 300)
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                if (request.isForMainFrame) {
+                    onUnrecoverableFailure?.invoke("load failed: ${error.description}")
+                }
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                onUnrecoverableFailure?.invoke("render process gone (crashed=${detail.didCrash()})")
+                return true // handled — returning false would kill the entire host app
             }
         }
     }

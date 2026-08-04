@@ -4,6 +4,8 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
 import android.app.Dialog
 import android.content.ComponentCallbacks2
 import android.content.Context
@@ -36,6 +38,7 @@ import com.encatch.core.normalizePosition
 import com.encatch.core.parseCssColorToArgb
 import com.encatch.core.resolveActiveMode
 import com.encatch.core.resolveCornersFromFormConfig
+import com.encatch.core.resolveCloseButtonFromFormConfig
 import com.encatch.core.resolveDarkOverlayFromFormConfig
 import com.encatch.core.resolveInAppMaxWidthDp
 import com.encatch.core.resolveInAppSizeFromFormConfig
@@ -83,6 +86,10 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     private var currentDarkOverlay = false
     private var lastSystemScheme: String? = null
     private var skeleton: FormWebViewSkeleton? = null
+    private var loadingCloseButton: android.widget.ImageButton? = null
+    // When the form's closeButton setting is enabled, a tap on the overlay area outside the
+    // card also closes the modal (per-present, from the show-form response).
+    private var closeOnOverlayTap = false
     private var closeAnimator: Animator? = null
     private val redirectBrowser = RedirectBrowser(context)
 
@@ -112,24 +119,40 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         scope = scope,
         presentation = "modal",
         onClose = { immediate -> close(immediate) },
-        onHeightChange = { height -> applyHeight(height) },
+        onHeightChange = { height -> applyHeight(height, animated = true) },
         onForceFullHeight = { force -> isFullHeightOverlay = force; applyHeight(contentHeightPx) },
         onReady = {
-            skeleton?.let { popupShell.removeView(it) }
-            skeleton = null
-            isLoadingForm = false
-            // Drop the placeholder loading height if the form never reported a real one.
-            if (contentHeightPx <= 0) applyHeight(contentHeightPx)
+            // onPageFinished's 300ms fallback fires this even when the page HTML loaded but
+            // the form JS never booted. A "ready" without any reported height means nothing
+            // is actually rendered — keep the skeleton and watchdog until real content
+            // arrives (finishLoading runs from applyHeight on the first real height).
+            if (contentHeightPx > 0) finishLoading()
         },
         sendToWebView = { message: SDKMessage -> webView.sendToWebView(message) },
         redirectOpener = redirectBrowser,
         openExternal = { url -> redirectBrowser.openExternal(url) },
     )
 
+    // Auto-closes the modal if no real form content ever arrives (silent load hang / dead form
+    // JS) — the close button lives inside the web page, so without an escape hatch the user is
+    // trapped behind the overlay until app kill.
+    private val readyWatchdog = Runnable {
+        android.util.Log.w("Encatch", "closing modal form: no form content within 20s")
+        close(immediate = true)
+    }
+
     init {
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         webView.bridge = bridge
+        webView.onUnrecoverableFailure = { reason ->
+            android.util.Log.w("Encatch", "closing modal form: $reason")
+            close(immediate = true)
+        }
         webView.setBackgroundColor(Color.TRANSPARENT)
+        // Overlay-tap close: overlayRoot only receives clicks that land outside popupShell —
+        // the card is clickable itself so its taps never bubble up to the root.
+        overlayRoot.setOnClickListener { if (closeOnOverlayTap) close(immediate = false) }
+        popupShell.isClickable = true
         popupShell.clipToOutline = true
         popupShell.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         overlayRoot.addView(popupShell, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -188,6 +211,8 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val (activeMode, darkOverlay) = applyAppearance(payload)
         showSkeleton(activeMode)
         applyHeight(0)
+        popupShell.removeCallbacks(readyWatchdog)
+        popupShell.postDelayed(readyWatchdog, 20_000)
         applyBlurBehind(enabled = !darkOverlay)
         bridge.setFormPayload(payload)
         Encatch.setFormVisible(true)
@@ -209,6 +234,36 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val newSkeleton = FormWebViewSkeleton(context, activeMode)
         skeleton = newSkeleton
         popupShell.addView(newSkeleton, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        showLoadingCloseButton(activeMode)
+    }
+
+    /// Native fail-safe close (✕) shown while loading: appears 1s after present so a slow or
+    /// dead form page can always be dismissed by hand, independent of the web page's own close
+    /// button; removed once real form content arrives (see finishLoading).
+    private fun showLoadingCloseButton(activeMode: String) {
+        loadingCloseButton?.let { popupShell.removeView(it) }
+        val density = context.resources.displayMetrics.density
+        val ink = if (activeMode == "dark") Color.WHITE else Color.BLACK
+        val size = dpToPxInt(28, density)
+        val button = android.widget.ImageButton(context).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            imageTintList = android.content.res.ColorStateList.valueOf((ink and 0x00FFFFFF) or (0x99 shl 24))
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            val pad = dpToPxInt(6, density)
+            setPadding(pad, pad, pad, pad)
+            background = null
+            visibility = android.view.View.GONE
+            setOnClickListener { close(immediate = false) }
+        }
+        popupShell.addView(
+            button,
+            FrameLayout.LayoutParams(size, size, android.view.Gravity.TOP or android.view.Gravity.END).apply {
+                topMargin = dpToPxInt(10, density)
+                marginEnd = dpToPxInt(10, density)
+            },
+        )
+        loadingCloseButton = button
+        button.postDelayed({ if (isLoadingForm) button.visibility = android.view.View.VISIBLE }, 1_000)
     }
 
     private fun applyBlurBehind(enabled: Boolean) {
@@ -216,7 +271,9 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         if (enabled) {
             win.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-            win.attributes = win.attributes.apply { blurBehindRadius = dpToPxInt(24, context.resources.displayMetrics.density) }
+            // Deliberately light — 24dp read as far too heavy in practice; a subtle frost keeps
+            // the host UI recognizable behind the modal (matches iOS's reduced blur intensity).
+            win.attributes = win.attributes.apply { blurBehindRadius = dpToPxInt(8, context.resources.displayMetrics.density) }
         } else {
             win.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
         }
@@ -307,6 +364,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         val corners = resolveCornersFromFormConfig(appearanceProperties)
         val size = resolveInAppSizeFromFormConfig(appearanceProperties)
         val darkOverlay = resolveDarkOverlayFromFormConfig(appearanceProperties)
+        closeOnOverlayTap = resolveCloseButtonFromFormConfig(appearanceProperties)
 
         currentAppearanceProperties = appearanceProperties
         currentCorners = corners
@@ -371,15 +429,51 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         return activeMode
     }
 
-    private fun applyHeight(heightPx: Int) {
+    private fun finishLoading() {
+        popupShell.removeCallbacks(readyWatchdog)
+        isLoadingForm = false
+        // Fade the skeleton over the rendered form, then remove it — removing immediately
+        // makes the handoff feel jerky (mirrors ios-native's skeleton crossfade).
+        skeleton?.let { fading ->
+            fading.animate().alpha(0f).setDuration(300)
+                .withEndAction { popupShell.removeView(fading) }
+                .start()
+        }
+        skeleton = null
+        // The real form has its own close button — retire the fail-safe ✕.
+        loadingCloseButton?.let { popupShell.removeView(it) }
+        loadingCloseButton = null
+    }
+
+    private var heightAnimator: ValueAnimator? = null
+
+    private fun applyHeight(heightPx: Int, animated: Boolean = false) {
         contentHeightPx = heightPx
+        if (heightPx > 0 && isLoadingForm) finishLoading()
         val density = context.resources.displayMetrics.density
-        // While loading (skeleton up, no form:height yet) hold a fixed placeholder height so the
-        // shimmer skeleton is actually visible — mirrors ios-native's EncatchFormViewController.
-        val effectiveHeight = if (isLoadingForm && heightPx <= 0) dpToPxInt(300, density) else heightPx
+        // While no real form:height has arrived, hold a fixed placeholder height so the shimmer
+        // skeleton is visible and the shell can never collapse to an invisible 0px card behind
+        // the overlay — mirrors ios-native's EncatchFormViewController.
+        val effectiveHeight = if (heightPx <= 0) dpToPxInt(300, density) else heightPx
         val cap = minOf(maxDialogHeightPx, availableHeightAboveImePx)
         val target = if (isFullHeightOverlay || isFullCenter) cap else minOf(effectiveHeight, cap)
-        webView.updateLayoutParams<FrameLayout.LayoutParams> { height = target }
+
+        heightAnimator?.cancel()
+        val current = webView.layoutParams?.height ?: 0
+        // Bridge-driven resizes (placeholder→real height, step changes) animate so the shell
+        // glides instead of snapping; keyboard/inset-driven calls stay immediate.
+        if (animated && current > 0 && current != target) {
+            heightAnimator = ValueAnimator.ofInt(current, target).apply {
+                duration = 300
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { animator ->
+                    webView.updateLayoutParams<FrameLayout.LayoutParams> { height = animator.animatedValue as Int }
+                }
+                start()
+            }
+        } else {
+            webView.updateLayoutParams<FrameLayout.LayoutParams> { height = target }
+        }
     }
 
     private fun close(immediate: Boolean) {
@@ -395,10 +489,13 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
 
     override fun dismiss() {
         super.dismiss()
+        popupShell.removeCallbacks(readyWatchdog)
         bridge.setFormPayload(null)
         currentPayload = null
         skeleton?.let { popupShell.removeView(it) }
         skeleton = null
+        loadingCloseButton?.let { popupShell.removeView(it) }
+        loadingCloseButton = null
         closeAnimator = null
         applyBlurBehind(enabled = false)
         context.applicationContext.unregisterComponentCallbacks(systemThemeCallbacks)

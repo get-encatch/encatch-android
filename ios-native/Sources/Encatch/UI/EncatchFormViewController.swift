@@ -18,9 +18,10 @@ public final class EncatchFormViewController: UIViewController {
     private let backdropBlur = UIVisualEffectView(effect: nil)
     private var backdropBlurAnimator: UIViewPropertyAnimator?
 
-    /// Fractional blur strength when darkOverlay is off — mirrors the React Native SDK's
-    /// `MODAL_BACKDROP_BLUR_INTENSITY` (52/100 on iOS).
-    private static let backdropBlurIntensity: CGFloat = 0.52
+    /// Fractional blur strength when darkOverlay is off. Deliberately much lighter than the
+    /// React Native SDK's `MODAL_BACKDROP_BLUR_INTENSITY` (52/100) — at that strength the host
+    /// UI behind the modal is barely recognizable; a subtle frost reads better.
+    private static let backdropBlurIntensity: CGFloat = 0.15
     private let skeleton = FormWebViewSkeletonView()
 
     /// Shell height while the WebView is still loading (skeleton visible, no `form:height` yet) —
@@ -40,6 +41,22 @@ public final class EncatchFormViewController: UIViewController {
     private var centerYConstraint: NSLayoutConstraint?
     /// Current keyboard overlap with this view, in points (0 when hidden).
     private var keyboardHeight: CGFloat = 0
+
+    /// Auto-closes the modal if `form:ready` never arrives (silent load hang: no error callback,
+    /// no bridge messages). Without an escape hatch the close button — which lives inside the
+    /// web page — can never appear, trapping the user behind the overlay until app kill.
+    private var readyWatchdog: Timer?
+    private static let readyWatchdogTimeout: TimeInterval = 20
+
+    /// Native fail-safe close (✕) shown while loading: appears 1s after present so a slow or
+    /// dead form page can always be dismissed by hand, independent of the web page's own close
+    /// button; fades away once real form content arrives.
+    private let loadingCloseButton = UIButton(type: .system)
+    private static let loadingCloseButtonDelay: TimeInterval = 1
+
+    /// When the form's closeButton setting is enabled, a tap on the overlay area outside the
+    /// card also closes the modal (per-present, from the show-form response).
+    private var closeOnOverlayTap = false
     private var maxDialogHeight: CGFloat = .greatestFiniteMagnitude
     private var contentHeight: CGFloat = 0
     private var isFullHeightOverlay = false
@@ -51,7 +68,7 @@ public final class EncatchFormViewController: UIViewController {
         logTag: "Encatch",
         presentation: "modal",
         onClose: { [weak self] immediate in self?.close(immediate: immediate) },
-        onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height)) },
+        onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height), animated: true) },
         onForceFullHeight: { [weak self] force in self?.applyForceFullHeight(force) },
         onReady: { [weak self] in self?.hideSkeleton() },
         sendToWebView: { [weak self] message in self?.webView.sendToWebView(message) },
@@ -111,6 +128,10 @@ public final class EncatchFormViewController: UIViewController {
         ])
 
         webView.bridge = bridge
+        webView.onUnrecoverableFailure = { [weak self] reason in
+            NSLog("[Encatch] closing modal form: \(reason)")
+            self?.close(immediate: true)
+        }
         webView.translatesAutoresizingMaskIntoConstraints = false
         contentClip.addSubview(webView)
         NSLayoutConstraint.activate([
@@ -128,6 +149,24 @@ public final class EncatchFormViewController: UIViewController {
             skeleton.leadingAnchor.constraint(equalTo: contentClip.leadingAnchor),
             skeleton.trailingAnchor.constraint(equalTo: contentClip.trailingAnchor),
         ])
+
+        loadingCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        loadingCloseButton.layer.cornerRadius = 14
+        loadingCloseButton.isHidden = true
+        loadingCloseButton.alpha = 0
+        loadingCloseButton.addTarget(self, action: #selector(loadingCloseTapped), for: .touchUpInside)
+        loadingCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        popupShell.addSubview(loadingCloseButton)
+        NSLayoutConstraint.activate([
+            loadingCloseButton.topAnchor.constraint(equalTo: popupShell.topAnchor, constant: 10),
+            loadingCloseButton.trailingAnchor.constraint(equalTo: popupShell.trailingAnchor, constant: -10),
+            loadingCloseButton.widthAnchor.constraint(equalToConstant: 28),
+            loadingCloseButton.heightAnchor.constraint(equalToConstant: 28),
+        ])
+
+        // overlayView spans the whole screen behind popupShell, so a tap landing on it is by
+        // definition outside the card; taps on the card hit popupShell/webView and never reach it.
+        overlayView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(overlayTapped)))
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(keyboardWillChangeFrame(_:)),
@@ -162,6 +201,26 @@ public final class EncatchFormViewController: UIViewController {
         )
         webView.loadFormUrl(url)
 
+        readyWatchdog?.invalidate()
+        readyWatchdog = Timer.scheduledTimer(withTimeInterval: Self.readyWatchdogTimeout, repeats: false) { [weak self] _ in
+            NSLog("[Encatch] closing modal form: form:ready not received within \(Self.readyWatchdogTimeout)s")
+            self?.close(immediate: true)
+        }
+
+        // Theme the fail-safe ✕ against the shell's themed background, then reveal it after a
+        // grace period if the form still hasn't produced content.
+        let inkColor: UIColor = activeMode == "dark" ? .white : .black
+        loadingCloseButton.tintColor = inkColor.withAlphaComponent(0.6)
+        loadingCloseButton.backgroundColor = .clear
+        loadingCloseButton.isHidden = true
+        loadingCloseButton.alpha = 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.loadingCloseButtonDelay) { [weak self] in
+            guard let self, self.isLoadingForm else { return }
+            self.loadingCloseButton.isHidden = false
+            self.popupShell.bringSubviewToFront(self.loadingCloseButton)
+            UIView.animate(withDuration: 0.2) { self.loadingCloseButton.alpha = 1 }
+        }
+
         presenter.present(self, animated: false) { [weak self] in
             self?.runEntranceAnimation(activeMode: activeMode)
         }
@@ -185,6 +244,8 @@ public final class EncatchFormViewController: UIViewController {
         let screenSize = presenter.view.window?.windowScene?.screen.bounds.size ?? UIScreen.main.bounds.size
         let screenWidthDp = Int(screenSize.width)
         let appearanceProperties = payload.formConfig.appearanceProperties
+
+        closeOnOverlayTap = resolveCloseButtonFromFormConfig(appearanceProperties)
 
         let rawPosition = resolveSelectedPositionFromFormConfig(appearanceProperties)
         let position = normalizePosition(rawPosition, screenWidthDp: screenWidthDp)
@@ -365,10 +426,36 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     private func hideSkeleton() {
+        // Called from the bridge's onReady — which the 0.3s didFinish fallback can fire even
+        // when the page HTML loaded but the form JS never booted (observed live: post-load
+        // WebContent at 16MB / 0% CPU, no form:height ever sent). A "ready" without any
+        // reported height means nothing is actually rendered: keep the skeleton pulsing and
+        // the watchdog armed instead of collapsing to an invisible 0pt card behind the
+        // overlay. `finishLoading()` runs from applyHeight when real content arrives.
+        guard contentHeight > 0 else { return }
+        finishLoading()
+    }
+
+    private func finishLoading() {
+        readyWatchdog?.invalidate()
+        readyWatchdog = nil
         isLoadingForm = false
         skeleton.stop()
-        // Drop the placeholder loading height if the form never reported a real one.
-        if contentHeight <= 0 { applyHeight(contentHeight) }
+        // The real form has its own close button — retire the fail-safe ✕.
+        UIView.animate(withDuration: 0.2) {
+            self.loadingCloseButton.alpha = 0
+        } completion: { _ in
+            self.loadingCloseButton.isHidden = true
+        }
+    }
+
+    @objc private func loadingCloseTapped() {
+        close(immediate: false)
+    }
+
+    @objc private func overlayTapped() {
+        guard closeOnOverlayTap else { return }
+        close(immediate: false)
     }
 
     /// The popup keeps its full-screen target size while the keyboard is up as long as it still
@@ -380,18 +467,28 @@ public final class EncatchFormViewController: UIViewController {
         return min(maxDialogHeight, max(available, 100))
     }
 
-    private func applyHeight(_ height: CGFloat) {
+    private func applyHeight(_ height: CGFloat, animated: Bool = false) {
         contentHeight = height
-        // While loading (skeleton up, no `form:height` from the bridge yet) hold a fixed
-        // placeholder height so the shimmer skeleton is actually visible — without it the shell
-        // sits at 0pt until the first height message and nothing appears during the load.
-        let effectiveHeight = (isLoadingForm && height <= 0) ? Self.loadingSkeletonHeight : height
+        if height > 0, isLoadingForm { finishLoading() }
+        // While no real `form:height` has arrived, hold a fixed placeholder height so the
+        // shimmer skeleton is visible and the shell can never collapse to an invisible 0pt
+        // card behind the overlay.
+        let effectiveHeight = height <= 0 ? Self.loadingSkeletonHeight : height
         let cap = effectiveMaxDialogHeight
         let target = (isFullHeightOverlay || isFullCenter) ? cap : min(effectiveHeight, cap)
         heightConstraint?.isActive = false
         heightConstraint = popupShell.heightAnchor.constraint(equalToConstant: max(target, 0))
         heightConstraint?.isActive = true
-        view.layoutIfNeeded()
+        // Bridge-driven resizes (placeholder→real height, step changes) animate so the shell
+        // glides instead of snapping. Keyboard-driven calls pass animated: false because they
+        // already run inside the keyboard notification's own animation block.
+        if animated, view.window != nil {
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                self.view.layoutIfNeeded()
+            }
+        } else {
+            view.layoutIfNeeded()
+        }
     }
 
     // MARK: Keyboard avoidance
@@ -449,6 +546,8 @@ public final class EncatchFormViewController: UIViewController {
         keyboardHeight = 0
         bottomEdgeConstraint?.constant = 0
         centerYConstraint?.constant = 0
+        readyWatchdog?.invalidate()
+        readyWatchdog = nil
         super.dismiss(animated: animated, completion: completion)
     }
 }

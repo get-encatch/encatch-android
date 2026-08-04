@@ -121,6 +121,14 @@ public func resolveDarkOverlayFromFormConfig(_ appearanceProperties: JSONValue?)
         ?? appearanceProperties?.obj("featureSettings")?.bool("darkOverlay")) == true
 }
 
+/// Reads inApp.closeButton with legacy featureSettings.closeButton fallback. When enabled, the
+/// form shows a close affordance — native hosts additionally treat a tap on the overlay area
+/// outside the card as a close.
+public func resolveCloseButtonFromFormConfig(_ appearanceProperties: JSONValue?) -> Bool {
+    (appearanceProperties?.obj("inApp")?.bool("closeButton")
+        ?? appearanceProperties?.obj("featureSettings")?.bool("closeButton")) == true
+}
+
 /// Reads featureSettings.maxDialogHeightPercentInApp, defaulting to 0.8 (80%).
 public func resolveMaxDialogHeightFraction(_ appearanceProperties: JSONValue?) -> Double {
     if let raw = appearanceProperties?.obj("featureSettings")?.number("maxDialogHeightPercentInApp") {

@@ -30,6 +30,15 @@ object Encatch {
     private var initialized = false
     private var debugModeState = false
 
+    /**
+     * Debug hook: receives every completed SDK HTTP call (request + response). Only fires when
+     * `EncatchConfig.debugMode` is enabled — payloads include full bodies, so they never leave
+     * the SDK in production configurations (the API key header is always masked to its last 5
+     * characters). Survives re-`init()` — set it once at app startup for in-app network
+     * inspectors. May be invoked on any thread.
+     */
+    var onNetworkLog: ((EncatchNetworkLogEntry) -> Unit)? = null
+
     // Config
     private var apiKeyState: String? = null
     private var apiBaseUrlState: String = DEFAULT_API_BASE_URL
@@ -145,6 +154,11 @@ object Encatch {
                     deviceId = deviceIdState,
                     appPackageName = appPackageName,
                 )
+            },
+            networkLogSink = { entry ->
+                // Full request/response payloads only leave the SDK when the host explicitly
+                // opted into debugMode — same gate as the debug logger.
+                if (debugModeState) onNetworkLog?.invoke(entry)
             },
             onUserPendingRetryExhausted = {
                 sessionManager.stopPingInterval()

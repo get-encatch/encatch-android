@@ -21,11 +21,24 @@ public enum EncatchFormHost {
                 switch event {
                 case .showForm(let payload):
                     guard payload.presentation != "inline" else { return }
-                    guard let presenter = UIApplication.topmostViewController() else { return }
-                    currentController?.dismiss(animated: false)
-                    let controller = EncatchFormViewController()
-                    currentController = controller
-                    controller.present(payload: payload, from: presenter)
+                    let show = {
+                        guard let presenter = UIApplication.topmostViewController() else { return }
+                        let controller = EncatchFormViewController()
+                        currentController = controller
+                        controller.present(payload: payload, from: presenter)
+                    }
+                    // If a previous form is still presented (including mid exit-animation),
+                    // resolve the presenter only AFTER its dismissal completes. Presenting
+                    // immediately would resolve topmostViewController() to the dismissing
+                    // controller, and UIKit silently drops a present() from a view controller
+                    // that's being dismissed — leaving the SDK wedged with formVisible=true
+                    // and nothing on screen.
+                    if let old = currentController, old.presentingViewController != nil {
+                        currentController = nil
+                        old.dismiss(animated: false, completion: show)
+                    } else {
+                        show()
+                    }
                 case .dismissForm:
                     currentController?.dismiss(animated: false)
                     currentController = nil

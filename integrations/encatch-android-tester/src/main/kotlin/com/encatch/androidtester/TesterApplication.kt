@@ -7,5 +7,6 @@ class TesterApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         EncatchFormHost.install(this)
+        NetworkLogStore.install()
     }
 }

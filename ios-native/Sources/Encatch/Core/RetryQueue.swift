@@ -39,6 +39,11 @@ actor RetryQueue {
     private let storage: EncatchStorage
     private var queue: [QueuedRequest] = []
     private var nextId: Int64 = 0
+    /// Items currently executing. Actor methods suspend at every `await`, so two overlapping
+    /// `flush()` calls (enqueue schedules one, callers often schedule another) both see a
+    /// not-yet-removed item and would run its request twice without this guard — observed live
+    /// as every trackScreen/trackEvent landing on the API twice.
+    private var inFlightIds: Set<String> = []
 
     init(storage: EncatchStorage) {
         self.storage = storage
@@ -87,6 +92,9 @@ actor RetryQueue {
     }
 
     private func attempt(_ item: QueuedRequest) async {
+        guard queue.contains(where: { $0.id == item.id }), !inFlightIds.contains(item.id) else { return }
+        inFlightIds.insert(item.id)
+        defer { inFlightIds.remove(item.id) }
         do {
             try await item.fn()
             queue.removeAll { $0.id == item.id }

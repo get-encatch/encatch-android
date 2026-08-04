@@ -43,6 +43,11 @@ internal class RetryQueue(
 
     private val mutex = Mutex()
     private val queue = mutableListOf<QueuedRequest>()
+    // Items currently executing. `fn()` necessarily runs outside the mutex, so two overlapping
+    // flush() calls (enqueue schedules one, callers often schedule another) both see a
+    // not-yet-removed item and would run its request twice without this guard — observed live
+    // on iOS as every trackScreen/trackEvent landing on the API twice.
+    private val inFlightIds = mutableSetOf<String>()
     private var nextId = 0L
     private val pendingRetryJobs = mutableMapOf<String, Job>()
 
@@ -87,6 +92,23 @@ internal class RetryQueue(
     }
 
     private suspend fun attempt(item: QueuedRequest) {
+        val shouldRun = mutex.withLock {
+            if (queue.none { it.id == item.id } || item.id in inFlightIds) {
+                false
+            } else {
+                inFlightIds.add(item.id)
+                true
+            }
+        }
+        if (!shouldRun) return
+        try {
+            attemptLocked(item)
+        } finally {
+            mutex.withLock { inFlightIds.remove(item.id) }
+        }
+    }
+
+    private suspend fun attemptLocked(item: QueuedRequest) {
         try {
             item.fn()
             mutex.withLock {

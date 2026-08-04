@@ -13,6 +13,7 @@ sealed class Screen {
 enum class TesterTab(val label: String) {
     HOME("Home"),
     EVENTS("Events"),
+    LOGS("Logs"),
     SETTINGS("Settings"),
     INLINE_ANY("Inline (Any)"),
     INLINE_EXACT("Inline (Exact)"),

@@ -170,12 +170,26 @@ class EncatchInlineFormView @JvmOverloads constructor(
             },
             onHeightChange = { h -> applyHeight(h) },
             onForceFullHeight = { force -> applyForceFullHeight(force) },
-            onReady = { loadingOverlay?.let { removeView(it) }; loadingOverlay = null },
+            onReady = {
+                // Fade the skeleton over the rendered form, then remove it (parity with the
+                // modal dialog and ios-native's crossfade).
+                loadingOverlay?.let { fading ->
+                    fading.animate().alpha(0f).setDuration(300)
+                        .withEndAction { removeView(fading) }
+                        .start()
+                }
+                loadingOverlay = null
+            },
             sendToWebView = { message: SDKMessage -> newWebView.sendToWebView(message) },
             redirectOpener = redirectBrowser,
             openExternal = { url -> redirectBrowser.openExternal(url) },
         )
         newWebView.bridge = newBridge
+        newWebView.onUnrecoverableFailure = { reason ->
+            android.util.Log.w("Encatch", "clearing inline form: $reason")
+            Encatch.setFormVisible(false)
+            clearForm()
+        }
         newWebView.settings.setSupportZoom(false)
         newWebView.isVerticalScrollBarEnabled = false
         newWebView.overScrollMode = android.view.View.OVER_SCROLL_NEVER

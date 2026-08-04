@@ -24,12 +24,23 @@ final class SessionManager: @unchecked Sendable {
         self.onPing = onPing
     }
 
-    func startPingInterval() {
-        stopPingInterval()
+    /// Atomically swaps in a new ping task (or nil) and cancels the previous one. Every mutation
+    /// of `pingTask` must go through this: `cancel-then-assign` as two unsynchronized steps let
+    /// two concurrent callers (e.g. simultaneous API responses both delivering `pingAgainIn`)
+    /// cancel the same stale task and each install their own — one overwrites the other in the
+    /// var but BOTH keep running, leaking an extra 30s ping loop per race (observed live as
+    /// double/triple pings landing in the same second).
+    private func replacePingTask(active: Bool, with newTask: Task<Void, Never>?) {
         lock.lock()
-        pingActive = true
+        let old = pingTask
+        pingActive = active
+        pingTask = newTask
         lock.unlock()
-        pingTask = Task { [weak self] in
+        old?.cancel()
+    }
+
+    func startPingInterval() {
+        let task = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(Self.pingIntervalMs) * 1_000_000)
@@ -39,14 +50,11 @@ final class SessionManager: @unchecked Sendable {
                 }
             }
         }
+        replacePingTask(active: true, with: task)
     }
 
     func stopPingInterval() {
-        lock.lock()
-        pingActive = false
-        lock.unlock()
-        pingTask?.cancel()
-        pingTask = nil
+        replacePingTask(active: false, with: nil)
     }
 
     /// Cancels the ping loop and actually waits for its in-flight iteration (if any) to finish,
@@ -72,16 +80,18 @@ final class SessionManager: @unchecked Sendable {
     }
 
     func scheduleNextPing(delayMs: Int64) {
-        pingTask?.cancel()
-        pingTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             try? await Task.sleep(nanoseconds: UInt64(max(0, delayMs)) * 1_000_000)
             if Task.isCancelled { return }
             if !self.isFormVisible() {
                 await self.onPing()
             }
-            self.startPingInterval()
+            // A superseded task is cancelled by replacePingTask — never let it resurrect a
+            // second interval loop on its way out.
+            if !Task.isCancelled { self.startPingInterval() }
         }
+        replacePingTask(active: true, with: task)
     }
 
     /// Applies `pingAgainIn`/`pingOnNextPageVisit` from any API response, mirrors `_handleResponseMeta`.

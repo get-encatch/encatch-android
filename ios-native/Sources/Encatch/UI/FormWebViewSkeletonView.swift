@@ -32,6 +32,7 @@ final class FormWebViewSkeletonView: UIView {
             : UIColor.black.withAlphaComponent(20.0 / 255.0)
         bars.forEach { $0.backgroundColor = barColor }
         isHidden = false
+        alpha = 1
 
         barsContainer.layer.removeAnimation(forKey: "pulse")
         let pulse = CABasicAnimation(keyPath: "opacity")
@@ -44,9 +45,22 @@ final class FormWebViewSkeletonView: UIView {
         barsContainer.layer.add(pulse, forKey: "pulse")
     }
 
-    func stop() {
-        barsContainer.layer.removeAnimation(forKey: "pulse")
-        isHidden = true
+    /// Fades out over the real form rather than vanishing in a single frame — the crossfade is
+    /// what makes the skeleton→form handoff feel smooth.
+    func stop(animated: Bool = true) {
+        guard !isHidden else { return }
+        guard animated else {
+            barsContainer.layer.removeAnimation(forKey: "pulse")
+            isHidden = true
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.alpha = 0
+        } completion: { _ in
+            self.barsContainer.layer.removeAnimation(forKey: "pulse")
+            self.isHidden = true
+            self.alpha = 1
+        }
     }
 
     // Same geometry as the Android/RN skeleton (dp == pt on iOS).
