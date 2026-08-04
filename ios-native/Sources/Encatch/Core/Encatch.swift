@@ -862,7 +862,9 @@ private extension ContextValue {
     }
 }
 
-private extension Dictionary where Key == String, Value == JSONValue {
+// internal (not private) so EncatchTests can exercise the top-level parse contract directly —
+// notably that projectI18nFileUrl is read from the response root, never from nested config.
+extension Dictionary where Key == String, Value == JSONValue {
     func toShowFormResponse() -> ShowFormResponse {
         var feedbackConfigurationId = ""
         if case .string(let v)? = self["feedbackConfigurationId"] { feedbackConfigurationId = v }

@@ -806,7 +806,9 @@ private fun ContextValue.toJson(): JsonElement = when (this) {
     is ContextValue.DateValue -> JsonPrimitive(isoStringFromEpochMillis(epochMillis))
 }
 
-private fun JsonObject.toShowFormResponse(): ShowFormResponse = ShowFormResponse(
+// internal (not private) so commonTest can exercise the top-level parse contract directly —
+// notably that projectI18nFileUrl is read from the response root, never from nested config.
+internal fun JsonObject.toShowFormResponse(): ShowFormResponse = ShowFormResponse(
     feedbackConfigurationId = this["feedbackConfigurationId"]?.jsonPrimitive?.contentOrNull ?: "",
     feedbackIdentifier = this["feedbackIdentifier"]?.jsonPrimitive?.contentOrNull,
     triggerType = this["triggerType"]?.jsonPrimitive?.contentOrNull?.let { if (it == "automatic") TriggerType.AUTOMATIC else TriggerType.MANUAL },
