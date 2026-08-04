@@ -601,9 +601,15 @@ SWIFT_CLASS_NAMED("EncatchInlineFormView")
 @property (nonatomic, copy) NSString * _Nullable formId;
 /// Minimum height floor (points) after the first <code>form:resize</code>. Defaults to 0.
 @property (nonatomic) CGFloat minHeight;
+/// Called whenever the view’s self-sized height changes (skeleton placeholder, every
+/// <code>form:resize</code>, overlay freeze/unfreeze, clear). Auto Layout hosts don’t need this — the
+/// view sizes itself via its own height constraint — but SwiftUI/manual-layout hosts can
+/// bind it to their own frame instead of hardcoding a height.
+@property (nonatomic, copy) void (^ _Nullable onHeightChange)(CGFloat);
 - (nonnull instancetype)initWithFrame:(CGRect)frame OBJC_DESIGNATED_INITIALIZER;
 - (nullable instancetype)initWithCoder:(NSCoder * _Nonnull)coder SWIFT_UNAVAILABLE;
 - (void)willMoveToWindow:(UIWindow * _Nullable)newWindow;
+@property (nonatomic, readonly) CGSize intrinsicContentSize;
 - (void)traitCollectionDidChange:(UITraitCollection * _Nullable)previousTraitCollection;
 @end
 

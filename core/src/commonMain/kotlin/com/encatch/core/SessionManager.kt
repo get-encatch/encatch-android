@@ -2,6 +2,7 @@ package com.encatch.core
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -42,6 +43,20 @@ internal class SessionManager(
         isPingActive = false
         pingJob?.cancel()
         pingJob = null
+    }
+
+    /**
+     * Cancels the ping loop and actually waits for its in-flight iteration (if any) to finish,
+     * unlike [stopPingInterval] which only requests cancellation and returns immediately.
+     * Callers that are about to reassign shared mutable state the ping loop's `onPing` touches
+     * (see `Encatch.init`'s reconfigure path) need this to close the race window where the old
+     * loop's already-running `onPing()` call keeps executing after cancellation.
+     */
+    suspend fun stopPingIntervalAndJoin() {
+        isPingActive = false
+        val job = pingJob
+        pingJob = null
+        job?.cancelAndJoin()
     }
 
     fun scheduleNextPing(delayMs: Long) {

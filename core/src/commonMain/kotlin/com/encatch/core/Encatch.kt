@@ -2,6 +2,7 @@ package com.encatch.core
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -79,18 +80,46 @@ object Encatch {
     private lateinit var sessionManager: SessionManager
     private var logger: EncatchLogger = DefaultEncatchLogger { debugModeState }
 
+    // Tracks the retry-queue flush kicked off at the end of the most recent `init()`, and
+    // serializes overlapping `init()` calls — see that method's reconfigure path.
+    private var retryFlushJob: Job? = null
+    private var pendingReinitJob: Job? = null
+
     // ============================================================================
     // Initialisation
     // ============================================================================
 
     @Throws(Exception::class)
     suspend fun init(apiKey: String, config: EncatchConfig? = null) {
+        // Wait for any prior init() call's reconfigure to fully finish before we touch
+        // anything. Without this, two overlapping calls (or a call landing while a previous
+        // reconfigure's teardown is still draining) could interleave their mutations of
+        // storage/apiClient/retryQueue/sessionManager — plain vars, not synchronized — which on
+        // iOS's equivalent Swift implementation crashed with a pointer-authentication SIGSEGV
+        // when reproduced via the tester apps' "change API key" flow.
+        pendingReinitJob?.join()
+
         debugModeState = config?.debugMode ?: false
         logger = DefaultEncatchLogger { debugModeState }
 
         if (initialized) {
-            logger.debug("SDK already initialized")
-            return
+            // Reconfigure rather than no-op: a host app (or this repo's tester apps switching
+            // environment/API key at runtime) calling init() again expects the new
+            // apiKey/config to actually take effect, not silently keep the first call's state.
+            // Fully cancel-and-join the old ping loop and any still-draining retry-queue flush
+            // before reassigning shared state below — see the comment above.
+            logger.debug("SDK already initialized — reconfiguring with new apiKey/config")
+            val oldSessionManager = sessionManager
+            val oldRetryFlushJob = retryFlushJob
+            val teardown = scope.launch {
+                oldSessionManager.stopPingIntervalAndJoin()
+                oldRetryFlushJob?.join()
+            }
+            pendingReinitJob = teardown
+            teardown.join()
+            isSessionPaused = false
+            isSessionStopped = false
+            isFormVisible = false
         }
 
         apiKeyState = apiKey
@@ -147,7 +176,9 @@ object Encatch {
 
         initialized = true
 
-        scope.launch { retryQueue.flush() }
+        val flushQueue = retryQueue
+        retryFlushJob = scope.launch { flushQueue.flush() }
+        pendingReinitJob = null
         logger.debug("SDK initialized. deviceId: $deviceIdState")
     }
 
@@ -598,6 +629,7 @@ object Encatch {
 
     @Throws(Exception::class)
     suspend fun resetUser() {
+        if (!initialized) return
         userNameState?.let { name ->
             storage.clearUserId(name)
             storage.clearFeedbackTransactions(name)

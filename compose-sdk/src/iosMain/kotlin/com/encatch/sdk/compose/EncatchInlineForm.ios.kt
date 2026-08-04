@@ -2,8 +2,14 @@
 
 package com.encatch.sdk.compose
 
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
 import com.encatch.bridge.EncatchInlineFormView
@@ -20,6 +26,12 @@ import com.encatch.bridge.EncatchInlineFormView
  */
 @Composable
 actual fun EncatchInlineForm(formId: String, modifier: Modifier) {
+    // Auto height: Compose Multiplatform's UIKitView ignores a UIView's own Auto Layout height
+    // constraint / intrinsicContentSize, so the native view's self-sizing (skeleton placeholder,
+    // live form:resize values — see ios-native's EncatchInlineFormView) is bridged out through
+    // its onHeightChange callback and applied as a Compose height modifier instead. Points map
+    // 1:1 to dp on iOS. Callers should NOT pin their own height — pass layout-only modifiers.
+    var heightDp by remember { mutableStateOf(0.0) }
     // isNativeAccessibilityEnabled defaults to false — Compose Multiplatform's iOS interop
     // views don't expose their native accessibility subtree (e.g. the hosted WKWebView's DOM
     // content surfaced via ios-native's bridge) to the app's accessibility tree unless opted
@@ -29,8 +41,13 @@ actual fun EncatchInlineForm(formId: String, modifier: Modifier) {
     // inline form's Submit button, despite the exact same content working fine when presented
     // as a real modal UIViewController (a separate, non-interop native window).
     UIKitView(
-        factory = { EncatchInlineFormView().apply { setFormId(formId) } },
-        modifier = modifier,
+        factory = {
+            EncatchInlineFormView().apply {
+                setFormId(formId)
+                setOnHeightChange { height -> heightDp = height }
+            }
+        },
+        modifier = modifier.height(heightDp.dp),
         update = { view -> view.setFormId(formId) },
         properties = UIKitInteropProperties(isNativeAccessibilityEnabled = true),
     )

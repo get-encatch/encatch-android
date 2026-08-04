@@ -37,7 +37,7 @@ public final class FormWebViewBridge: @unchecked Sendable {
     private static let redirectAfterImmediateCloseDelayMs: Int64 = 50
 
     private let logTag: String
-    private let presentation: String
+    let presentation: String
     private let onClose: @Sendable (_ immediate: Bool) -> Void
     private let onHeightChange: @Sendable (Int) -> Void
     private let onForceFullHeight: @Sendable (Bool) -> Void

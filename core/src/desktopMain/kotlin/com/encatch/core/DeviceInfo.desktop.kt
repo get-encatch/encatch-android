@@ -12,7 +12,10 @@ internal actual val SDK_PLATFORM: String = "desktop"
  */
 internal actual fun collectPlatformDeviceFacts(): PlatformDeviceFacts = PlatformDeviceFacts(
     osVersion = System.getProperty("os.name") + " " + System.getProperty("os.version"),
-    deviceLocale = Locale.getDefault().toLanguageTag(),
+    // ISO 639-1 language code only (e.g. "en"), not `toLanguageTag()`'s full "en-US"-style
+    // region-qualified BCP-47 tag — the API's `$deviceLanguage`/`$userLanguage` fields require
+    // plain ISO 639-1.
+    deviceLocale = Locale.getDefault().language,
     timezone = runCatching { TimeZone.getDefault().id }.getOrNull(),
     appVersion = null,
     appPackageName = null,

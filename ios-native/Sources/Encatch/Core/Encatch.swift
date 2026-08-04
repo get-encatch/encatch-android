@@ -81,6 +81,11 @@ public final class Encatch: @unchecked Sendable {
     private var sessionManager: SessionManager!
     private var logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false })
 
+    // Tracks the retry-queue flush kicked off at the end of the most recent `initialize()`, and
+    // serializes overlapping `initialize()` calls — see that method's reconfigure path.
+    private var retryFlushTask: Task<Void, Never>?
+    private var pendingReinitTask: Task<Void, Never>?
+
     /// Set by the UI layer so exit_form CTAs can open `SFSafariViewController` / the system browser.
     public var pendingCtaScheduler: PendingCompletionCtaScheduler?
 
@@ -89,12 +94,35 @@ public final class Encatch: @unchecked Sendable {
     // ============================================================================
 
     public func initialize(apiKey: String, config: EncatchConfig? = nil) async throws {
+        // Wait for any prior initialize() call's reconfigure to fully finish before we touch
+        // anything. Without this, two overlapping calls (or a call landing while a previous
+        // reconfigure's teardown is still draining) could interleave their mutations of
+        // storage/apiClient/retryQueue/sessionManager — plain vars, not actor-isolated — which
+        // crashed with a pointer-authentication SIGSEGV when reproduced via the tester apps'
+        // "change API key" flow.
+        await pendingReinitTask?.value
+
         debugModeState = config?.debugMode ?? false
         logger = DefaultEncatchLogger(debugMode: { [self] in debugModeState })
 
         if initialized {
-            logger.debug("SDK already initialized")
-            return
+            // Reconfigure rather than no-op: a host app (or this repo's tester apps switching
+            // environment/API key at runtime) calling initialize() again expects the new
+            // apiKey/config to actually take effect, not silently keep the first call's state.
+            // Fully cancel-and-await the old ping loop and any still-draining retry-queue flush
+            // before reassigning shared state below — see the comment above.
+            logger.debug("SDK already initialized — reconfiguring with new apiKey/config")
+            let oldSessionManager = sessionManager
+            let oldRetryFlushTask = retryFlushTask
+            let teardown = Task {
+                await oldSessionManager?.stopPingIntervalAndWait()
+                await oldRetryFlushTask?.value
+            }
+            pendingReinitTask = teardown
+            await teardown.value
+            isSessionPaused = false
+            isSessionStopped = false
+            isFormVisible = false
         }
 
         apiKeyState = apiKey
@@ -154,7 +182,9 @@ public final class Encatch: @unchecked Sendable {
 
         initialized = true
 
-        Task { await self.retryQueue.flush() }
+        let flushQueue = self.retryQueue!
+        retryFlushTask = Task { await flushQueue.flush() }
+        pendingReinitTask = nil
         logger.debug("SDK initialized. deviceId: \(deviceIdState ?? "nil")")
     }
 
@@ -640,6 +670,7 @@ public final class Encatch: @unchecked Sendable {
     }
 
     public func resetUser() async throws {
+        guard initialized else { throw EncatchNotInitializedException() }
         if let name = userNameState {
             storage.clearUserId(userName: name)
             storage.clearFeedbackTransactions(identityKey: name)

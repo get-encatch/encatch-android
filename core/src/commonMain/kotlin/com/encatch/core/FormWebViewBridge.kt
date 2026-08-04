@@ -23,7 +23,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 class FormWebViewBridge(
     private val scope: CoroutineScope,
     private val logTag: String = "Encatch",
-    private val presentation: String = "modal",
+    val presentation: String = "modal",
     private val onClose: (immediate: Boolean) -> Unit,
     private val onHeightChange: (Int) -> Unit,
     private val onForceFullHeight: (Boolean) -> Unit,

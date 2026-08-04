@@ -69,6 +69,13 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     private var isFullCenter = false
     private var maxDialogHeightPx = Int.MAX_VALUE
     private var contentHeightPx = 0
+    // Space left for the popup between the top inset and the keyboard while the IME is up;
+    // Int.MAX_VALUE when the keyboard is hidden.
+    private var availableHeightAboveImePx = Int.MAX_VALUE
+    // True from present() until the bridge's form:ready — holds a placeholder shell height so
+    // the shimmer skeleton is visible during load (the WebView starts at 0 height until the
+    // first form:height message). Same constant as EncatchInlineFormView's skeleton height.
+    private var isLoadingForm = false
     private var currentPosition = "middle-center"
     private var currentPayload: ShowFormPayload? = null
     private var currentAppearanceProperties: JsonObject? = null
@@ -107,7 +114,13 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         onClose = { immediate -> close(immediate) },
         onHeightChange = { height -> applyHeight(height) },
         onForceFullHeight = { force -> isFullHeightOverlay = force; applyHeight(contentHeightPx) },
-        onReady = { skeleton?.let { popupShell.removeView(it) }; skeleton = null },
+        onReady = {
+            skeleton?.let { popupShell.removeView(it) }
+            skeleton = null
+            isLoadingForm = false
+            // Drop the placeholder loading height if the form never reported a real one.
+            if (contentHeightPx <= 0) applyHeight(contentHeightPx)
+        },
         sendToWebView = { message: SDKMessage -> webView.sendToWebView(message) },
         redirectOpener = redirectBrowser,
         openExternal = { url -> redirectBrowser.openExternal(url) },
@@ -142,6 +155,20 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
                 if (isFullCenter) 0 else systemBars.right,
                 max(systemBars.bottom, ime.bottom),
             )
+            // Re-cap the popup height to what actually fits above the keyboard (mirrors the RN
+            // SDK's `usableHeight` keyboard math): the popup keeps its full-screen target size
+            // while it still fits, and shrinks only when it doesn't. Without this a tall popup
+            // (e.g. 80% of screen) keeps its exact-height LayoutParams when the IME halves the
+            // available space, and FrameLayout clips its lower part behind the keyboard.
+            val newAvailable = if (ime.bottom > 0 && view.height > 0) {
+                max(view.height - systemBars.top - max(systemBars.bottom, ime.bottom), dpToPxInt(100, context.resources.displayMetrics.density))
+            } else {
+                Int.MAX_VALUE
+            }
+            if (newAvailable != availableHeightAboveImePx) {
+                availableHeightAboveImePx = newAvailable
+                if (contentHeightPx > 0 || isFullHeightOverlay || isFullCenter) applyHeight(contentHeightPx)
+            }
             insets
         }
 
@@ -157,8 +184,10 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         closeAnimator?.cancel()
         webViewInstanceKey += 1
         currentPayload = payload
+        isLoadingForm = true
         val (activeMode, darkOverlay) = applyAppearance(payload)
         showSkeleton(activeMode)
+        applyHeight(0)
         applyBlurBehind(enabled = !darkOverlay)
         bridge.setFormPayload(payload)
         Encatch.setFormVisible(true)
@@ -344,7 +373,12 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
 
     private fun applyHeight(heightPx: Int) {
         contentHeightPx = heightPx
-        val target = if (isFullHeightOverlay || isFullCenter) maxDialogHeightPx else minOf(heightPx, maxDialogHeightPx)
+        val density = context.resources.displayMetrics.density
+        // While loading (skeleton up, no form:height yet) hold a fixed placeholder height so the
+        // shimmer skeleton is actually visible — mirrors ios-native's EncatchFormViewController.
+        val effectiveHeight = if (isLoadingForm && heightPx <= 0) dpToPxInt(300, density) else heightPx
+        val cap = minOf(maxDialogHeightPx, availableHeightAboveImePx)
+        val target = if (isFullHeightOverlay || isFullCenter) cap else minOf(effectiveHeight, cap)
         webView.updateLayoutParams<FrameLayout.LayoutParams> { height = target }
     }
 

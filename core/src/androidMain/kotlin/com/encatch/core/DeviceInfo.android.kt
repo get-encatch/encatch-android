@@ -17,7 +17,10 @@ internal actual fun collectPlatformDeviceFacts(): PlatformDeviceFacts {
 
     return PlatformDeviceFacts(
         osVersion = Build.VERSION.RELEASE ?: Build.VERSION.SDK_INT.toString(),
-        deviceLocale = Locale.getDefault().toLanguageTag(),
+        // ISO 639-1 language code only (e.g. "en"), not `toLanguageTag()`'s full "en-IN"-style
+        // region-qualified BCP-47 tag — the API's `$deviceLanguage`/`$userLanguage` fields
+        // require plain ISO 639-1.
+        deviceLocale = Locale.getDefault().language,
         timezone = runCatching { TimeZone.getDefault().id }.getOrNull(),
         appVersion = appVersion,
         appPackageName = context.packageName,

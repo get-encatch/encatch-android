@@ -28,11 +28,17 @@ public final class EncatchInlineFormView: UIView {
     /// Called when an in-form overlay (QnA with AI, Scheduler) opens or closes.
     public var onOverlayOpenChange: ((Bool) -> Void)?
 
+    /// Called whenever the view's self-sized height changes (skeleton placeholder, every
+    /// `form:resize`, overlay freeze/unfreeze, clear). Auto Layout hosts don't need this — the
+    /// view sizes itself via its own height constraint — but SwiftUI/manual-layout hosts can
+    /// bind it to their own frame instead of hardcoding a height.
+    @objc public var onHeightChange: ((CGFloat) -> Void)?
+
     private var slotId: String?
     private var unsubscribe: (() -> Void)?
 
     private var webView: EncatchWebView?
-    private var skeleton: UIActivityIndicatorView?
+    private var skeleton: FormWebViewSkeletonView?
     private var webViewInstanceKey: Int32 = 0
 
     private let redirectBrowser = RedirectBrowser()
@@ -112,7 +118,7 @@ public final class EncatchInlineFormView: UIView {
             },
             onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height)) },
             onForceFullHeight: { [weak self] force in self?.applyForceFullHeight(force) },
-            onReady: { [weak self] in self?.skeleton?.stopAnimating(); self?.skeleton?.removeFromSuperview(); self?.skeleton = nil },
+            onReady: { [weak self] in self?.skeleton?.stop(); self?.skeleton?.removeFromSuperview(); self?.skeleton = nil },
             sendToWebView: { [weak self] message in self?.webView?.sendToWebView(message) },
             redirectOpener: redirectBrowser,
             openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
@@ -131,17 +137,20 @@ public final class EncatchInlineFormView: UIView {
         webView = newWebView
         bridge = newBridge
 
-        applyInlineAppearance(payload: payload)
+        let activeMode = applyInlineAppearance(payload: payload)
 
-        let loadingIndicator = UIActivityIndicatorView(style: .medium)
-        loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(loadingIndicator)
+        // Shimmer placeholder (same as :android's FormWebViewSkeleton) until `form:ready`.
+        let loadingSkeleton = FormWebViewSkeletonView()
+        loadingSkeleton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(loadingSkeleton)
         NSLayoutConstraint.activate([
-            loadingIndicator.centerXAnchor.constraint(equalTo: centerXAnchor),
-            loadingIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            loadingSkeleton.topAnchor.constraint(equalTo: topAnchor),
+            loadingSkeleton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            loadingSkeleton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            loadingSkeleton.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        loadingIndicator.startAnimating()
-        skeleton = loadingIndicator
+        loadingSkeleton.start(activeMode: activeMode)
+        skeleton = loadingSkeleton
 
         applyHeight(300)
         Encatch.shared.setFormVisible(true)
@@ -156,7 +165,9 @@ public final class EncatchInlineFormView: UIView {
         newWebView.loadFormUrl(url)
     }
 
-    private func applyInlineAppearance(payload: ShowFormPayload) {
+    /// Returns the resolved active mode ("light"/"dark") so callers can theme the skeleton.
+    @discardableResult
+    private func applyInlineAppearance(payload: ShowFormPayload) -> String {
         let appearanceProperties = payload.formConfig.appearanceProperties
         let corners = resolveCornersFromFormConfig(appearanceProperties)
 
@@ -175,6 +186,7 @@ public final class EncatchInlineFormView: UIView {
         backgroundColor = uiColor(fromArgb: backgroundArgb)
         layer.cornerRadius = radii.topLeftDp > 0 ? radiusPoints : 0
         webView?.backgroundColor = .clear
+        return activeMode
     }
 
     private func clearForm() {
@@ -197,7 +209,7 @@ public final class EncatchInlineFormView: UIView {
         if overlayActive { return }
         let resolved = resolveContentHeight(height)
         contentHeight = resolved
-        heightConstraint?.constant = resolved
+        setShellHeight(resolved)
     }
 
     private func applyForceFullHeight(_ force: Bool) {
@@ -207,12 +219,25 @@ public final class EncatchInlineFormView: UIView {
             let maxHeight = (window?.bounds.height ?? UIScreen.main.bounds.height) * 0.8
             let frozen = min(base, maxHeight)
             overlayFrozenHeight = frozen
-            heightConstraint?.constant = frozen
+            setShellHeight(frozen)
         } else {
             overlayFrozenHeight = nil
-            heightConstraint?.constant = contentHeight > 0 ? contentHeight : (minHeight > 0 ? minHeight : 300)
+            setShellHeight(contentHeight > 0 ? contentHeight : (minHeight > 0 ? minHeight : 300))
         }
         onOverlayOpenChange?(force)
+    }
+
+    /// Single funnel for every height change: drives the Auto Layout constraint, refreshes
+    /// `intrinsicContentSize` for hosts that size by intrinsics, and notifies `onHeightChange`.
+    private func setShellHeight(_ height: CGFloat) {
+        guard heightConstraint?.constant != height else { return }
+        heightConstraint?.constant = height
+        invalidateIntrinsicContentSize()
+        onHeightChange?(height)
+    }
+
+    public override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: heightConstraint?.constant ?? 0)
     }
 
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

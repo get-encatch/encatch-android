@@ -11,6 +11,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.encatch.core.FormWebViewBridge
+import com.encatch.core.INLINE_WEBVIEW_SIZING_FIX_SCRIPT
 import com.encatch.core.SDKMessage
 import com.encatch.core.buildSdkMessageInjectionScript
 
@@ -61,6 +62,11 @@ class EncatchWebView(context: Context) : WebView(context) {
             }
 
             override fun onPageFinished(view: WebView, url: String) {
+                // Inline embeds need the sizing fix so the page reports true (including
+                // shrinking) content heights — see INLINE_WEBVIEW_SIZING_FIX_SCRIPT.
+                if (bridge?.presentation == "inline") {
+                    view.evaluateJavascript(INLINE_WEBVIEW_SIZING_FIX_SCRIPT, null)
+                }
                 postDelayed({ bridge?.handleFormReady() }, 300)
             }
         }

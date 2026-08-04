@@ -88,6 +88,11 @@ extension EncatchWebView: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Inline embeds need the sizing fix so the page reports true (including shrinking)
+        // content heights — see INLINE_WEBVIEW_SIZING_FIX_SCRIPT.
+        if bridge?.presentation == "inline" {
+            evaluateJavaScript(INLINE_WEBVIEW_SIZING_FIX_SCRIPT, completionHandler: nil)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.bridge?.handleFormReady()
         }

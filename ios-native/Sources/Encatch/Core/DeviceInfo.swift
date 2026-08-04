@@ -28,7 +28,10 @@ func collectPlatformDeviceFacts() -> PlatformDeviceFacts {
 
     return PlatformDeviceFacts(
         osVersion: osVersion,
-        deviceLocale: Locale.current.identifier,
+        // ISO 639-1 language code only (e.g. "en"), not `Locale.current.identifier`'s full
+        // "en_IN"-style region-qualified form — the API's `$deviceLanguage`/`$userLanguage`
+        // fields require plain ISO 639-1.
+        deviceLocale: Locale.current.languageCode ?? "en",
         timezone: TimeZone.current.identifier,
         appVersion: appVersion,
         appPackageName: appPackageName

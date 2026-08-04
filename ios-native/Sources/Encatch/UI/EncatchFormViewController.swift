@@ -10,8 +10,23 @@ public final class EncatchFormViewController: UIViewController {
 
     private let webView = EncatchWebView()
     private let popupShell = UIView()
+    /// Rounded-clipping container inside `popupShell` for the WebView/skeleton. Clipping lives
+    /// here (not on the shell) so the shell can cast its drop shadow — `clipsToBounds` on the
+    /// shadow-casting layer would clip the shadow away.
+    private let contentClip = UIView()
     private let overlayView = UIView()
-    private let skeleton = UIActivityIndicatorView(style: .medium)
+    private let backdropBlur = UIVisualEffectView(effect: nil)
+    private var backdropBlurAnimator: UIViewPropertyAnimator?
+
+    /// Fractional blur strength when darkOverlay is off — mirrors the React Native SDK's
+    /// `MODAL_BACKDROP_BLUR_INTENSITY` (52/100 on iOS).
+    private static let backdropBlurIntensity: CGFloat = 0.52
+    private let skeleton = FormWebViewSkeletonView()
+
+    /// Shell height while the WebView is still loading (skeleton visible, no `form:height` yet) —
+    /// matches `EncatchInlineFormView`'s `LOADING_SKELETON_HEIGHT_DP`.
+    private static let loadingSkeletonHeight: CGFloat = 300
+    private var isLoadingForm = false
 
     private let redirectBrowser = RedirectBrowser()
     private var webViewInstanceKey: Int32 = 0
@@ -19,6 +34,12 @@ public final class EncatchFormViewController: UIViewController {
     private var heightConstraint: NSLayoutConstraint?
     private var widthConstraint: NSLayoutConstraint?
     private var positionConstraints: [NSLayoutConstraint] = []
+    /// Shell edge constraints that ride above the keyboard: the bottom pin (`.bottom` position and
+    /// full-center) and the centerY pin (`.center` position).
+    private var bottomEdgeConstraint: NSLayoutConstraint?
+    private var centerYConstraint: NSLayoutConstraint?
+    /// Current keyboard overlap with this view, in points (0 when hidden).
+    private var keyboardHeight: CGFloat = 0
     private var maxDialogHeight: CGFloat = .greatestFiniteMagnitude
     private var contentHeight: CGFloat = 0
     private var isFullHeightOverlay = false
@@ -54,33 +75,81 @@ public final class EncatchFormViewController: UIViewController {
             overlayView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
 
-        popupShell.clipsToBounds = true
+        // Frosted backdrop shown only when darkOverlay is off (RN's ModalBackdropBlur /
+        // :android's FLAG_BLUR_BEHIND). Sits above the (then-transparent) overlay color view,
+        // below the popup shell; never intercepts touches.
+        backdropBlur.isUserInteractionEnabled = false
+        backdropBlur.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(backdropBlur)
+        NSLayoutConstraint.activate([
+            backdropBlur.topAnchor.constraint(equalTo: view.topAnchor),
+            backdropBlur.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdropBlur.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdropBlur.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+
+        popupShell.clipsToBounds = false
         popupShell.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(popupShell)
 
+        // Modal card elevation — matches the RN SDK's getModalPopupShadowStyle() / web-sdk's
+        // `box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3)`. Opacity is toggled per position in
+        // applyAppearance (full-center gets no shadow, like Android's elevation = 0 there).
+        popupShell.layer.shadowColor = UIColor.black.cgColor
+        popupShell.layer.shadowOffset = CGSize(width: 0, height: 20)
+        popupShell.layer.shadowRadius = 60
+        popupShell.layer.shadowOpacity = 0
+
+        contentClip.clipsToBounds = true
+        contentClip.translatesAutoresizingMaskIntoConstraints = false
+        popupShell.addSubview(contentClip)
+        NSLayoutConstraint.activate([
+            contentClip.topAnchor.constraint(equalTo: popupShell.topAnchor),
+            contentClip.bottomAnchor.constraint(equalTo: popupShell.bottomAnchor),
+            contentClip.leadingAnchor.constraint(equalTo: popupShell.leadingAnchor),
+            contentClip.trailingAnchor.constraint(equalTo: popupShell.trailingAnchor),
+        ])
+
         webView.bridge = bridge
         webView.translatesAutoresizingMaskIntoConstraints = false
-        popupShell.addSubview(webView)
+        contentClip.addSubview(webView)
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: popupShell.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: popupShell.bottomAnchor),
-            webView.leadingAnchor.constraint(equalTo: popupShell.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: popupShell.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: contentClip.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: contentClip.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: contentClip.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: contentClip.trailingAnchor),
         ])
 
         skeleton.translatesAutoresizingMaskIntoConstraints = false
-        popupShell.addSubview(skeleton)
+        contentClip.addSubview(skeleton)
         NSLayoutConstraint.activate([
-            skeleton.centerXAnchor.constraint(equalTo: popupShell.centerXAnchor),
-            skeleton.centerYAnchor.constraint(equalTo: popupShell.centerYAnchor),
+            skeleton.topAnchor.constraint(equalTo: contentClip.topAnchor),
+            skeleton.bottomAnchor.constraint(equalTo: contentClip.bottomAnchor),
+            skeleton.leadingAnchor.constraint(equalTo: contentClip.leadingAnchor),
+            skeleton.trailingAnchor.constraint(equalTo: contentClip.trailingAnchor),
         ])
+
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification, object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     public func present(payload: ShowFormPayload, from presenter: UIViewController) {
         webViewInstanceKey += 1
         currentPayload = payload
-        let (activeMode, _) = applyAppearance(payload: payload, presenter: presenter)
-        skeleton.startAnimating()
+        isLoadingForm = true
+        let (activeMode, darkOverlay) = applyAppearance(payload: payload, presenter: presenter)
+        applyBackdropBlur(enabled: !darkOverlay, activeMode: activeMode)
+        skeleton.start(activeMode: activeMode)
         bridge.setFormPayload(payload)
         Encatch.shared.setFormVisible(true)
 
@@ -140,26 +209,51 @@ public final class EncatchFormViewController: UIViewController {
         NSLayoutConstraint.deactivate(positionConstraints)
         positionConstraints.removeAll()
         if let widthConstraint { widthConstraint.isActive = false }
+        bottomEdgeConstraint = nil
+        centerYConstraint = nil
 
         let safeArea = view.safeAreaLayoutGuide
         if isFullCenter {
+            let bottom = popupShell.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -keyboardHeight)
+            bottomEdgeConstraint = bottom
             positionConstraints = [
                 popupShell.topAnchor.constraint(equalTo: view.topAnchor),
-                popupShell.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                bottom,
                 popupShell.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 popupShell.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ]
         } else {
+            // Flush against the safe area on every edge — no added margin. Mirrors :android's
+            // EncatchFormDialog, which positions popupShell via Gravity inside a FrameLayout
+            // padded only by the real system-bar insets (see EncatchFormDialog.kt's
+            // setOnApplyWindowInsetsListener), with no extra manual inset on top of that. This
+            // module previously added an extra 16pt constant on every side, which visibly
+            // detached bottom/top-positioned cards from the actual screen edge — most obvious
+            // for `position: "bottom"` when the form's overlay is transparent, since the gap
+            // then reveals the host app's own UI underneath instead of a dimmed background.
             let alignment = getPositionLayout(position)
             var constraints: [NSLayoutConstraint] = []
             switch alignment.vertical {
-            case .top: constraints.append(popupShell.topAnchor.constraint(equalTo: safeArea.topAnchor, constant: 16))
-            case .bottom: constraints.append(popupShell.bottomAnchor.constraint(equalTo: safeArea.bottomAnchor, constant: -16))
-            case .center: constraints.append(popupShell.centerYAnchor.constraint(equalTo: safeArea.centerYAnchor))
+            case .top: constraints.append(popupShell.topAnchor.constraint(equalTo: safeArea.topAnchor))
+            // Bottom-positioned cards go flush to the literal screen edge, under the home
+            // indicator — not inset to the safe area. A bottom sheet should touch the true
+            // bottom of the screen; the WebView content itself is responsible for its own
+            // bottom padding if it needs to clear the home indicator. The constant lifts the
+            // card above the keyboard while it's up (see keyboardWillChangeFrame).
+            case .bottom:
+                let bottom = popupShell.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -keyboardHeight)
+                bottomEdgeConstraint = bottom
+                constraints.append(bottom)
+            // Centered cards shift up by half the keyboard overlap, staying centered in the
+            // space that remains above the keyboard.
+            case .center:
+                let centerY = popupShell.centerYAnchor.constraint(equalTo: safeArea.centerYAnchor, constant: -keyboardHeight / 2)
+                centerYConstraint = centerY
+                constraints.append(centerY)
             }
             switch alignment.horizontal {
-            case .start: constraints.append(popupShell.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor, constant: 16))
-            case .end: constraints.append(popupShell.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor, constant: -16))
+            case .start: constraints.append(popupShell.leadingAnchor.constraint(equalTo: safeArea.leadingAnchor))
+            case .end: constraints.append(popupShell.trailingAnchor.constraint(equalTo: safeArea.trailingAnchor))
             case .center: constraints.append(popupShell.centerXAnchor.constraint(equalTo: safeArea.centerXAnchor))
             }
             let width = popupShell.widthAnchor.constraint(equalToConstant: maxWidthDp)
@@ -202,7 +296,24 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     private func applyThemeColors(payload: ShowFormPayload, position: String) {
-        _ = applyThemeColorsReturningMode(payload: payload, position: position)
+        let (activeMode, darkOverlay) = applyThemeColorsReturningMode(payload: payload, position: position)
+        applyBackdropBlur(enabled: !darkOverlay, activeMode: activeMode)
+    }
+
+    /// Frosted backdrop when darkOverlay is off, at partial intensity via the paused-animator
+    /// technique (a bare `UIBlurEffect` has no intensity knob) — matching RN's expo-blur
+    /// intensity 52 with the active mode as the tint.
+    private func applyBackdropBlur(enabled: Bool, activeMode: String) {
+        backdropBlurAnimator?.stopAnimation(true)
+        backdropBlurAnimator = nil
+        backdropBlur.effect = nil
+        guard enabled else { return }
+        let animator = UIViewPropertyAnimator(duration: 1, curve: .linear) { [backdropBlur] in
+            backdropBlur.effect = UIBlurEffect(style: activeMode == "dark" ? .dark : .light)
+        }
+        animator.fractionComplete = Self.backdropBlurIntensity
+        animator.pausesOnCompletion = true
+        backdropBlurAnimator = animator
     }
 
     private func applyCorners(radii: PopupBorderRadii, corners: CornerStyle) {
@@ -212,8 +323,13 @@ public final class EncatchFormViewController: UIViewController {
         if radii.topRightDp > 0 { maskedCorners.insert(.layerMaxXMinYCorner) }
         if radii.bottomLeftDp > 0 { maskedCorners.insert(.layerMinXMaxYCorner) }
         if radii.bottomRightDp > 0 { maskedCorners.insert(.layerMaxXMaxYCorner) }
+        // Shell rounds its background (and shadow silhouette); contentClip actually clips the
+        // WebView/skeleton to the same rounded shape.
         popupShell.layer.cornerRadius = radiusDp
         popupShell.layer.maskedCorners = maskedCorners
+        contentClip.layer.cornerRadius = radiusDp
+        contentClip.layer.maskedCorners = maskedCorners
+        popupShell.layer.shadowOpacity = isFullCenter ? 0 : 0.3
     }
 
     private func runEntranceAnimation(activeMode: String) {
@@ -249,16 +365,65 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     private func hideSkeleton() {
-        skeleton.stopAnimating()
+        isLoadingForm = false
+        skeleton.stop()
+        // Drop the placeholder loading height if the form never reported a real one.
+        if contentHeight <= 0 { applyHeight(contentHeight) }
+    }
+
+    /// The popup keeps its full-screen target size while the keyboard is up as long as it still
+    /// fits above the keyboard; otherwise it shrinks to the space that remains (mirrors the
+    /// React Native SDK's `usableHeight`/`maxDialogHeight` keyboard math in EncatchWebView.tsx).
+    private var effectiveMaxDialogHeight: CGFloat {
+        guard keyboardHeight > 0 else { return maxDialogHeight }
+        let available = view.bounds.height - view.safeAreaInsets.top - keyboardHeight
+        return min(maxDialogHeight, max(available, 100))
     }
 
     private func applyHeight(_ height: CGFloat) {
         contentHeight = height
-        let target = (isFullHeightOverlay || isFullCenter) ? maxDialogHeight : min(height, maxDialogHeight)
+        // While loading (skeleton up, no `form:height` from the bridge yet) hold a fixed
+        // placeholder height so the shimmer skeleton is actually visible — without it the shell
+        // sits at 0pt until the first height message and nothing appears during the load.
+        let effectiveHeight = (isLoadingForm && height <= 0) ? Self.loadingSkeletonHeight : height
+        let cap = effectiveMaxDialogHeight
+        let target = (isFullHeightOverlay || isFullCenter) ? cap : min(effectiveHeight, cap)
         heightConstraint?.isActive = false
         heightConstraint = popupShell.heightAnchor.constraint(equalToConstant: max(target, 0))
         heightConstraint?.isActive = true
         view.layoutIfNeeded()
+    }
+
+    // MARK: Keyboard avoidance
+
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard let endFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let frameInView = view.convert(endFrame, from: nil)
+        let overlap = max(0, view.bounds.maxY - frameInView.minY)
+        updateKeyboardHeight(overlap, notification: notification)
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        updateKeyboardHeight(0, notification: notification)
+    }
+
+    /// Lifts the shell above the keyboard and re-caps its height, animated alongside the
+    /// keyboard's own duration/curve so the two move as one.
+    private func updateKeyboardHeight(_ height: CGFloat, notification: Notification) {
+        guard height != keyboardHeight, isViewLoaded else { return }
+        keyboardHeight = height
+        bottomEdgeConstraint?.constant = -height
+        centerYConstraint?.constant = -height / 2
+
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curveRaw = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [UIView.AnimationOptions(rawValue: curveRaw << 16), .beginFromCurrentState]
+        ) {
+            self.applyHeight(self.contentHeight)
+        }
     }
 
     private func applyForceFullHeight(_ force: Bool) {
@@ -278,6 +443,12 @@ public final class EncatchFormViewController: UIViewController {
     public override func dismiss(animated: Bool, completion: (() -> Void)? = nil) {
         bridge.setFormPayload(nil)
         currentPayload = nil
+        backdropBlurAnimator?.stopAnimation(true)
+        backdropBlurAnimator = nil
+        backdropBlur.effect = nil
+        keyboardHeight = 0
+        bottomEdgeConstraint?.constant = 0
+        centerYConstraint?.constant = 0
         super.dismiss(animated: animated, completion: completion)
     }
 }
