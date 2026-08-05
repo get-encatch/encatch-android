@@ -56,15 +56,17 @@ public struct BuildSubmitRequestOptions {
     }
 }
 
-private func toNum(_ v: Any?) -> Double {
+// Int result (rounded): the backend's scale-answer fields (rating/nps/csat/opinionScale)
+// are i32 — a float on the wire is a 422.
+private func toNum(_ v: Any?) -> Int {
     switch v {
-    case let n as Double: return n
-    case let n as Int: return Double(n)
-    case let n as Float: return Double(n)
-    case let n as NSNumber: return n.doubleValue
+    case let n as Int: return n
+    case let n as Double: return Int(n.rounded())
+    case let n as Float: return Int(Double(n).rounded())
+    case let n as NSNumber: return Int(n.doubleValue.rounded())
     default:
-        if let v { return Double(String(describing: v)) ?? 0.0 }
-        return 0.0
+        if let v { return Int((Double(String(describing: v)) ?? 0.0).rounded()) }
+        return 0
     }
 }
 

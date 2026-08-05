@@ -66,7 +66,7 @@ data class VideoAudioAnswer(
     val mode: String,
     val fileUrl: String? = null,
     val text: String? = null,
-    val durationSeconds: Double? = null,
+    val durationSeconds: Int? = null,
     val transcriptText: String? = null,
 )
 
@@ -119,12 +119,14 @@ data class PaymentsUpiAnswer(
  */
 @Serializable
 data class Answer(
-    val nps: Double? = null,
+    // Int, not Double: the backend deserializes scale answers as i32 and 422s on "4.0"
+    // (see completionTimeInSeconds' twin comment).
+    val nps: Int? = null,
     val nestedSelection: List<String>? = null,
     val longText: String? = null,
     val shortAnswer: String? = null,
     val singleChoice: String? = null,
-    val rating: Double? = null,
+    val rating: Int? = null,
     val yesNo: Boolean? = null,
     val consent: Boolean? = null,
     val multipleChoiceMultiple: List<String>? = null,
@@ -136,8 +138,8 @@ data class Answer(
     val matrixMultipleChoice: Map<String, List<String>>? = null,
     val others: String? = null,
     val date: String? = null,
-    val csat: Double? = null,
-    val opinionScale: Double? = null,
+    val csat: Int? = null,
+    val opinionScale: Int? = null,
     val ranking: List<String>? = null,
     val pictureChoice: List<String>? = null,
     val pictureChoiceOther: String? = null,

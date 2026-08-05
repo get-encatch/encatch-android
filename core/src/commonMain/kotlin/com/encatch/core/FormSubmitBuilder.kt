@@ -1,5 +1,6 @@
 package com.encatch.core
 
+import kotlin.math.roundToInt
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -44,9 +45,11 @@ data class BuildSubmitRequestOptions(
  */
 @Suppress("UNCHECKED_CAST")
 fun toQuestionAnswer(type: String, value: Any?): Answer {
-    fun toNum(v: Any?): Double = when (v) {
-        is Number -> v.toDouble()
-        else -> v?.toString()?.toDoubleOrNull() ?: 0.0
+    // Int result (rounded): the backend's scale-answer fields (rating/nps/csat/opinionScale)
+    // are i32 — a float on the wire is a 422.
+    fun toNum(v: Any?): Int = when (v) {
+        is Number -> v.toDouble().roundToInt()
+        else -> v?.toString()?.toDoubleOrNull()?.roundToInt() ?: 0
     }
     fun toStr(v: Any?): String = v?.toString() ?: ""
     fun toStrList(v: Any?): List<String> = when (v) {

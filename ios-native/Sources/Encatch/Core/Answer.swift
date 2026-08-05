@@ -97,14 +97,14 @@ public struct VideoAudioAnswer: Codable, Sendable, Equatable {
     public var mode: String
     public var fileUrl: String?
     public var text: String?
-    public var durationSeconds: Double?
+    public var durationSeconds: Int?
     public var transcriptText: String?
 
     public init(
         mode: String,
         fileUrl: String? = nil,
         text: String? = nil,
-        durationSeconds: Double? = nil,
+        durationSeconds: Int? = nil,
         transcriptText: String? = nil
     ) {
         self.mode = mode
@@ -222,12 +222,13 @@ public struct PaymentsUpiAnswer: Codable, Sendable, Equatable {
 /// question's `QuestionType` are populated. `ratingMatrix` values are number-or-string
 /// per the schema (`z.union([z.number(), z.string()])`), modeled as `JSONValue`.
 public struct Answer: Codable, Sendable, Equatable {
-    public var nps: Double?
+    // Int, not Double: the backend deserializes scale answers as i32 — a float would 422.
+    public var nps: Int?
     public var nestedSelection: [String]?
     public var longText: String?
     public var shortAnswer: String?
     public var singleChoice: String?
-    public var rating: Double?
+    public var rating: Int?
     public var yesNo: Bool?
     public var consent: Bool?
     public var multipleChoiceMultiple: [String]?
@@ -239,8 +240,8 @@ public struct Answer: Codable, Sendable, Equatable {
     public var matrixMultipleChoice: [String: [String]]?
     public var others: String?
     public var date: String?
-    public var csat: Double?
-    public var opinionScale: Double?
+    public var csat: Int?
+    public var opinionScale: Int?
     public var ranking: [String]?
     public var pictureChoice: [String]?
     public var pictureChoiceOther: String?
@@ -258,12 +259,12 @@ public struct Answer: Codable, Sendable, Equatable {
     public var paymentsUpi: PaymentsUpiAnswer?
 
     public init(
-        nps: Double? = nil,
+        nps: Int? = nil,
         nestedSelection: [String]? = nil,
         longText: String? = nil,
         shortAnswer: String? = nil,
         singleChoice: String? = nil,
-        rating: Double? = nil,
+        rating: Int? = nil,
         yesNo: Bool? = nil,
         consent: Bool? = nil,
         multipleChoiceMultiple: [String]? = nil,
@@ -275,8 +276,8 @@ public struct Answer: Codable, Sendable, Equatable {
         matrixMultipleChoice: [String: [String]]? = nil,
         others: String? = nil,
         date: String? = nil,
-        csat: Double? = nil,
-        opinionScale: Double? = nil,
+        csat: Int? = nil,
+        opinionScale: Int? = nil,
         ranking: [String]? = nil,
         pictureChoice: [String]? = nil,
         pictureChoiceOther: String? = nil,
