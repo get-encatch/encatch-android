@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.jvm) apply false
     alias(libs.plugins.kotlin.serialization) apply false
+    // Declared at the root (apply false) so every publishing module shares one plugin
+    // classloader — per-module-only application puts the plugin's shared build service in
+    // different classloader scopes and publishToMavenCentral fails wiring it up.
+    alias(libs.plugins.maven.publish) apply false
 }
 
 allprojects {
