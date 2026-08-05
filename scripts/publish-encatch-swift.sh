@@ -73,9 +73,9 @@ git -c commit.gpgsign=false commit -m "Release $VERSION"
 git tag "$VERSION"
 git push origin HEAD:main "$VERSION"
 
-echo "==> Creating GitHub release"
-gh release create "$VERSION" --repo get-encatch/encatch-swift \
-  --title "$VERSION" --generate-notes || \
-  echo "warning: gh release creation failed — tag is pushed, create the release manually" >&2
-
-echo "==> Done: https://github.com/get-encatch/encatch-swift/releases/tag/$VERSION"
+# The GitHub release is created by the mirror's CI (release job in .github/workflows/ci.yml),
+# and only after both build jobs pass on the CI toolchain — so a version that builds locally
+# but fails on the oldest supported Swift never becomes a published release.
+echo "==> Tag pushed. CI will create the release once both build jobs pass:"
+echo "    https://github.com/get-encatch/encatch-swift/actions"
+echo "==> Release (after CI): https://github.com/get-encatch/encatch-swift/releases/tag/$VERSION"

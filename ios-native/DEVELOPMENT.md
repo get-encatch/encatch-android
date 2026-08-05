@@ -41,7 +41,9 @@ The script (run it from the monorepo root):
 3. **Leak gate:** greps the staged tree for `/Users/`, `godwin`, `.claude` — aborts on any hit.
 4. **Build gate:** `swift build && swift test` inside the staged mirror checkout, proving the
    package is self-contained.
-5. Commits `Release X.Y.Z`, tags `X.Y.Z`, pushes, and creates a GitHub release.
+5. Commits `Release X.Y.Z`, tags `X.Y.Z`, and pushes. The GitHub release is then created by
+   the mirror's CI — only after both build jobs pass on the CI toolchain (older Swift than a
+   typical dev Mac), so a locally-green-but-CI-broken version never becomes a release.
 
 Consumers resolve plain `X.Y.Z` tags in the mirror (`from: "0.1.0"`). In THIS repo, use
 prefixed tags (`swift-v0.1.0`) if you want a marker here, since four SDKs share the monorepo.

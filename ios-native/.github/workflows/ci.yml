@@ -35,3 +35,23 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO
+
+  # Tag pushes only: the GitHub release is created HERE, after both build jobs pass, so a
+  # version that fails on the CI toolchain never becomes a published release. The publish
+  # script (scripts/publish-encatch-swift.sh in the monorepo) pushes the tag and stops.
+  release:
+    name: Create GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release for tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
