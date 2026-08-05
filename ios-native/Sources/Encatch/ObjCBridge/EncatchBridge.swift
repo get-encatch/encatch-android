@@ -110,7 +110,7 @@ public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
 /// same completion-handler-passing-the-other-direction technique every other bridge method already
 /// uses (Kotlin normally receives a completion block from Swift; here Kotlin instead *hands one to*
 /// Swift, the same way `onEvent`'s callback closure already crosses this boundary from Kotlin).
-public typealias EncatchBridgeInterceptorCallback = (EncatchBridgeShowFormInterceptorPayload, @escaping (Bool) -> Void) -> Void
+public typealias EncatchBridgeInterceptorCallback = @Sendable (EncatchBridgeShowFormInterceptorPayload, @escaping (Bool) -> Void) -> Void
 
 /// `@objc`-compatible mirror of `EncatchConfig`, for Kotlin/Native cinterop callers that can't
 /// construct the Swift struct directly. Unset fields fall back to `Encatch.initialize`'s own

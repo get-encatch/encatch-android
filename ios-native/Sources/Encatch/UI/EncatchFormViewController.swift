@@ -67,11 +67,14 @@ public final class EncatchFormViewController: UIViewController {
     private lazy var bridge: FormWebViewBridge = FormWebViewBridge(
         logTag: "Encatch",
         presentation: "modal",
-        onClose: { [weak self] immediate in self?.close(immediate: immediate) },
-        onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height), animated: true) },
-        onForceFullHeight: { [weak self] force in self?.applyForceFullHeight(force) },
-        onReady: { [weak self] in self?.hideSkeleton() },
-        sendToWebView: { [weak self] message in self?.webView.sendToWebView(message) },
+        // The bridge invokes these from WKWebView's script-message handler, which is always the
+        // main thread — assumeIsolated states that for Swift 5.10, whose isolation inference
+        // can't prove it (newer compilers accept the bare calls).
+        onClose: { [weak self] immediate in MainActor.assumeIsolated { self?.close(immediate: immediate) } },
+        onHeightChange: { [weak self] height in MainActor.assumeIsolated { self?.applyHeight(CGFloat(height), animated: true) } },
+        onForceFullHeight: { [weak self] force in MainActor.assumeIsolated { self?.applyForceFullHeight(force) } },
+        onReady: { [weak self] in MainActor.assumeIsolated { self?.hideSkeleton() } },
+        sendToWebView: { [weak self] message in MainActor.assumeIsolated { self?.webView.sendToWebView(message) } },
         redirectOpener: redirectBrowser,
         openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
     )

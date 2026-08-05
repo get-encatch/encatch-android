@@ -349,8 +349,10 @@ public final class Encatch: @unchecked Sendable {
                 await self.showFormById(formConfigId, triggerType: .automatic)
             }
             if case .string(let nextId)? = resObj["nextFeedbackId"] {
-                var delaySeconds = 0.0
-                if case .number(let d)? = resObj["onPageDelay"] { delaySeconds = d }
+                // let, not var: Swift 5.10 rejects capturing a mutated var in the Task closure
+                // ("reference to captured var in concurrently-executing code").
+                let delaySeconds: Double
+                if case .number(let d)? = resObj["onPageDelay"] { delaySeconds = d } else { delaySeconds = 0.0 }
                 Task {
                     try? await Task.sleep(nanoseconds: UInt64(max(0, delaySeconds * 1000)) * 1_000_000)
                     await self.showFormById(nextId, triggerType: .automatic, reset: .always)
