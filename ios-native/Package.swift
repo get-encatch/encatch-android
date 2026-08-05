@@ -18,12 +18,12 @@ let package = Package(
     targets: [
         .target(
             name: "Encatch",
-            path: "Sources/Encatch",
+            path: "Sources/Encatch"
         ),
         .testTarget(
             name: "EncatchTests",
             dependencies: ["Encatch"],
-            path: "Tests/EncatchTests",
+            path: "Tests/EncatchTests"
         ),
-    ],
+    ]
 )
