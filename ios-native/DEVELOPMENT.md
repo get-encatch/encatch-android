@@ -27,11 +27,15 @@ automatically; a plain Swift-only consumer of the package never needs `dist/` or
 
 The public repo [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) is a
 **write-only distribution mirror**: development never happens there, and every release overwrites
-its working tree wholesale from this directory. To publish a release:
+its working tree wholesale from this directory. To publish a release, push a `swift-v*` tag —
+`.github/workflows/swift-release.yml` runs the publish script on a macOS runner:
 
 ```bash
-scripts/publish-encatch-swift.sh 0.1.0
+git tag swift-v0.1.4 && git push origin swift-v0.1.4
 ```
+
+(Fallback: run `scripts/publish-encatch-swift.sh 0.1.4` locally — same flow, your git
+credentials instead of the `ENCATCH_SWIFT_PUSH_TOKEN` Actions secret.)
 
 The script (run it from the monorepo root):
 

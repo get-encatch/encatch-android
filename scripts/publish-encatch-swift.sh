@@ -9,6 +9,11 @@
 set -euo pipefail
 
 MIRROR_URL="https://github.com/get-encatch/encatch-swift.git"
+# In CI (.github/workflows/swift-release.yml) the push authenticates via a fine-grained PAT
+# scoped to the mirror repo; locally your ambient git credentials are used instead.
+if [[ -n "${ENCATCH_SWIFT_PUSH_TOKEN:-}" ]]; then
+  MIRROR_URL="https://x-access-token:${ENCATCH_SWIFT_PUSH_TOKEN}@github.com/get-encatch/encatch-swift.git"
+fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$REPO_ROOT/ios-native"
 
@@ -69,7 +74,9 @@ if git diff --cached --quiet; then
   echo "error: no changes vs mirror HEAD — nothing to release" >&2
   exit 1
 fi
-git -c commit.gpgsign=false commit -m "Release $VERSION"
+# Explicit identity: release commits carry the project identity, and CI runners have no
+# git identity configured at all.
+git -c commit.gpgsign=false -c user.name="Encatch" -c user.email="support@encatch.com" commit -m "Release $VERSION"
 git tag "$VERSION"
 git push origin HEAD:main "$VERSION"
 
