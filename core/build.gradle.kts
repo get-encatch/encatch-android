@@ -2,8 +2,7 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
-    `maven-publish`
-    signing
+    alias(libs.plugins.maven.publish)
 }
 
 // Android + desktop/JVM only. iOS moved to ios-native/ (pure Swift, no Kotlin/Native dependency).
@@ -95,54 +94,28 @@ android {
     }
 }
 
-publishing {
-    repositories {
-        maven {
-            name = "sonatype"
-            url = uri(
-                if (version.toString().endsWith("-beta") || version.toString().contains("-beta"))
-                    "https://s01.oss.sonatype.org/content/repositories/snapshots/"
-                else
-                    "https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/",
-            )
-            credentials {
-                username = providers.gradleProperty("sonatypeUsername").orNull ?: System.getenv("SONATYPE_USERNAME")
-                password = providers.gradleProperty("sonatypePassword").orNull ?: System.getenv("SONATYPE_PASSWORD")
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    pom {
+        name.set("Encatch Core")
+        description.set("Platform-agnostic business logic for the Encatch Android SDK (networking, storage, session management).")
+        url.set("https://github.com/get-encatch/encatch-android")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
             }
         }
-    }
-
-    publications.withType<MavenPublication>().configureEach {
-        pom {
-            name.set("Encatch Core")
-            description.set("Platform-agnostic business logic for the Encatch Android SDK (networking, storage, session management).")
-            url.set("https://github.com/encatch/encatch-android")
-            licenses {
-                license {
-                    name.set("MIT")
-                    url.set("https://opensource.org/licenses/MIT")
-                }
-            }
-            developers {
-                developer {
-                    name.set("Encatch")
-                    url.set("https://encatch.com")
-                }
-            }
-            scm {
-                url.set("https://github.com/encatch/encatch-android")
-                connection.set("scm:git:https://github.com/encatch/encatch-android.git")
+        developers {
+            developer {
+                name.set("Encatch")
+                url.set("https://encatch.com")
             }
         }
-    }
-}
-
-signing {
-    val signingKey = providers.gradleProperty("signingKey").orNull ?: System.getenv("SIGNING_KEY")
-    val signingPassword = providers.gradleProperty("signingPassword").orNull ?: System.getenv("SIGNING_PASSWORD")
-    isRequired = !version.toString().endsWith("-SNAPSHOT")
-    if (signingKey != null && signingPassword != null) {
-        useInMemoryPgpKeys(signingKey, signingPassword)
-        sign(publishing.publications)
+        scm {
+            url.set("https://github.com/get-encatch/encatch-android")
+            connection.set("scm:git:https://github.com/get-encatch/encatch-android.git")
+        }
     }
 }

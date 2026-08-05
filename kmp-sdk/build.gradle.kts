@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.maven.publish)
 }
 
 // :kmp-sdk — the real, publishable KMP library other Compose Multiplatform / KMP customers add as
@@ -129,5 +130,31 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    pom {
+        name.set("Encatch KMP SDK")
+        description.set("Kotlin Multiplatform bridge to the native Encatch SDKs (Android + iOS) — full API, no UI.")
+        url.set("https://github.com/get-encatch/encatch-android")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                name.set("Encatch")
+                url.set("https://encatch.com")
+            }
+        }
+        scm {
+            url.set("https://github.com/get-encatch/encatch-android")
+            connection.set("scm:git:https://github.com/get-encatch/encatch-android.git")
+        }
     }
 }

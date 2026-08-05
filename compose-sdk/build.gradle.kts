@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.maven.publish)
 }
 
 // :compose-sdk — the real, publishable Compose Multiplatform UI layer on top of :kmp-sdk. Adds
@@ -153,4 +154,30 @@ android {
 // directly is what actually keeps this module's `build`/`check` green.
 tasks.configureEach {
     if (name.startsWith("lint")) enabled = false
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    pom {
+        name.set("Encatch Compose SDK")
+        description.set("Compose Multiplatform layer over the Encatch KMP SDK — adds the EncatchInlineForm composable for Android + iOS.")
+        url.set("https://github.com/get-encatch/encatch-android")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                name.set("Encatch")
+                url.set("https://encatch.com")
+            }
+        }
+        scm {
+            url.set("https://github.com/get-encatch/encatch-android")
+            connection.set("scm:git:https://github.com/get-encatch/encatch-android.git")
+        }
+    }
 }
