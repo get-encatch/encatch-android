@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generates the Xcode project via xcodegen and builds the EncatchSample app for the iOS
 # Simulator, linking the pure-Swift `ios-native/` package (no Kotlin/Native XCFramework
-# dependency — see /Users/godwin/.claude/plans/stateless-floating-ripple.md). Run `./run.sh`
+# dependency). Run `./run.sh`
 # afterward to launch it, or `./test.sh` to run the UI test suite (needs :mock-server running
 # first, see mock-server/).
 set -euo pipefail

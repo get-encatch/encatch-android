@@ -3,8 +3,8 @@ import PackageDescription
 
 /// A genuinely native iOS SDK: own networking (`URLSession`), own storage (`UserDefaults`), own
 /// session/ping/retry-queue, own appearance/theme resolution, own WebView JS-bridge protocol. Zero
-/// dependency on `:core` (Kotlin/Native) or any `.xcframework` binary — see
-/// `/Users/godwin/.claude/plans/stateless-floating-ripple.md` for the full rationale.
+/// dependency on `:core` (Kotlin/Native) or any `.xcframework` binary — deliberately, so Swift
+/// consumers get a small, debuggable, pure-Swift package with no embedded Kotlin runtime.
 let package = Package(
     name: "Encatch",
     // .macOS is included alongside the SDK's real target (.iOS) purely so `swift build`/`swift test`

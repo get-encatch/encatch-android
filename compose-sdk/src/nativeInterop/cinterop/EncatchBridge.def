@@ -3,8 +3,8 @@
 #
 # Kotlin/Native's cinterop only understands compiled Objective-C headers — it can't consume a
 # Swift module directly. `ios-native/`'s generated `-Swift.h` header (produced via
-# `xcodebuild build -scheme Encatch -destination ...`, see the plan doc at
-# /Users/godwin/.claude/plans/stateless-floating-ripple.md) plus its compiled static library are
+# `xcodebuild build -scheme Encatch -destination ...`, see ios-native/build-dist.sh) plus its
+# compiled static library are
 # what we cinterop against here.
 #
 # Artifacts are pre-built by hand into ios-native/dist/{ios-arm64,sim-arm64}/ (device vs Simulator
@@ -18,12 +18,14 @@ package = com.encatch.bridge
 # without importing UIKit itself (Xcode normally supplies that via the consuming app target's own
 # imports) — list it first so cinterop's indexer can resolve them.
 headers = UIKit/UIKit.h Encatch-Swift.h
-compilerOpts.ios_arm64 = -I/Users/godwin/Desktop/cmss/encatch/encatch-android/ios-native/dist/ios-arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -F/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks
-compilerOpts.ios_simulator_arm64 = -I/Users/godwin/Desktop/cmss/encatch/encatch-android/ios-native/dist/sim-arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk -F/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks
+compilerOpts.ios_arm64 = -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk -F/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks
+compilerOpts.ios_simulator_arm64 = -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk -F/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks
 
 staticLibraries = libEncatch.a
-libraryPaths.ios_arm64 = /Users/godwin/Desktop/cmss/encatch/encatch-android/ios-native/dist/ios-arm64
-libraryPaths.ios_simulator_arm64 = /Users/godwin/Desktop/cmss/encatch/encatch-android/ios-native/dist/sim-arm64
+# (the -I include dir and -libraryPath for ios-native/dist/{ios-arm64,sim-arm64} are
+# machine-specific absolute paths, so the consuming build.gradle.kts supplies them
+# per-target via compilerOpts()/extraOpts("-libraryPath", ...) — a .def file cannot
+# express repo-relative paths.)
 
 # The Swift runtime's own shared libraries (libswiftCore etc.) must be resolvable at final link
 # time — they ship inside the platform SDK/toolchain, not this package.

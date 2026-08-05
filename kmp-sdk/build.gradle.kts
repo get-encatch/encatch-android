@@ -5,9 +5,7 @@ plugins {
 }
 
 // :kmp-sdk — the real, publishable KMP library other Compose Multiplatform / KMP customers add as
-// a Gradle dependency to get the full Encatch API with zero bridging code of their own. See
-// /Users/godwin/.claude/plans/stateless-floating-ripple.md ("Publish real :kmp-sdk / :compose-sdk
-// libraries" — Phase 3) for the design rationale.
+// a Gradle dependency to get the full Encatch API with zero bridging code of their own.
 //
 // Unlike compose-sample/kmp-sample (which are apps that themselves produce an XCFramework for an
 // Xcode project to embed), :kmp-sdk is consumed via a normal Gradle project dependency by other
@@ -56,6 +54,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/ios-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }
@@ -66,6 +70,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/sim-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }

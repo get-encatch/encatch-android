@@ -6,8 +6,8 @@ plugins {
     signing
 }
 
-// Android + desktop/JVM only. iOS moved to ios-native/ (pure Swift, no Kotlin/Native dependency)
-// — see /Users/godwin/.claude/plans/stateless-floating-ripple.md. :core previously also targeted
+// Android + desktop/JVM only. iOS moved to ios-native/ (pure Swift, no Kotlin/Native dependency).
+// :core previously also targeted
 // iosArm64/iosSimulatorArm64 to produce EncatchCore.xcframework for the (now-deleted) swift/
 // package; nothing links that anymore.
 

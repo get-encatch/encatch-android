@@ -7,8 +7,8 @@ import kotlinx.serialization.json.JsonElement
  * (`core/src/commonMain/kotlin/com/encatch/core/Types.kt`, `EncatchConfig.kt`).
  *
  * Why these are redeclared here instead of imported directly from `:core`: `:core` only targets
- * `androidTarget()`/`jvm("desktop")` (iOS moved to the pure-Swift `ios-native/` SDK — see
- * /Users/godwin/.claude/plans/stateless-floating-ripple.md). Gradle's Kotlin Multiplatform variant
+ * `androidTarget()`/`jvm("desktop")` (iOS moved to the pure-Swift `ios-native/` SDK). Gradle's
+ * Kotlin Multiplatform variant
  * matching requires a dependency to publish a compatible target for every target of the consuming
  * source set; since `:core` has no `iosArm64`/`iosSimulatorArm64` target, `:kmp-sdk`'s `commonMain`
  * (shared by both Android and iOS) cannot depend on `:core` at all — verified empirically

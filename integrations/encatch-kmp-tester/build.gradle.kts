@@ -39,6 +39,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/ios-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }
@@ -54,6 +60,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/sim-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }

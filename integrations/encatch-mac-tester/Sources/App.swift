@@ -2,9 +2,8 @@ import SwiftUI
 import Encatch
 
 /// macOS-native sibling to `encatch-ios-tester`, running the same `ios-native` Swift Package
-/// under Mac Catalyst. See `/Users/godwin/.claude/plans/stateless-floating-ripple.md` for the
-/// full Mac-native architecture rationale (sidebar nav instead of tabs, Settings as a sidebar
-/// destination rather than a standalone Preferences window, etc.).
+/// under Mac Catalyst, with a genuinely Mac-native architecture (sidebar nav instead of tabs,
+/// Settings as a sidebar destination rather than a standalone Preferences window, etc.).
 @main
 struct EncatchMacTesterApp: App {
     @StateObject private var state = TesterState()

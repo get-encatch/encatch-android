@@ -16,9 +16,7 @@ import UIKit
 // `Core/Encatch.swift` — see that file for the canonical behavior/semantics of each method; this
 // file only concerns itself with the ObjC-compatibility translation at the boundary.
 //
-// Background / rationale: `/Users/godwin/.claude/plans/stateless-floating-ripple.md`.
-//
-// Design constraints for `@objc` compatibility (see that plan doc):
+// Design constraints for `@objc` compatibility:
 //  - Classes must inherit `NSObject`; no Swift-only enums with associated values, no `struct`s, no
 //    generics in the exposed surface.
 //  - Structured params get small `@objc` mirror classes (`EncatchBridgeConfig`,

@@ -9,8 +9,7 @@ plugins {
 // business logic calling the real :kmp-sdk library directly), rather than a single-platform app
 // that merely depends on KMP :core (variants 1-4). Validates the real Gradle KMP consumption path
 // for :kmp-sdk on both Android (thin forward to :core) and iOS (Kotlin/Native cinterop onto
-// ios-native/'s pure-Swift SDK). See /Users/godwin/.claude/plans/stateless-floating-ripple.md
-// ("Publish real :kmp-sdk / :compose-sdk libraries" — Phase 5) for the migration rationale.
+// ios-native/'s pure-Swift SDK).
 //
 // Unlike compose-sample, this module DOES keep its own `cinterops` block onto ios-native/'s @objc
 // facade: it has no Compose UI, so it can't use :compose-sdk's `EncatchInlineForm` composable, and
@@ -55,6 +54,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/ios-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }
@@ -70,6 +75,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/sim-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }

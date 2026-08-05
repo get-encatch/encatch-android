@@ -7,9 +7,7 @@ plugins {
 
 // :compose-sdk — the real, publishable Compose Multiplatform UI layer on top of :kmp-sdk. Adds
 // the one piece a pure KMP consumer wouldn't need: EncatchInlineForm(formId, modifier), a
-// composable wrapping the platform-native inline form view (AndroidView / UIKitView interop). See
-// /Users/godwin/.claude/plans/stateless-floating-ripple.md ("Publish real :kmp-sdk / :compose-sdk
-// libraries" — Phase 4) for the design rationale.
+// composable wrapping the platform-native inline form view (AndroidView / UIKitView interop).
 //
 // :kmp-sdk intentionally has no Compose dependency at all — this module is additive on top of it,
 // for customers who specifically want Compose Multiplatform UI, not a replacement for :kmp-sdk.
@@ -57,6 +55,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/ios-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }
@@ -67,6 +71,12 @@ kotlin {
                 create("EncatchBridge") {
                     defFile(project.file("src/nativeInterop/cinterop/EncatchBridge.def"))
                     packageName("com.encatch.bridge")
+                    // The .def file can't express repo-relative paths, so the header include dir
+                    // and static-library path for ios-native/dist/ are supplied here per-target.
+                    val dist = rootProject.layout.projectDirectory
+                        .dir("ios-native/dist/sim-arm64").asFile.absolutePath
+                    compilerOpts("-I$dist")
+                    extraOpts("-libraryPath", dist)
                 }
             }
         }

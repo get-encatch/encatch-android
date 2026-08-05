@@ -20,7 +20,7 @@ package com.encatch.sdk
  * Background / rationale, including why the public parameter/response types here
  * ([EncatchConfig], [UserTraits], [ShowFormOptions], etc. in `Types.kt`) are small local mirrors of
  * `:core`'s types rather than `:core`'s types directly: see this file's sibling `Types.kt` doc
- * comment, and /Users/godwin/.claude/plans/stateless-floating-ripple.md.
+ * comment.
  */
 expect object Encatch {
 

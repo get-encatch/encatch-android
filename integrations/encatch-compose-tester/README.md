@@ -40,9 +40,8 @@ directory for build/run instructions.
 
 ## Features
 
-Modeled on the richer `encatch-flutter-tester` reference app (see
-`/Users/godwin/Desktop/cmss/projects/schema-definition/sdk/integrations/encatch-flutter-tester`
-in the sibling schema-definition repo):
+Modeled on the richer `encatch-flutter-tester` reference app in the sibling
+schema-definition repo:
 
 - **Setup** — environment picker (Dev/UAT/Prod, each a preset `apiBaseUrl`/`webHost` pair), API
   key, default form id, optional interceptor test form id. Saved locally and restored on next

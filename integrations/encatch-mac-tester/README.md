@@ -33,8 +33,7 @@ open build/Build/Products/Debug-maccatalyst/EncatchMacTester.app
 This app deliberately does **not** port `encatch-ios-tester`'s `Theme.swift` or its bottom-tab
 navigation model verbatim — running the iOS app's UI unmodified under Catalyst would look like a
 stretched phone screen, not a Mac app. The choices below explain the divergence, and a few real
-Catalyst limitations discovered along the way (verified by build, not assumed — see the
-`/Users/godwin/.claude/plans/stateless-floating-ripple.md` plan file for the full investigation):
+Catalyst limitations discovered along the way (verified by build, not assumed):
 
 - **Sidebar, not tabs** — `NavigationSplitView` (Mail/Xcode-style) replaces the bottom
   `TesterTab` bar. **Interceptor** gets its own sidebar row with a badge count instead of staying

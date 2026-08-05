@@ -173,7 +173,7 @@ echo
 # ---------------------------------------------------------------------------
 # 4/5. iOS variants 4 & 5 — no XCUITest target yet: build + launch + smoke screenshot.
 # Both apps cinterop against ios-native/'s @objc facade (EncatchBridge.swift) rather than linking
-# any Kotlin/Native binary — see /Users/godwin/.claude/plans/stateless-floating-ripple.md. This is
+# any Kotlin/Native binary. This is
 # the fix for the old architecture, where two independently-linked Kotlin/Native frameworks that
 # each embedded :core produced two disconnected `Encatch` singletons in one process.
 # ---------------------------------------------------------------------------

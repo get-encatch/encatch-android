@@ -15,9 +15,7 @@ plugins {
 // cinterop block of its own, no com.encatch.bridge.* usage, and no ios-native/dist/ build step:
 // :compose-sdk's own cinterop klib (against ios-native/'s pure-Swift SDK via the @objc facade in
 // ios-native/Sources/Encatch/ObjCBridge/EncatchBridge.swift) is linked transitively into this
-// module's iOS binaries.framework output. See
-// /Users/godwin/.claude/plans/stateless-floating-ripple.md ("Publish real :kmp-sdk / :compose-sdk
-// libraries" — Phase 5) for the migration rationale.
+// module's iOS binaries.framework output.
 val xcf = XCFramework("EncatchComposeSample")
 
 kotlin {

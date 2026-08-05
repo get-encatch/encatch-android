@@ -8,9 +8,7 @@ import com.encatch.sdk.EncatchConfig
  * Activity and `iosMain`'s native screen, proving a single commonMain call site works identically
  * on both platforms. Goes through `:kmp-sdk`'s [Encatch] object directly now (no sample-owned
  * `SampleSdk` seam) — Android forwards to `:core`, iOS forwards through Kotlin/Native cinterop
- * onto the native Swift `ios-native` SDK, both internal to `:kmp-sdk`. See
- * /Users/godwin/.claude/plans/stateless-floating-ripple.md ("Publish real :kmp-sdk / :compose-sdk
- * libraries" — Phase 5).
+ * onto the native Swift `ios-native` SDK, both internal to `:kmp-sdk`.
  */
 object SampleAppController {
 

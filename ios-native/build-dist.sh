@@ -23,8 +23,8 @@
 #
 # Safe/idempotent to re-run: skips the xcodebuild dance entirely if dist/ already looks up to date
 # for the current Sources/ tree (content hash stamped in dist/.build-stamp), unless -f/--force is
-# passed. Background: /Users/godwin/.claude/plans/stateless-floating-ripple.md ("Publish real
-# :kmp-sdk / :compose-sdk libraries" plan, Phase 1).
+# passed. Background: dist/ exists so :kmp-sdk/:compose-sdk's Kotlin/Native iOS targets can
+# cinterop against a prebuilt static lib instead of compiling Swift sources themselves.
 
 set -euo pipefail
 
