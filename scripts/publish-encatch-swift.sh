@@ -50,15 +50,18 @@ echo "==> Staging ios-native/ -> mirror"
 find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
 rsync -a "${EXCLUDES[@]}" "$SRC/" .
 
+echo "==> Build gate (swift build && swift test in the staged mirror)"
+swift build
+swift test
+# The build gate itself creates .build/ (full of machine-local paths) — remove build
+# by-products BEFORE the leak gate and commit, so they can never ship.
+rm -rf .build .swiftpm
+
 echo "==> Leak gate"
 if grep -rInE '/Users/|godwin|\.claude' --exclude-dir=.git .; then
   echo "error: leak gate hit — personal/internal references found above; aborting" >&2
   exit 1
 fi
-
-echo "==> Build gate (swift build && swift test in the staged mirror)"
-swift build
-swift test
 
 echo "==> Committing and tagging $VERSION"
 git add -A

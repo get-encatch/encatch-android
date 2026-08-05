@@ -1,0 +1,5 @@
+.build/
+.swiftpm/
+.xcbuild-dev/
+.xcbuild-sim/
+.DS_Store
