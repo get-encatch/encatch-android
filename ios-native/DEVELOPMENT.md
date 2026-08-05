@@ -23,6 +23,19 @@ Consumers who cinterop against this package from Kotlin/Native ([`:kmp-sdk`](../
 to (re)produce it after changing anything under `Sources/`. Those Gradle modules wire this in
 automatically; a plain Swift-only consumer of the package never needs `dist/` or `build-dist.sh`.
 
+**Release rule — a behavior-relevant change under `Sources/` needs TWO tags, not one.**
+`:kmp-sdk`/`:compose-sdk`'s published iOS klibs bundle the static library compiled from this
+Swift source at publish time, so:
+
+1. `swift-vX.Y.Z` — ships the fix to SPM consumers (pure iOS apps).
+2. `kotlin-vX.Y.Z` — re-publishes the Maven artifacts so their embedded iOS static lib picks up
+   the same fix. Without this, KMP/Compose customers' iOS builds keep the old Swift behavior
+   forever, even though "nothing Kotlin changed".
+
+`:android`/`:core` are unaffected by Swift changes (no dependency on this package), but they
+version together with `:kmp-sdk`/`:compose-sdk` under the single root Gradle version, so the
+`kotlin-v*` release republishes all four regardless.
+
 ## Releasing to encatch-swift (SPM mirror)
 
 The public repo [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) is a
