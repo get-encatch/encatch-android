@@ -38,7 +38,7 @@ data class BuildSubmitRequestOptions(
     val formConfigurationId: String,
     val triggerType: String = "manual",
     val responseLanguageCode: String? = null,
-    val completionTimeInSeconds: Double? = null,
+    val completionTimeInSeconds: Int? = null,
     val isPartialSubmit: Boolean? = null,
     val feedbackIdentifier: String? = null,
 )

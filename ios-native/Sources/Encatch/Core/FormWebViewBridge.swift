@@ -156,7 +156,8 @@ public final class FormWebViewBridge: @unchecked Sendable {
                     feedbackIdentifier: data.string("feedbackIdentifier"),
                     responseLanguageCode: data.string("responseLanguageCode"),
                     isPartialSubmit: parseStrictBool(data.string("isPartialSubmit")) ?? false,
-                    completionTimeInSeconds: data.double("completionTimeInSeconds"),
+                    // Rounded: the web form may report fractional seconds, but the backend field is i32.
+                    completionTimeInSeconds: data.double("completionTimeInSeconds").map { Int($0.rounded()) },
                     response: response,
                     visitedQuestionIds: data.array("visitedQuestionIds")?.compactMap { $0.asString },
                     context: data["context"]?.asObject != nil ? data["context"] : nil

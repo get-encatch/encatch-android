@@ -380,7 +380,8 @@ public struct FormDetails: Codable, Sendable, Equatable {
     public var feedbackIdentifier: String?
     public var responseLanguageCode: String?
     public var isPartialSubmit: Bool?
-    public var completionTimeInSeconds: Double?
+    // Int, not Double: the backend deserializes this as i32 — a fractional value would 422.
+    public var completionTimeInSeconds: Int?
     public var response: FormResponse?
     public var visitedQuestionIds: [String]?
     public var context: JSONValue?
@@ -390,7 +391,7 @@ public struct FormDetails: Codable, Sendable, Equatable {
         feedbackIdentifier: String? = nil,
         responseLanguageCode: String? = nil,
         isPartialSubmit: Bool? = nil,
-        completionTimeInSeconds: Double? = nil,
+        completionTimeInSeconds: Int? = nil,
         response: FormResponse? = nil,
         visitedQuestionIds: [String]? = nil,
         context: JSONValue? = nil

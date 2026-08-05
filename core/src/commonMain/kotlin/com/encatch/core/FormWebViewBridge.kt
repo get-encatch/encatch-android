@@ -1,5 +1,6 @@
 package com.encatch.core
 
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -126,7 +127,9 @@ class FormWebViewBridge(
                         feedbackIdentifier = data["feedbackIdentifier"]?.jsonPrimitive?.contentOrNull,
                         responseLanguageCode = data["responseLanguageCode"]?.jsonPrimitive?.contentOrNull,
                         response = data["response"]?.let { runCatching { EncatchJson.decodeFromJsonElement(FormResponse.serializer(), it) }.getOrNull() },
-                        completionTimeInSeconds = data["completionTimeInSeconds"]?.jsonPrimitive?.doubleOrNull,
+                        // Round rather than intOrNull: the web form may report fractional seconds, but the
+                        // backend field is i32 — intOrNull would silently drop e.g. "1.5".
+                        completionTimeInSeconds = data["completionTimeInSeconds"]?.jsonPrimitive?.doubleOrNull?.roundToInt(),
                         context = data["context"] as? JsonObject,
                         visitedQuestionIds = (data["visitedQuestionIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull },
                     ),

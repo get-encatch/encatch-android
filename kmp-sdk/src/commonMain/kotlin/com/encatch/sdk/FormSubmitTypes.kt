@@ -184,7 +184,8 @@ data class FormDetails(
     val feedbackIdentifier: String? = null,
     val responseLanguageCode: String? = null,
     val isPartialSubmit: Boolean? = null,
-    val completionTimeInSeconds: Double? = null,
+    // Int, not Double: the backend deserializes this as i32 and 422s on "1.0".
+    val completionTimeInSeconds: Int? = null,
     val response: FormResponse? = null,
     val visitedQuestionIds: List<String>? = null,
     val context: JsonObject? = null,

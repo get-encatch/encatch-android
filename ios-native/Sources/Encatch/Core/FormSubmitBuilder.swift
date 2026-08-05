@@ -31,7 +31,7 @@ public struct BuildSubmitRequestOptions {
     public var formConfigurationId: String
     public var triggerType: String
     public var responseLanguageCode: String?
-    public var completionTimeInSeconds: Double?
+    public var completionTimeInSeconds: Int?
     public var isPartialSubmit: Bool?
     public var feedbackIdentifier: String?
     /// Arbitrary caller-provided metadata attached to this submission.
@@ -41,7 +41,7 @@ public struct BuildSubmitRequestOptions {
         formConfigurationId: String,
         triggerType: String = "manual",
         responseLanguageCode: String? = nil,
-        completionTimeInSeconds: Double? = nil,
+        completionTimeInSeconds: Int? = nil,
         isPartialSubmit: Bool? = nil,
         feedbackIdentifier: String? = nil,
         context: JSONValue? = nil
