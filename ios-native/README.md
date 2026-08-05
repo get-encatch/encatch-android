@@ -1,33 +1,32 @@
-# Encatch (iOS, Swift Package)
+# Encatch — iOS & macOS SDK (Swift Package)
 
-The Encatch iOS SDK lets you collect user feedback in your iOS apps. Display feedback forms via a
-native WebView overlay or inline view, identify users, track screens and events, and submit
-responses to the Encatch backend — functionally equivalent to `@encatch/react-native-sdk` and to
-[`com.encatch:android`](../android/README.md).
+The Encatch SDK lets you collect user feedback in your iOS and Mac Catalyst apps. Display
+feedback forms via a native WebView overlay or inline view, identify users, track screens and
+events, and submit responses to the Encatch backend.
 
 This is a genuinely native Swift implementation — its own networking (`URLSession`), storage
-(`UserDefaults`), session/retry-queue, appearance/theme resolution, and WebView JS-bridge protocol.
-No Kotlin/Native dependency, no `.xcframework` binary to link.
+(`UserDefaults`), session/retry-queue, appearance/theme resolution, and WebView JS-bridge
+protocol. No embedded runtimes, no binary dependencies to link.
+
+- **Platforms:** iOS 15+, macOS 12+ (form UI requires UIKit — on the Mac via Mac Catalyst;
+  the core tracking/identify APIs compile for plain macOS too)
+- **License:** MIT
 
 ## Installation
 
-This package currently lives inside the `encatch-android` monorepo rather than its own dedicated
-repo, so it isn't yet resolvable via a remote Swift Package URL. Add it as a **local** Swift
-Package dependency, pointing at this directory — the same way this repo's own sample apps
-(`ios-sample/`, `ios-compose-sample/`, `ios-kmp-sample/`) consume it:
-
-**Xcode:** File → Add Package Dependencies… → Add Local… → select this `ios-native/` directory.
+**Xcode:** File → Add Package Dependencies… → enter
+`https://github.com/get-encatch/encatch-swift` → Dependency rule: *Up to Next Minor Version*.
 
 **Package.swift:**
 
 ```swift
-.package(path: "../path/to/ios-native"),
+.package(url: "https://github.com/get-encatch/encatch-swift", from: "0.1.0"),
 ```
 
 then add `"Encatch"` as a dependency of your target.
 
-> A standalone, remotely-resolvable release of this package (its own repo, tagged releases) is
-> planned but not done yet — track this if you need it before then.
+> Pre-1.0 note: while versions are `0.x`, minor bumps may contain breaking changes; SPM's
+> `from: "0.1.0"` rule will only auto-update patch releases, which is the safe default.
 
 ## Setup
 
@@ -65,22 +64,39 @@ let unsubscribe = Encatch.shared.onEvent { eventType, payload in
 }
 ```
 
+`initialize(apiKey:config:)` accepts an optional `EncatchConfig` for `apiBaseUrl`, `webHost`,
+`theme`, `isFullScreen`, `debugMode`, `appVersion`, and an `onBeforeShowForm` interceptor that
+lets you veto (and custom-render) any form before the SDK shows it.
+
 ### Inline forms
+
+`EncatchInlineFormView` is a `UIView` that claims a form id, so `showForm` for that id renders
+inline in your layout instead of as a modal. Leave `formId` as `nil` to make it a wildcard slot
+that catches any form id not claimed elsewhere.
 
 ```swift
 import SwiftUI
 import Encatch
 
 struct MyFormSlot: UIViewRepresentable {
+    @Binding var height: CGFloat
+
     func makeUIView(context: Context) -> EncatchInlineFormView {
         let view = EncatchInlineFormView()
-        view.formId = "your-form-id"
+        view.formId = "your-form-id"   // or nil for a wildcard slot
+        view.onHeightChange = { [binding = $height] newHeight in
+            DispatchQueue.main.async { binding.wrappedValue = newHeight }
+        }
         return view
     }
 
     func updateUIView(_ uiView: EncatchInlineFormView, context: Context) {}
 }
+
+// place it:  MyFormSlot(height: $height).frame(height: max(height, 64))
 ```
+
+UIKit hosts can add `EncatchInlineFormView` directly and use `onHeightChange` to drive layout.
 
 ## Default hosts
 
@@ -89,22 +105,16 @@ struct MyFormSlot: UIViewRepresentable {
 | `apiBaseUrl` | `https://api.encatch.com` |
 | `webHost` | `https://form.encatch.com` |
 
-These are exported as `DEFAULT_API_BASE_URL`/`DEFAULT_WEB_HOST` and set via `EncatchConfig` passed
-to `initialize(apiKey:config:)`.
+These are exported as `DEFAULT_API_BASE_URL`/`DEFAULT_WEB_HOST` and set via `EncatchConfig`
+passed to `initialize(apiKey:config:)`.
 
-## Local development
+## Contributing & issues
 
-```bash
-swift build
-swift test
-```
-
-Consumers who cinterop against this package from Kotlin/Native (see [`:kmp-sdk`](../kmp-sdk/README.md)/
-[`:compose-sdk`](../compose-sdk/README.md)) rely on a compiled artifact at `ios-native/dist/` —
-run `./build-dist.sh` to (re)produce it after changing anything under `Sources/`. Those two Gradle
-modules already wire this in automatically; a plain Swift-only consumer of this package does not
-need `dist/` or `build-dist.sh` at all.
+Development happens in the cross-platform monorepo at
+[get-encatch/encatch-android](https://github.com/get-encatch/encatch-android) (under
+`ios-native/`); this repo is the Swift Package Manager distribution mirror, updated per release.
+Please open pull requests against the monorepo — issues are welcome in either repo.
 
 ## License
 
-MIT
+[MIT](LICENSE)

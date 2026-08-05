@@ -10,7 +10,7 @@ thin bridge libraries for customers building with Compose Multiplatform or Kotli
 | Package | Platform | What it is |
 |---|---|---|
 | [`com.encatch:android`](android/README.md) | Android (native Views) | The real Android SDK. |
-| [`Encatch` (Swift Package)](ios-native/README.md) | iOS (native Swift/UIKit) | The real iOS SDK. Zero Kotlin dependency. |
+| [`Encatch` (Swift Package)](ios-native/README.md) | iOS (native Swift/UIKit) | The real iOS SDK. Zero Kotlin dependency. Distributed via [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) for SPM. |
 | [`com.encatch:kmp-sdk`](kmp-sdk/README.md) | KMP (Android + iOS) | Thin bridge onto the two native SDKs above — full API, no UI. |
 | [`com.encatch:compose-sdk`](compose-sdk/README.md) | Compose Multiplatform (Android + iOS) | `:kmp-sdk` + a ready-made inline-form composable. |
 

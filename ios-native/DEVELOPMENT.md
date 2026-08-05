@@ -1,0 +1,58 @@
+# Development notes (monorepo-only)
+
+This file stays in the `encatch-android` monorepo — the publish script excludes it (along with
+`dist/` and `build-dist.sh`) from the public [`encatch-swift`](https://github.com/get-encatch/encatch-swift)
+mirror. Everything user-facing lives in [README.md](README.md), which IS mirrored.
+
+## Building & testing locally
+
+```bash
+swift build
+swift test
+```
+
+Samples/testers in this repo consume the package as a **local** SPM dependency
+(`.package(path: "../ios-native")`) — see `ios-sample/`, `integrations/encatch-ios-tester/`,
+`integrations/encatch-mac-tester/`.
+
+## dist/ and build-dist.sh
+
+Consumers who cinterop against this package from Kotlin/Native ([`:kmp-sdk`](../kmp-sdk/README.md)/
+[`:compose-sdk`](../compose-sdk/README.md)) rely on a compiled artifact at `ios-native/dist/`
+(static `libEncatch.a` + generated ObjC header + swiftmodule per target) — run `./build-dist.sh`
+to (re)produce it after changing anything under `Sources/`. Those Gradle modules wire this in
+automatically; a plain Swift-only consumer of the package never needs `dist/` or `build-dist.sh`.
+
+## Releasing to encatch-swift (SPM mirror)
+
+The public repo [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) is a
+**write-only distribution mirror**: development never happens there, and every release overwrites
+its working tree wholesale from this directory. To publish a release:
+
+```bash
+scripts/publish-encatch-swift.sh 0.1.0
+```
+
+The script (run it from the monorepo root):
+
+1. Preflights: clean git tree here, valid semver, tag not already published.
+2. Clones the mirror, replaces its tree with `ios-native/` minus the exclusion list
+   (`dist/`, `build-dist.sh`, `DEVELOPMENT.md`, build dirs).
+3. **Leak gate:** greps the staged tree for `/Users/`, `godwin`, `.claude` — aborts on any hit.
+4. **Build gate:** `swift build && swift test` inside the staged mirror checkout, proving the
+   package is self-contained.
+5. Commits `Release X.Y.Z`, tags `X.Y.Z`, pushes, and creates a GitHub release.
+
+Consumers resolve plain `X.Y.Z` tags in the mirror (`from: "0.1.0"`). In THIS repo, use
+prefixed tags (`swift-v0.1.0`) if you want a marker here, since four SDKs share the monorepo.
+
+PRs opened against the mirror should be redirected to this repo; if a patch is accepted there
+anyway, hand-apply it here and cut a new release — never merge into the mirror directly, the
+next publish would silently overwrite it.
+
+## Mirror CI
+
+`.github/workflows/ci.yml` under `ios-native/` is inert in the monorepo (GitHub only reads
+root-level `.github/`) but ships with the mirror, where it builds and tests every push/PR:
+`swift build`/`swift test` on macOS plus an `xcodebuild` compile against an iOS Simulator
+destination.
