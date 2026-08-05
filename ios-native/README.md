@@ -20,13 +20,13 @@ protocol. No embedded runtimes, no binary dependencies to link.
 **Package.swift:**
 
 ```swift
-.package(url: "https://github.com/get-encatch/encatch-swift", from: "0.1.0"),
+.package(url: "https://github.com/get-encatch/encatch-swift", from: "0.1.3"),
 ```
 
 then add `"Encatch"` as a dependency of your target.
 
 > Pre-1.0 note: while versions are `0.x`, minor bumps may contain breaking changes; SPM's
-> `from: "0.1.0"` rule will only auto-update patch releases, which is the safe default.
+> `from: "0.1.3"` rule will only auto-update patch releases, which is the safe default.
 
 ## Setup
 
