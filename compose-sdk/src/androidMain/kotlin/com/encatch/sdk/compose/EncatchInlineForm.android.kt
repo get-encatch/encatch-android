@@ -42,7 +42,7 @@ import com.encatch.android.EncatchInlineFormView
  * composition of a given call site.
  */
 @Composable
-actual fun EncatchInlineForm(formId: String, modifier: Modifier) {
+actual fun EncatchInlineForm(formId: String?, modifier: Modifier) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
         EncatchFormHost.install(context.applicationContext as Application)

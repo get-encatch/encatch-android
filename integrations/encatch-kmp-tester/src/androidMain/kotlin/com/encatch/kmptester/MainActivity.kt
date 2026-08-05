@@ -88,7 +88,32 @@ class MainActivity : Activity() {
             }
         }
 
+        // Auto-init on relaunch: with setup already complete the app skips the Setup screen, so
+        // init must happen here instead of Setup's "Save & continue" (identifyUser/showForm
+        // silently no-op un-initialized). Parity with encatch-android-tester/encatch-ios-tester.
+        if (prefs.isSetupComplete) scope.launch { runCatching { initializeSdk() } }
+
         render(if (prefs.isSetupComplete) Screen.Login else Screen.Setup)
+    }
+
+    /** Shared by Setup's "Save & continue" and the relaunch auto-init above. */
+    private suspend fun initializeSdk() {
+        TesterController.initSdk(
+            prefs.apiKey.orEmpty(),
+            prefs.apiBaseUrl ?: prefs.environment.apiBaseUrl,
+            prefs.webHost ?: prefs.environment.webHost,
+            prefs.interceptorFormId,
+            onIntercept = { blockedFormId, formConfigJson, completion ->
+                runOnUiThread {
+                    // formConfigJson only carries questionnaireFields (see
+                    // ShowFormInterceptorPayload.formConfigJson's doc comment in kmp-sdk), not
+                    // a form title — fall back to the raw form id.
+                    blockedForms += BlockedFormItem(blockedFormId, blockedFormId, formConfigJson)
+                    if (screen == Screen.Main) render(Screen.Main)
+                }
+                completion(false)
+            },
+        )
     }
 
     /** Match the monochrome surface: white/black status bar with legible icons in both modes. */
@@ -208,24 +233,7 @@ class MainActivity : Activity() {
                 prefs.webHost = environment.webHost
                 prefs.interceptorFormId = interceptorFormIdInput.text.toString().trim().ifEmpty { null }
                 scope.launch {
-                    runCatching {
-                        TesterController.initSdk(
-                            apiKey,
-                            environment.apiBaseUrl,
-                            environment.webHost,
-                            prefs.interceptorFormId,
-                            onIntercept = { blockedFormId, formConfigJson, completion ->
-                                runOnUiThread {
-                                    // formConfigJson only carries questionnaireFields (see
-                                    // ShowFormInterceptorPayload.formConfigJson's doc comment in
-                                    // kmp-sdk), not a form title — fall back to the raw form id.
-                                    blockedForms += BlockedFormItem(blockedFormId, blockedFormId, formConfigJson)
-                                    if (screen == Screen.Main) render(Screen.Main)
-                                }
-                                completion(false)
-                            },
-                        )
-                    }
+                    runCatching { initializeSdk() }
                     render(Screen.Login)
                 }
             },

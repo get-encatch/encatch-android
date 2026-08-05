@@ -25,6 +25,4 @@ All four SDK packages now have a tester app at this richer level of parity.
 `encatch-mac-tester` is a Mac Catalyst sibling of `encatch-ios-tester` testing the same
 `ios-native` package, but with a genuinely Mac-native UI (sidebar, real Preferences window,
 system controls) rather than a ported phone screen — see its README's "macOS-native decisions"
-section. The one accepted gap: `encatch-compose-tester` has no wildcard inline slot, since
-`:compose-sdk`'s `EncatchInlineForm` requires a non-null `formId` (see that tester's README for
-detail).
+section.

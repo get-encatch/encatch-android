@@ -108,6 +108,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Debug-keystore signing so internal testers can install the release APK directly —
+            // this is a tester app, not a Play Store artifact.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

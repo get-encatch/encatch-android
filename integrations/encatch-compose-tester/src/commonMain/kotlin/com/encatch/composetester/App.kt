@@ -112,6 +112,41 @@ private fun TesterScreens() {
         onDispose { unsubscribe() }
     }
 
+    // Shared by Setup's "Save & continue" and the auto-init below — a real host app calls
+    // Encatch.init once at startup; this tester must do the same on every process start, not
+    // just the first-run Setup pass (identifyUser/showForm silently no-op un-initialized).
+    suspend fun initializeSdk() {
+        Encatch.init(
+            TesterPrefs.apiKey.orEmpty(),
+            EncatchConfig(
+                apiBaseUrl = TesterPrefs.apiBaseUrl ?: TesterPrefs.environment.apiBaseUrl,
+                webHost = TesterPrefs.webHost ?: TesterPrefs.environment.webHost,
+                debugMode = true,
+                // Unconditionally blocks the configured interceptor form id and queues it for
+                // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with
+                // a custom-rendered native form.
+                onBeforeShowForm = { payload ->
+                    if (payload.formId == TesterPrefs.interceptorFormId) {
+                        blockedForms = blockedForms + BlockedFormItem(
+                            formId = payload.formId,
+                            title = payload.formId,
+                            formConfigJson = payload.formConfigJson,
+                        )
+                        false
+                    } else {
+                        true
+                    }
+                },
+            ),
+        )
+    }
+
+    // Auto-init on relaunch: with setup already complete the app skips the Setup screen, so
+    // init must happen here instead of Setup's onContinue (parity with the native testers).
+    LaunchedEffect(Unit) {
+        if (TesterPrefs.isSetupComplete && !Encatch.isInitialized) initializeSdk()
+    }
+
     fun cycleTheme() {
         currentTheme = when (currentTheme) {
             Theme.SYSTEM -> Theme.LIGHT
@@ -140,29 +175,7 @@ private fun TesterScreens() {
                 TesterPrefs.webHost = environment.webHost
                 TesterPrefs.interceptorFormId = interceptorFormId.ifBlank { null }
                 scope.launch {
-                    Encatch.init(
-                        apiKey,
-                        EncatchConfig(
-                            apiBaseUrl = environment.apiBaseUrl,
-                            webHost = environment.webHost,
-                            debugMode = true,
-                            // Unconditionally blocks the configured interceptor form id and queues
-                            // it for the InterceptorCarousel — demonstrates fully replacing the
-                            // SDK's modal with a custom-rendered native form.
-                            onBeforeShowForm = { payload ->
-                                if (payload.formId == TesterPrefs.interceptorFormId) {
-                                    blockedForms = blockedForms + BlockedFormItem(
-                                        formId = payload.formId,
-                                        title = payload.formId,
-                                        formConfigJson = payload.formConfigJson,
-                                    )
-                                    false
-                                } else {
-                                    true
-                                }
-                            },
-                        ),
-                    )
+                    initializeSdk()
                     screen = Screen.Login
                 }
             },
@@ -282,6 +295,10 @@ private fun TesterScreens() {
                             formId = TesterPrefs.formId.orEmpty(),
                             onShowExact = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
                         )
+                        TesterTab.INLINE_ANY -> InlineAnyScreen(
+                            onShowWildcard = { id -> scope.launch { Encatch.showForm(id) } },
+                            onTriggerFallback = { scope.launch { Encatch.showForm("modal-fallback-demo") } },
+                        )
                     }
                 }
 
@@ -338,7 +355,7 @@ private fun TesterTabBar(selected: TesterTab, onSelect: (TesterTab) -> Unit) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        t.label,
+                        t.shortLabel,
                         fontSize = 12.sp,
                         fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                         color = if (active) cs.ink else cs.onSurfaceVariant,
@@ -752,7 +769,7 @@ private fun InlineExactScreen(formId: String, onShowExact: () -> Unit) {
         Spacer(16)
         TesterCard {
             Text(
-                "Claims \"$formId\" — :compose-sdk's EncatchInlineForm only supports exact-match form ids, no wildcard slot.",
+                "Claims \"$formId\" — only showForm calls for this exact id render here.",
                 fontSize = 13.sp,
                 color = cs.onSurfaceVariant,
             )
@@ -764,6 +781,47 @@ private fun InlineExactScreen(formId: String, onShowExact: () -> Unit) {
         // form:resize values) on both platforms.
         EncatchInlineForm(
             formId = formId,
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(CardCornerRadius)),
+        )
+        Spacer(24)
+    }
+}
+
+@Composable
+private fun InlineAnyScreen(onShowWildcard: (String) -> Unit, onTriggerFallback: () -> Unit) {
+    LaunchedEffect(Unit) { Encatch.trackScreen("InlineAny") }
+    val cs = MaterialTheme.colorScheme
+    var wildcardFormId by remember { mutableStateOf("") }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+        Spacer(16)
+        TesterCard {
+            Text(
+                "Wildcard slot (formId = null) — catches any form id not exactly claimed elsewhere.",
+                fontSize = 13.sp,
+                color = cs.onSurfaceVariant,
+            )
+        }
+        Spacer(16)
+        TesterCard {
+            FieldLabel("Form id")
+            Spacer(6)
+            FilledField(wildcardFormId, { wildcardFormId = it }, placeholder = "form id")
+            Spacer(12)
+            PrimaryPillButton(
+                text = "Show Form (renders inline below)",
+                onClick = { onShowWildcard(wildcardFormId.trim()) },
+                enabled = wildcardFormId.isNotBlank(),
+            )
+            QuietTextButton(
+                "Trigger unmatched form → modal fallback",
+                onClick = onTriggerFallback,
+                color = cs.ink,
+            )
+        }
+        Spacer(16)
+        // Wildcard slot — no formId. Self-sizes the same way as the exact slot above.
+        EncatchInlineForm(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(CardCornerRadius)),
         )
         Spacer(24)

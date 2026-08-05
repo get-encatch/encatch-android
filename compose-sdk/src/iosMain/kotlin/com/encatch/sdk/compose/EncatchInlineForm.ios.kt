@@ -25,7 +25,7 @@ import com.encatch.bridge.EncatchInlineFormView
  * does — see `EncatchInlineForm.android.kt`'s doc comment for the full asymmetry explanation.
  */
 @Composable
-actual fun EncatchInlineForm(formId: String, modifier: Modifier) {
+actual fun EncatchInlineForm(formId: String?, modifier: Modifier) {
     // Auto height: Compose Multiplatform's UIKitView ignores a UIView's own Auto Layout height
     // constraint / intrinsicContentSize, so the native view's self-sizing (skeleton placeholder,
     // live form:resize values — see ios-native's EncatchInlineFormView) is bridged out through

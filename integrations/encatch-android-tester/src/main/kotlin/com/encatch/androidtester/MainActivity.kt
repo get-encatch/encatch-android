@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +89,43 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
     var blockedForms by remember { mutableStateOf(listOf<BlockedFormItem>()) }
     var openedForm by remember { mutableStateOf<BlockedFormItem?>(null) }
 
+    // Shared by Setup's "Save & continue" and the auto-init below — a real host app calls
+    // Encatch.init once at startup; this tester must do the same on every process start, not
+    // just the first-run Setup pass (identifyUser/showForm silently no-op un-initialized).
+    suspend fun initializeSdk() {
+        Encatch.init(
+            prefs.apiKey.orEmpty(),
+            EncatchConfig(
+                apiBaseUrl = prefs.apiBaseUrl ?: prefs.environment.apiBaseUrl,
+                webHost = prefs.webHost ?: prefs.environment.webHost,
+                debugMode = true,
+                // Unconditionally blocks the configured interceptor form id and queues it for
+                // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with
+                // a custom-rendered native form.
+                onBeforeShowForm = { payload ->
+                    if (payload.formId == prefs.interceptorFormId) {
+                        val title = (payload.formConfig.formConfiguration
+                            ?.get("formTitle") as? JsonPrimitive)?.content ?: payload.formId
+                        blockedForms = blockedForms + BlockedFormItem(
+                            formId = payload.formId,
+                            title = title,
+                            questionnaireFields = payload.formConfig.questionnaireFields,
+                        )
+                        false
+                    } else {
+                        true
+                    }
+                },
+            ),
+        )
+    }
+
+    // Auto-init on relaunch: mirrors the iOS testers — with setup already complete the app
+    // skips the Setup screen, so init must happen here instead of Setup's onContinue.
+    LaunchedEffect(Unit) {
+        if (prefs.isSetupComplete && !Encatch.isInitialized) initializeSdk()
+    }
+
     // Registered once for the process lifetime, same as a real host app would at startup.
     DisposableEffect(Unit) {
         val unsubscribe = Encatch.on { eventType, payload ->
@@ -136,31 +174,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                     prefs.webHost = environment.webHost
                     prefs.interceptorFormId = interceptorFormId.ifBlank { null }
                     scope.launch {
-                        Encatch.init(
-                            apiKey,
-                            EncatchConfig(
-                                apiBaseUrl = environment.apiBaseUrl,
-                                webHost = environment.webHost,
-                                debugMode = true,
-                                // Unconditionally blocks the configured interceptor form id and
-                                // queues it for the InterceptorCarousel — demonstrates fully
-                                // replacing the SDK's modal with a custom-rendered native form.
-                                onBeforeShowForm = { payload ->
-                                    if (payload.formId == prefs.interceptorFormId) {
-                                        val title = (payload.formConfig.formConfiguration
-                                            ?.get("formTitle") as? JsonPrimitive)?.content ?: payload.formId
-                                        blockedForms = blockedForms + BlockedFormItem(
-                                            formId = payload.formId,
-                                            title = title,
-                                            questionnaireFields = payload.formConfig.questionnaireFields,
-                                        )
-                                        false
-                                    } else {
-                                        true
-                                    }
-                                },
-                            ),
-                        )
+                        initializeSdk()
                         screen = Screen.Login
                     }
                 },

@@ -15,7 +15,10 @@ import androidx.compose.ui.Modifier
  * Routing (exact match on [formId] vs. wildcard vs. modal fallback) is resolved by the platform
  * SDK the same way it is for the native Android/iOS inline views this wraps — see
  * `android/src/main/kotlin/com/encatch/android/EncatchInlineFormView.kt`'s class doc for the
- * canonical explanation.
+ * canonical explanation:
+ *  - Exact match: pass a [formId] to catch `showForm("slug")` for that id only.
+ *  - Wildcard: pass `null` to catch any form not claimed by an exact slot.
+ *  - Fallback: when no inline slot matches, the SDK's modal presentation takes over.
  *
  * Callers do not need to call `EncatchFormHost.install(...)`/`installFormHost()` themselves on
  * either platform — see this file's platform `actual`s (`EncatchInlineForm.android.kt` /
@@ -23,4 +26,4 @@ import androidx.compose.ui.Modifier
  * automatically.
  */
 @Composable
-expect fun EncatchInlineForm(formId: String, modifier: Modifier = Modifier)
+expect fun EncatchInlineForm(formId: String? = null, modifier: Modifier = Modifier)

@@ -119,7 +119,11 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         scope = scope,
         presentation = "modal",
         onClose = { immediate -> close(immediate) },
-        onHeightChange = { height -> applyHeight(height, animated = true) },
+        // form:resize heights arrive in CSS px (== dp — the WebView renders at density× scale),
+        // so they must be converted to physical px before driving pixel-space LayoutParams.
+        // ios-native applies them unconverted because iOS points ARE CSS px; skipping this on
+        // Android shrinks the modal to 1/density of the intended height (content clipped).
+        onHeightChange = { height -> applyHeight(dpToPxInt(height, context.resources.displayMetrics.density), animated = true) },
         onForceFullHeight = { force -> isFullHeightOverlay = force; applyHeight(contentHeightPx) },
         onReady = {
             // onPageFinished's 300ms fallback fires this even when the page HTML loaded but

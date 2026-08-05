@@ -168,7 +168,9 @@ class EncatchInlineFormView @JvmOverloads constructor(
                 Encatch.setFormVisible(false)
                 clearForm()
             },
-            onHeightChange = { h -> applyHeight(h) },
+            // form:resize heights arrive in CSS px (== dp) — convert to physical px before
+            // applying to LayoutParams (see EncatchFormDialog's onHeightChange note).
+            onHeightChange = { h -> applyHeight(dpToPx(h)) },
             onForceFullHeight = { force -> applyForceFullHeight(force) },
             onReady = {
                 // Fade the skeleton over the rendered form, then remove it (parity with the

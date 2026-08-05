@@ -38,6 +38,13 @@ final class TesterState: ObservableObject {
     func start() {
         observeKeyboard()
 
+        // Auto-init on relaunch: with setup already complete the app skips the Setup screen,
+        // so init must happen here instead of saveSetupAndInit (identify/showForm silently
+        // no-op un-initialized). Parity with encatch-ios-tester's start().
+        if prefs.isSetupComplete {
+            Task { await initializeSdk() }
+        }
+
         TesterController.shared.setOnNetworkLog { [weak self] status, endpointName, durationMs, fullText in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -77,27 +84,33 @@ final class TesterState: ObservableObject {
         prefs.interceptorFormId = interceptorFormId.isEmpty ? nil : interceptorFormId
 
         Task {
-            do {
-                try await TesterController.shared.doInitSdk(
-                    apiKey: apiKey,
-                    baseUrl: environment.apiBaseUrl,
-                    webHost: environment.webHost,
-                    interceptorFormId: prefs.interceptorFormId,
-                    // Unconditionally blocks the configured interceptor form id and queues it for
-                    // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
-                    // custom-rendered native form. Plain (non-async) callback — see
-                    // TesterController.kt's doc comment for why.
-                    onIntercept: { [weak self] formId, formConfigJson, completion in
-                        DispatchQueue.main.async {
-                            self?.blockedForms.append(BlockedFormItem(formId: formId, title: formId, formConfigJson: formConfigJson))
-                            _ = completion(KotlinBoolean(bool: false))
-                        }
-                    }
-                )
-            } catch {
-                print("TesterController.doInitSdk failed: \(error)")
-            }
+            await initializeSdk()
             await MainActor.run { self.screen = .login }
+        }
+    }
+
+    /// Shared by `saveSetupAndInit` (fresh Setup entry) and `start()` (a plain relaunch that
+    /// skips Setup because it was already completed in a prior session).
+    private func initializeSdk() async {
+        do {
+            try await TesterController.shared.doInitSdk(
+                apiKey: prefs.apiKey ?? "",
+                baseUrl: prefs.apiBaseUrl ?? prefs.environment.apiBaseUrl,
+                webHost: prefs.webHost ?? prefs.environment.webHost,
+                interceptorFormId: prefs.interceptorFormId,
+                // Unconditionally blocks the configured interceptor form id and queues it for
+                // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
+                // custom-rendered native form. Plain (non-async) callback — see
+                // TesterController.kt's doc comment for why.
+                onIntercept: { [weak self] formId, formConfigJson, completion in
+                    DispatchQueue.main.async {
+                        self?.blockedForms.append(BlockedFormItem(formId: formId, title: formId, formConfigJson: formConfigJson))
+                        _ = completion(KotlinBoolean(bool: false))
+                    }
+                }
+            )
+        } catch {
+            print("TesterController.doInitSdk failed: \(error)")
         }
     }
 

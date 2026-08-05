@@ -14,12 +14,6 @@ iOS) so one build works for any tester or environment.
 Depends on `:compose-sdk`/`:android` as internal Gradle modules (these SDKs aren't published to a
 real Maven repo yet — see [`compose-sdk/README.md`](../../compose-sdk/README.md)).
 
-## Known gap (relative to encatch-android-tester/encatch-ios-tester)
-
-- **No wildcard inline slot** — `:compose-sdk`'s `EncatchInlineForm(formId: String, ...)` takes a
-  non-null `formId`; only the exact-match case is exposed as a composable. There is accordingly no
-  Inline (Any) tab — the bottom nav has Home/Events/Settings/Inline (Exact) only.
-
 ## Run in an emulator (Android)
 
 ```bash
@@ -48,7 +42,7 @@ directory for build/run instructions.
 
 Modeled on the richer `encatch-flutter-tester` reference app (see
 `/Users/godwin/Desktop/cmss/projects/schema-definition/sdk/integrations/encatch-flutter-tester`
-in the sibling schema-definition repo), minus the wildcard inline slot noted above:
+in the sibling schema-definition repo):
 
 - **Setup** — environment picker (Dev/UAT/Prod, each a preset `apiBaseUrl`/`webHost` pair), API
   key, default form id, optional interceptor test form id. Saved locally and restored on next
@@ -89,6 +83,6 @@ in the sibling schema-definition repo), minus the wildcard inline slot noted abo
 ## Manual test checklist
 
 Same as [`encatch-android-tester`'s checklist](../encatch-android-tester/README.md#manual-test-checklist)
-minus the wildcard-inline step — run it on both the Android app and the
+— run it on both the Android app and the
 [`encatch-compose-tester-ios`](../encatch-compose-tester-ios/README.md) host to confirm both
 platforms behave identically off the same shared Compose UI.
