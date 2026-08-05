@@ -5,8 +5,8 @@ Standalone Android app for testing `com.encatch:android` — modeled on `encatch
 harness), this app has a runtime **Setup** screen so one APK works for any tester or environment,
 no rebuild required.
 
-Depends on `:android`/`:core` as internal Gradle modules (these SDKs aren't published to a real
-Maven repo yet — see [`android/README.md`](../../android/README.md) for what a real external
+Depends on `:android`/`:core` as internal Gradle modules (external apps use the published
+Maven Central artifacts instead — see [`android/README.md`](../../android/README.md)).
 consumer's dependency line looks like once they are).
 
 ## Run in an emulator

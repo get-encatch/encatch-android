@@ -1,0 +1,45 @@
+# Publishes the four Kotlin SDK modules (com.encatch:core/:android/:kmp-sdk/:compose-sdk)
+# to Maven Central when a kotlin-v* tag is pushed (e.g. kotlin-v0.1.1).
+#
+# Runs on macOS because :kmp-sdk/:compose-sdk's iOS targets cinterop against ios-native/dist/,
+# which their builds regenerate via ios-native/build-dist.sh (xcodebuild).
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   MAVEN_CENTRAL_USERNAME / MAVEN_CENTRAL_PASSWORD  - Central Portal publishing token
+#   SIGNING_KEY                                      - armored GPG private key (the full
+#                                                      -----BEGIN PGP PRIVATE KEY BLOCK----- text)
+#   SIGNING_PASSWORD                                 - its passphrase
+#
+# The upload lands as a staged deployment on central.sonatype.com -> Deployments;
+# a maintainer reviews and clicks Publish there (same manual-release flow as local publishing).
+name: Maven Central release
+
+on:
+  push:
+    tags: ['kotlin-v*']
+
+jobs:
+  publish:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Check tag matches Gradle version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#kotlin-v}"
+          GRADLE_VERSION=$(grep -m1 'version = "' build.gradle.kts | sed 's/.*version = "\(.*\)".*/\1/')
+          if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match build.gradle.kts version ($GRADLE_VERSION)" >&2
+            exit 1
+          fi
+      - name: Publish to Maven Central (staged)
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew publishToMavenCentral --no-configuration-cache

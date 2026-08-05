@@ -4,14 +4,11 @@ The Encatch Android SDK lets you collect user feedback in your Android apps. Dis
 forms via a WebView overlay, identify users, track screens and events, and submit responses to
 the Encatch backend — functionally equivalent to `@encatch/react-native-sdk`.
 
-> **Note:** Install the latest stable release. Pre-release builds are published under the
-> `-beta` version suffix.
-
 ## Installation
 
 ```kotlin
 dependencies {
-    implementation("com.encatch:android:0.1.0-beta")
+    implementation("com.encatch:android:0.1.0")
 }
 ```
 

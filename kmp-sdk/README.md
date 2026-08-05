@@ -17,7 +17,7 @@ instead, which depends on this module and adds that.
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.encatch:kmp-sdk:0.1.0-beta")
+            implementation("com.encatch:kmp-sdk:0.1.0")
         }
     }
 }

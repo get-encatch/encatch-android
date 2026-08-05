@@ -12,8 +12,8 @@ via `android-library`), this module applies `com.android.application` directly a
 standalone, installable Android app in its own right — plus a runtime **Setup** screen so one
 build works for any tester or environment, no rebuild required.
 
-Depends on `:kmp-sdk`/`:android` as internal Gradle modules (these SDKs aren't published to a real
-Maven repo yet — see [`kmp-sdk/README.md`](../../kmp-sdk/README.md)).
+Depends on `:kmp-sdk`/`:android` as internal Gradle modules (external apps use the published
+Maven Central artifacts instead — see [`kmp-sdk/README.md`](../../kmp-sdk/README.md)).
 
 ## Run in an emulator (Android)
 

@@ -11,8 +11,8 @@ Modeled on [`encatch-android-tester`](../encatch-android-tester/README.md)/
 (`TesterPrefs`, an `expect`/`actual` object — `SharedPreferences` on Android, `NSUserDefaults` on
 iOS) so one build works for any tester or environment.
 
-Depends on `:compose-sdk`/`:android` as internal Gradle modules (these SDKs aren't published to a
-real Maven repo yet — see [`compose-sdk/README.md`](../../compose-sdk/README.md)).
+Depends on `:compose-sdk`/`:android` as internal Gradle modules (external apps use the published
+Maven Central artifacts instead — see [`compose-sdk/README.md`](../../compose-sdk/README.md)).
 
 ## Run in an emulator (Android)
 

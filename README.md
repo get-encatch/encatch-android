@@ -7,12 +7,12 @@ equivalent to [`@encatch/react-native-sdk`](https://www.npmjs.com/package/@encat
 Two independent, fully native SDKs — one per platform, not a shared cross-platform core — plus two
 thin bridge libraries for customers building with Compose Multiplatform or Kotlin Multiplatform:
 
-| Package | Platform | What it is |
-|---|---|---|
-| [`com.encatch:android`](android/README.md) | Android (native Views) | The real Android SDK. |
-| [`Encatch` (Swift Package)](ios-native/README.md) | iOS (native Swift/UIKit) | The real iOS SDK. Zero Kotlin dependency. Distributed via [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) for SPM. |
-| [`com.encatch:kmp-sdk`](kmp-sdk/README.md) | KMP (Android + iOS) | Thin bridge onto the two native SDKs above — full API, no UI. |
-| [`com.encatch:compose-sdk`](compose-sdk/README.md) | Compose Multiplatform (Android + iOS) | `:kmp-sdk` + a ready-made inline-form composable. |
+| Package | Platform | Install | What it is |
+|---|---|---|---|
+| [`com.encatch:android`](android/README.md) | Android (native Views) | Maven Central | The real Android SDK. |
+| [`Encatch` (Swift Package)](ios-native/README.md) | iOS (native Swift/UIKit) | SPM via [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) | The real iOS SDK. Zero Kotlin dependency. |
+| [`com.encatch:kmp-sdk`](kmp-sdk/README.md) | KMP (Android + iOS) | Maven Central | Thin bridge onto the two native SDKs above — full API, no UI. |
+| [`com.encatch:compose-sdk`](compose-sdk/README.md) | Compose Multiplatform (Android + iOS) | Maven Central | `:kmp-sdk` + a ready-made inline-form composable. |
 
 `com.encatch:core` is the platform-agnostic Kotlin business logic backing `:android` and
 `:kmp-sdk` on Android — most apps don't depend on it directly (see [`core/README.md`](core/README.md)).
