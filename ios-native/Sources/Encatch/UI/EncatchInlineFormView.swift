@@ -112,23 +112,28 @@ public final class EncatchInlineFormView: UIView {
         let newBridge = FormWebViewBridge(
             logTag: "Encatch",
             presentation: "inline",
+            // The bridge invokes these from WKWebView's script-message handler, which is always
+            // the main thread — assumeIsolated states that for Swift 5.10, whose isolation
+            // inference can't prove it (see EncatchFormViewController's twin comment).
             onClose: { [weak self] _ in
                 Encatch.shared.setFormVisible(false)
-                self?.clearForm()
+                MainActor.assumeIsolated { self?.clearForm() }
             },
-            onHeightChange: { [weak self] height in self?.applyHeight(CGFloat(height)) },
-            onForceFullHeight: { [weak self] force in self?.applyForceFullHeight(force) },
+            onHeightChange: { [weak self] height in MainActor.assumeIsolated { self?.applyHeight(CGFloat(height)) } },
+            onForceFullHeight: { [weak self] force in MainActor.assumeIsolated { self?.applyForceFullHeight(force) } },
             onReady: { [weak self] in
-                // Fade the skeleton over the rendered form, then remove it — removing
-                // immediately would cut the crossfade and make the handoff feel jerky.
-                guard let self, let fadingSkeleton = self.skeleton else { return }
-                self.skeleton = nil
-                fadingSkeleton.stop()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    fadingSkeleton.removeFromSuperview()
+                MainActor.assumeIsolated {
+                    // Fade the skeleton over the rendered form, then remove it — removing
+                    // immediately would cut the crossfade and make the handoff feel jerky.
+                    guard let self, let fadingSkeleton = self.skeleton else { return }
+                    self.skeleton = nil
+                    fadingSkeleton.stop()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        fadingSkeleton.removeFromSuperview()
+                    }
                 }
             },
-            sendToWebView: { [weak self] message in self?.webView?.sendToWebView(message) },
+            sendToWebView: { [weak self] message in MainActor.assumeIsolated { self?.webView?.sendToWebView(message) } },
             redirectOpener: redirectBrowser,
             openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
         )

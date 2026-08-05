@@ -142,7 +142,10 @@ public final class EncatchBridgeConfig: NSObject {
             debugMode: debugMode,
             appVersion: appVersion,
             onBeforeShowForm: interceptor.map { handler in
-                { (payload: ShowFormInterceptorPayload) async -> Bool in
+                // The literal's contextual type comes from map's generic parameter, so
+                // @Sendable isn't inferred — without the annotation the conversion to
+                // BeforeShowFormInterceptor warns about a non-Sendable function value.
+                { @Sendable (payload: ShowFormInterceptorPayload) async -> Bool in
                     await withCheckedContinuation { continuation in
                         handler(EncatchBridgeShowFormInterceptorPayload(payload)) { allow in
                             continuation.resume(returning: allow)
