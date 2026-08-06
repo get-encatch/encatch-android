@@ -338,6 +338,11 @@ final class EncatchApiClient: @unchecked Sendable {
         request.httpMethod = "POST"
         for (key, value) in authHeaders { request.setValue(value, forHTTPHeaderField: key) }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Ktor's SSE plugin (the Android SDK) sends these automatically; SSE backends and
+        // intermediaries key on Accept to stream rather than buffer — without it the
+        // response can come back non-SSE/empty and the stream "ends without a done event".
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.httpBody = try JSONEncoder().encode(bodyObject)
 
         var accumulatedAnswer = ""
@@ -345,10 +350,22 @@ final class EncatchApiClient: @unchecked Sendable {
         var streamError: Error?
 
         let bytes: URLSession.AsyncBytes
+        let response: URLResponse
         do {
-            (bytes, _) = try await session.bytes(for: request)
+            (bytes, response) = try await session.bytes(for: request)
         } catch {
             throw EncatchApiException(endpoint: Endpoints.qnaWithAiStream, status: 0, responseBody: error.localizedDescription)
+        }
+
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            // Surface the real failure (auth, 4xx/5xx) instead of parsing a non-SSE body to
+            // nothing and reporting a bogus "ended without done/error".
+            var errorBody = ""
+            for try await line in bytes.lines {
+                errorBody += line
+                if errorBody.count > 2048 { break }
+            }
+            throw EncatchApiException(endpoint: Endpoints.qnaWithAiStream, status: http.statusCode, responseBody: errorBody)
         }
 
         var currentEvent: String?
@@ -385,20 +402,41 @@ final class EncatchApiClient: @unchecked Sendable {
             }
         }
 
+        func handleLine(_ line: String) {
+            if line.isEmpty {
+                processEvent()
+                return
+            }
+            if line.hasPrefix("event:") {
+                currentEvent = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                let chunk = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+                if !currentData.isEmpty { currentData += "\n" }
+                currentData += chunk
+            }
+        }
+
         do {
-            for try await line in bytes.lines {
-                if line.isEmpty {
-                    processEvent()
-                    continue
-                }
-                if line.hasPrefix("event:") {
-                    currentEvent = line.dropFirst("event:".count).trimmingCharacters(in: .whitespaces)
-                } else if line.hasPrefix("data:") {
-                    let chunk = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
-                    if !currentData.isEmpty { currentData += "\n" }
-                    currentData += chunk
+            // Hand-rolled line splitting: `bytes.lines` never emits EMPTY lines (consecutive
+            // newlines collapse into one separator), and empty lines are exactly how SSE
+            // delimits frames — with .lines, processEvent() would never fire mid-stream and
+            // every frame's data would concatenate into one unparseable blob. (Ktor's SSE
+            // plugin on Android does its own framing, which is why only iOS broke.)
+            var lineBuf = [UInt8]()
+            for try await byte in bytes {
+                if byte == 0x0A { // \n
+                    var line = String(decoding: lineBuf, as: UTF8.self)
+                    if line.hasSuffix("\r") { line.removeLast() }
+                    handleLine(line)
+                    lineBuf.removeAll(keepingCapacity: true)
+                } else {
+                    lineBuf.append(byte)
                 }
             }
+            if !lineBuf.isEmpty { handleLine(String(decoding: lineBuf, as: UTF8.self)) }
+            // Servers may close the connection right after the final `data:` line without the
+            // blank-line frame terminator — flush the pending event or the done frame is lost.
+            processEvent()
         } catch {
             throw EncatchApiException(endpoint: Endpoints.qnaWithAiStream, status: 0, responseBody: error.localizedDescription)
         }
