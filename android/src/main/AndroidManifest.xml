@@ -1,1 +1,32 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Invisible proxy that launches the system file chooser for the form WebView's
+             <input type="file"> — see EncatchFileChooserActivity. -->
+        <activity
+            android:name=".EncatchFileChooserActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Invisible proxy that shows the runtime-permission dialog for the form's
+             video/audio recording questions — see EncatchPermissionActivity. -->
+        <activity
+            android:name=".EncatchPermissionActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Backs the camera-capture option in the file chooser: the capture intent needs a
+             content:// uri another app can write the photo to. Namespaced authority so it never
+             collides with a host app's own FileProvider. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.encatch.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/encatch_file_paths" />
+        </provider>
+    </application>
+</manifest>

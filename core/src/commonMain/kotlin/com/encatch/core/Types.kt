@@ -183,6 +183,9 @@ data class RefineTextResponse(
     val error: String? = null,
 )
 
+// @Serializable is load-bearing: ApiClient.streamQnaWithAi serializes the conversation via a
+// runtime serializer<List<...>>() lookup, which fails at runtime (not compile time) without it.
+@Serializable
 data class QnaWithAiConversationTurn(
     val question: String,
     val answer: String,

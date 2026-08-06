@@ -25,6 +25,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Used to record video feedback in forms.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Used to record audio feedback in forms.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

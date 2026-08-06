@@ -21,6 +21,10 @@ targets:
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # The form's video/audio recording questions use getUserMedia — iOS kills the app
+        # outright if these usage strings are missing when capture starts.
+        NSCameraUsageDescription: "Used to record video feedback in forms."
+        NSMicrophoneUsageDescription: "Used to record audio feedback in forms."
         # Required by Compose Multiplatform's iOS UIKit target — without it,
         # ComposeUIViewController's PlistSanityCheck aborts the process on iPhone.
         CADisableMinimumFrameDurationOnPhone: true

@@ -74,7 +74,12 @@ public final class EncatchFormViewController: UIViewController {
         onHeightChange: { [weak self] height in MainActor.assumeIsolated { self?.applyHeight(CGFloat(height), animated: true) } },
         onForceFullHeight: { [weak self] force in MainActor.assumeIsolated { self?.applyForceFullHeight(force) } },
         onReady: { [weak self] in MainActor.assumeIsolated { self?.hideSkeleton() } },
-        sendToWebView: { [weak self] message in MainActor.assumeIsolated { self?.webView.sendToWebView(message) } },
+        // Unlike the other callbacks, sendToWebView is ALSO invoked from background contexts
+        // (upload-progress callbacks, Task-launched refine/QnA responses) — hop to main instead
+        // of asserting on it. WKWebView.evaluateJavaScript must run on the main thread.
+        sendToWebView: { [weak self] message in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.webView.sendToWebView(message) } }
+        },
         redirectOpener: redirectBrowser,
         openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
     )

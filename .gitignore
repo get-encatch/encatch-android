@@ -16,6 +16,8 @@ ios-kmp-sample/*.xcodeproj/
 ios-kmp-sample/Sources/Info.plist
 ios-native/.xcbuild-dev/
 ios-native/.xcbuild-sim/
+integrations/*/.xcbuild-device/
+mock-server/bin/
 integrations/encatch-ios-tester/*.xcodeproj/
 integrations/encatch-mac-tester/*.xcodeproj/
 integrations/encatch-kmp-tester-ios/*.xcodeproj/

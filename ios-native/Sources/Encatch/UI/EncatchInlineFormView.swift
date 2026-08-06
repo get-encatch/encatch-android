@@ -133,7 +133,12 @@ public final class EncatchInlineFormView: UIView {
                     }
                 }
             },
-            sendToWebView: { [weak self] message in MainActor.assumeIsolated { self?.webView?.sendToWebView(message) } },
+            // Unlike the other callbacks, sendToWebView is ALSO invoked from background contexts
+            // (upload-progress callbacks, Task-launched refine/QnA responses) — hop to main
+            // instead of asserting on it (see EncatchFormViewController's twin comment).
+            sendToWebView: { [weak self] message in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.webView?.sendToWebView(message) } }
+            },
             redirectOpener: redirectBrowser,
             openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
         )

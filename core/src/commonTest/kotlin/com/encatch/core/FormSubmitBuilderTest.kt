@@ -7,10 +7,12 @@ import kotlin.test.assertTrue
 class FormSubmitBuilderTest {
 
     @Test
-    fun toQuestionAnswer_numericScales_coerceToDouble() {
-        assertEquals(5.0, toQuestionAnswer("rating", 5).rating)
-        assertEquals(9.0, toQuestionAnswer("nps", "9").nps)
-        assertEquals(4.0, toQuestionAnswer("csat", 4.0).csat)
+    fun toQuestionAnswer_numericScales_coerceToInt() {
+        assertEquals(5, toQuestionAnswer("rating", 5).rating)
+        assertEquals(9, toQuestionAnswer("nps", "9").nps)
+        assertEquals(4, toQuestionAnswer("csat", 4.0).csat)
+        // Rounded, not truncated or rejected — the backend field is i32.
+        assertEquals(5, toQuestionAnswer("rating", 4.6).rating)
     }
 
     @Test
@@ -77,7 +79,7 @@ class FormSubmitBuilderTest {
         assertEquals("cfg-1", request.formDetails.formConfigurationId)
         assertEquals("fb-1", request.formDetails.feedbackIdentifier)
         assertEquals(2, request.formDetails.response?.questions?.size)
-        assertEquals(5.0, request.formDetails.response?.questions?.get(0)?.answer?.rating)
+        assertEquals(5, request.formDetails.response?.questions?.get(0)?.answer?.rating)
         assertEquals("Great product!", request.formDetails.response?.questions?.get(1)?.answer?.shortAnswer)
         assertTrue(request.formDetails.response?.questions?.get(0)?.type == "rating")
     }

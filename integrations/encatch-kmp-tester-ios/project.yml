@@ -21,6 +21,10 @@ targets:
         UILaunchScreen: {}
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # The form's video/audio recording questions use getUserMedia — iOS kills the app
+        # outright if these usage strings are missing when capture starts.
+        NSCameraUsageDescription: "Used to record video feedback in forms."
+        NSMicrophoneUsageDescription: "Used to record audio feedback in forms."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.encatch.kmptester.ios
