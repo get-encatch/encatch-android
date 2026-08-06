@@ -20,11 +20,20 @@ private extension JSONValue {
         if case .number(let value) = self { return value }
         return nil
     }
+
+    /// True for JSON `true` and the string `"true"` — bridge messages are loose about which
+    /// they send (form:layout's fullHeight is a real bool).
+    var asBool: Bool {
+        if case .bool(let value) = self { return value }
+        if case .string(let value) = self { return value == "true" }
+        return false
+    }
 }
 
 private extension Dictionary where Key == String, Value == JSONValue {
     func string(_ key: String) -> String? { self[key]?.asString }
     func double(_ key: String) -> Double? { self[key]?.asDouble }
+    func bool(_ key: String) -> Bool { self[key]?.asBool ?? false }
     func object(_ key: String) -> [String: JSONValue]? { self[key]?.asObject }
     func array(_ key: String) -> [JSONValue]? { self[key]?.asArray }
 }
@@ -141,7 +150,7 @@ public final class FormWebViewBridge: @unchecked Sendable {
             }
 
         case .layout:
-            onForceFullHeight(data?.string("fullHeight") == "true")
+            onForceFullHeight(data?.bool("fullHeight") ?? false)
 
         case .submit:
             guard let data else { return }

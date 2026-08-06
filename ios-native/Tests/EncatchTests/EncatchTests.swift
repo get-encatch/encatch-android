@@ -468,3 +468,29 @@ final class EncatchFormViewControllerTests: XCTestCase {
     }
 }
 #endif
+
+final class FormWebViewBridgeTests: XCTestCase {
+    private struct NoopRedirectOpener: RedirectOpener {
+        func openInternal(url: String) async {}
+    }
+
+    /// form:layout carries fullHeight as a JSON BOOL (see apps/shareable: sendToParent("form:layout",
+    /// { fullHeight: schedulerDialogOpen || qnaWithAiDialogOpen })) — decoding it as a string made
+    /// the QnA/scheduler full-height overlays dead on iOS.
+    func testFormLayoutBooleanFullHeightReachesCallback() {
+        nonisolated(unsafe) var received: [Bool] = []
+        let bridge = FormWebViewBridge(
+            onClose: { _ in },
+            onHeightChange: { _ in },
+            onForceFullHeight: { received.append($0) },
+            onReady: {},
+            sendToWebView: { _ in },
+            redirectOpener: NoopRedirectOpener(),
+            openExternal: { _ in }
+        )
+        bridge.handleMessage(#"{"type":"form:layout","data":{"fullHeight":true}}"#)
+        bridge.handleMessage(#"{"type":"form:layout","data":{"fullHeight":false}}"#)
+        bridge.handleMessage(#"{"type":"form:layout","data":{"fullHeight":"true"}}"#)
+        XCTAssertEqual(received, [true, false, true])
+    }
+}

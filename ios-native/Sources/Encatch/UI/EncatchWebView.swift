@@ -52,6 +52,13 @@ final class EncatchWebView: WKWebView {
         backgroundColor = .clear
         isOpaque = false
         scrollView.bounces = false
+        // .automatic (the default) silently adds the bottom safe-area inset to the scroll view
+        // whenever the webview extends into the home-indicator zone (e.g. full-height QnA/
+        // scheduler overlays), leaving ~34pt of phantom scroll below the page content — except
+        // while the keyboard is up, when the webview no longer touches the safe area.
+        // react-native-webview defaults to "never" for the same reason; Android has no
+        // equivalent mechanism, which is why only iOS showed it.
+        scrollView.contentInsetAdjustmentBehavior = .never
     }
 
     @available(*, unavailable)
