@@ -77,8 +77,11 @@ public final class EncatchFormViewController: UIViewController {
         // Unlike the other callbacks, sendToWebView is ALSO invoked from background contexts
         // (upload-progress callbacks, Task-launched refine/QnA responses) — hop to main instead
         // of asserting on it. WKWebView.evaluateJavaScript must run on the main thread.
+        // The inner closure needs its own [weak self] capture: referencing the outer closure's
+        // weak binding from the @Sendable dispatch closure is a Swift 5.10 error ("reference to
+        // captured var 'self' in concurrently-executing code") — 6.x accepts it, CI doesn't.
         sendToWebView: { [weak self] message in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.webView.sendToWebView(message) } }
+            DispatchQueue.main.async { [weak self] in MainActor.assumeIsolated { self?.webView.sendToWebView(message) } }
         },
         redirectOpener: redirectBrowser,
         openExternal: { [weak self] url in self?.redirectBrowser.openExternal(url) }
