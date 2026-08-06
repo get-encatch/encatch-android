@@ -72,11 +72,18 @@ class EncatchWebView(context: Context) : WebView(context) {
                 // are drop-in. Apps that don't declare CAMERA/RECORD_AUDIO get a deny plus a
                 // log hint — the SDK deliberately doesn't add permissions to consumers'
                 // manifests.
-                val needed = request.resources.mapNotNull {
+                val needed = request.resources.flatMap {
                     when (it) {
-                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> android.Manifest.permission.CAMERA
-                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> android.Manifest.permission.RECORD_AUDIO
-                        else -> null
+                        PermissionRequest.RESOURCE_VIDEO_CAPTURE -> listOf(android.Manifest.permission.CAMERA)
+                        // Chromium's audio stack refuses to select a capture device without
+                        // MODIFY_AUDIO_SETTINGS ("Requires MODIFY_AUDIO_SETTINGS and
+                        // RECORD_AUDIO") — it's a normal permission, so checkSelfPermission
+                        // reports it granted iff the app declares it; no dialog is shown for it.
+                        PermissionRequest.RESOURCE_AUDIO_CAPTURE -> listOf(
+                            android.Manifest.permission.RECORD_AUDIO,
+                            android.Manifest.permission.MODIFY_AUDIO_SETTINGS,
+                        )
+                        else -> emptyList()
                     }
                 }.distinct()
                 val missing = needed.filter {

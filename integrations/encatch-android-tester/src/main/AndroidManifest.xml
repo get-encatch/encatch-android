@@ -6,6 +6,9 @@
          SDK requests these at use-time, but only apps that declare them can be granted. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Normal (install-time) permission; WebView's Chromium audio stack refuses to select a
+         recording device without it ("Requires MODIFY_AUDIO_SETTINGS and RECORD_AUDIO"). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:name=".TesterApplication"
