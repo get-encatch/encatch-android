@@ -1,23 +1,17 @@
 #!/bin/bash
-# Prepares all three iOS tester apps for a real-device install (builds XCFrameworks, generates
-# Xcode projects) and opens each one in Xcode. Free-account Apple IDs can't complete Xcode's
-# automatic-signing handshake with Apple's servers from a plain `xcodebuild` CLI invocation — it
-# has to happen through an interactive Xcode session — so the actual build+install step is you
-# pressing Run (▶) in Xcode for each project, with your device selected as the destination.
+# One-command build + install of all three iOS tester apps onto a connected physical iPhone —
+# no Xcode UI needed. Uses xcodebuild's own provisioning-update flow
+# (-allowProvisioningUpdates) plus `xcrun devicectl` for the transfer, which resolves the
+# signing handshake non-interactively as long as a valid provisioning profile/certificate for
+# DEVELOPMENT_TEAM is already present in this Mac's keychain (Xcode > Settings > Accounts, or
+# any prior manual Run from Xcode).
 #
-# Usage: ./scripts/install-testers-on-device.sh
+# Usage: ./scripts/install-testers-on-device.sh [device-udid] [team-id]
+#   device-udid  defaults to the first available (paired) physical device from `devicectl`
+#   team-id      defaults to $ENCATCH_DEVELOPMENT_TEAM, else the Apple Developer team ID below
 #
-# For each project this opens:
-#   1. Make sure the scheme's destination (next to the ▶ button) is your device, e.g. "Godwin
-#      iPhone" — not a Simulator.
-#   2. Press ▶ Run. First time only: Xcode will register the device + create/download a
-#      provisioning profile from Apple (needs your Xcode account signed in — Xcode > Settings >
-#      Accounts). If the app doesn't launch, unlock the device and go to Settings > General > VPN
-#      & Device Management to trust the developer certificate, then run again.
-#   3. Free-account builds expire after 7 days — re-run this script and hit ▶ again to refresh.
-#
-# For Android, just `adb install -r <apk>` — no signing story needed, see
-# scripts/build-testers-for-distribution.sh.
+# Builds are Debug configuration (device testers, not App Store) and launch automatically after
+# install. Free-account builds still expire after 7 days — just re-run this script to refresh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,32 +20,81 @@ if ! command -v xcodegen >/dev/null 2>&1; then
     exit 1
 fi
 
+DEVICE_ID="${1:-}"
+if [ -z "$DEVICE_ID" ]; then
+    # Table output is unreliable to awk-parse: device Name can contain spaces (e.g. "Godwin
+    # iPhone"), which shifts every column over. --json-output is the only supported script
+    # interface (per `devicectl list devices --help`).
+    JSON_TMP="$(mktemp)"
+    xcrun devicectl list devices --json-output "$JSON_TMP" >/dev/null 2>&1 || true
+    DEVICE_ID="$(python3 -c '
+import json, sys
+try:
+    devices = json.load(open(sys.argv[1]))["result"]["devices"]
+except Exception:
+    sys.exit(0)
+for d in devices:
+    if d.get("connectionProperties", {}).get("pairingState") == "paired":
+        print(d["identifier"]); break
+' "$JSON_TMP" 2>/dev/null)"
+    rm -f "$JSON_TMP"
+fi
+if [ -z "$DEVICE_ID" ]; then
+    echo "No paired physical device found — connect an iPhone and trust this Mac first (\`xcrun devicectl list devices\`)." >&2
+    exit 1
+fi
+echo "Target device: $DEVICE_ID"
+
+DEVELOPMENT_TEAM="${2:-${ENCATCH_DEVELOPMENT_TEAM:-UG3272Y9F9}}"
+echo "Development team: $DEVELOPMENT_TEAM"
+echo
+
 echo "--- Building iOS XCFrameworks ---"
 ./gradlew \
     :integrations:encatch-kmp-tester:assembleEncatchKmpTesterDebugXCFramework \
     :integrations:encatch-compose-tester:assembleEncatchComposeTesterDebugXCFramework
 echo
 
-for dir in encatch-ios-tester encatch-kmp-tester-ios encatch-compose-tester-ios; do
-    echo "--- Generating Xcode project: $dir ---"
-    (cd "integrations/$dir" && xcodegen generate)
-done
-echo
-
-PROJECTS=(
-    "integrations/encatch-ios-tester/EncatchIosTester.xcodeproj"
-    "integrations/encatch-kmp-tester-ios/EncatchKmpTester.xcodeproj"
-    "integrations/encatch-compose-tester-ios/EncatchComposeTester.xcodeproj"
+# dir : scheme : bundle id
+APPS=(
+    "encatch-ios-tester:EncatchIosTester:com.encatch.iostester"
+    "encatch-kmp-tester-ios:EncatchKmpTesterApp:com.encatch.kmptester.ios"
+    "encatch-compose-tester-ios:EncatchComposeTesterApp:com.encatch.composetester.ios"
 )
-for p in "${PROJECTS[@]}"; do
-    open "$p"
+
+for entry in "${APPS[@]}"; do
+    IFS=':' read -r dir scheme bundle_id <<< "$entry"
+    echo "=== $dir ==="
+
+    (cd "integrations/$dir" && xcodegen generate >/dev/null)
+
+    project_path="integrations/$dir"/*.xcodeproj
+    derived_data="integrations/$dir/.xcbuild-device"
+
+    echo "Building..."
+    # Generic destination, not "id=$DEVICE_ID": xcodebuild's own destination-id namespace is
+    # unrelated to devicectl's identifier (used below for install/launch) — passing the
+    # devicectl UDID here fails with "Unable to find a device matching the provided
+    # destination specifier".
+    xcodebuild -project $project_path -scheme "$scheme" \
+        -destination 'generic/platform=iOS' -derivedDataPath "$derived_data" \
+        DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" -allowProvisioningUpdates build \
+        2>&1 | grep -E '\*\* BUILD|error:' || true
+
+    app_path="$derived_data/Build/Products/Debug-iphoneos/$scheme.app"
+    if [ ! -d "$app_path" ]; then
+        echo "error: build didn't produce $app_path — see xcodebuild output above" >&2
+        exit 1
+    fi
+
+    echo "Installing..."
+    xcrun devicectl device install app --device "$DEVICE_ID" "$app_path"
+
+    echo "Launching..."
+    xcrun devicectl device process launch --device "$DEVICE_ID" "$bundle_id" >/dev/null 2>&1 || true
+
+    rm -rf "$derived_data" "integrations/$dir"/*.xcodeproj
+    echo
 done
 
-cat <<'EOF'
-=== Opened all three projects in Xcode ===
-
-For each one: pick your iPhone as the run destination (next to the ▶ button, top-left) and press
-▶ Run. That's it — Xcode installs and launches it on your device. Repeat for all three windows.
-
-Free-account builds expire after 7 days; re-run this script and hit ▶ again to refresh.
-EOF
+echo "=== All three testers built, installed, and launched on $DEVICE_ID ==="
