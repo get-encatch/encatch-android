@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug-only: allows cleartext HTTP to :mock-server (http://10.0.2.2:<port> from an
+         emulator) for automated screenshot testing. Does not affect release builds. -->
+    <application android:usesCleartextTraffic="true" />
+
+</manifest>

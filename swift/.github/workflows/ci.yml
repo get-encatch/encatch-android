@@ -1,0 +1,57 @@
+# CI for the encatch-swift distribution mirror. This file is inert inside the encatch-android
+# monorepo (GitHub only reads root-level .github/) — it ships with each release published by
+# scripts/publish-encatch-swift.sh and runs in github.com/get-encatch/encatch-swift.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  macos:
+    name: swift build & test (macOS)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift test
+
+  ios:
+    name: xcodebuild (iOS Simulator)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild build \
+            -scheme Encatch \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  # Tag pushes only: the GitHub release is created HERE, after both build jobs pass, so a
+  # version that fails on the CI toolchain never becomes a published release. The publish
+  # script (scripts/publish-encatch-swift.sh in the monorepo) pushes the tag and stops.
+  release:
+    name: Create GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release for tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

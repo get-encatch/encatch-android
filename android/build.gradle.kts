@@ -1,0 +1,80 @@
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.maven.publish)
+}
+
+android {
+    namespace = "com.encatch.android"
+    compileSdk = 35
+
+    defaultConfig {
+        minSdk = 24
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
+}
+
+kotlin {
+    // See :core's build.gradle.kts for the full rationale — pinned below our actual Kotlin
+    // version (2.3.21) so consuming apps on an older Kotlin Gradle Plugin can still read this
+    // published library's binary metadata.
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_1)
+    }
+}
+
+dependencies {
+    api(project(":core"))
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.androidx.browser)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.kotlinx.coroutines.test)
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    coordinates(artifactId = "android")
+    pom {
+        name.set("Encatch Android")
+        description.set("Encatch Android SDK — collect user feedback via native/WebView forms in Android apps.")
+        url.set("https://github.com/get-encatch/encatch-android")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                name.set("Encatch")
+                url.set("https://encatch.com")
+            }
+        }
+        scm {
+            url.set("https://github.com/get-encatch/encatch-android")
+            connection.set("scm:git:https://github.com/get-encatch/encatch-android.git")
+        }
+    }
+}

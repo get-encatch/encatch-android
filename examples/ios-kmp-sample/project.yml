@@ -1,0 +1,52 @@
+name: EncatchKmpSample
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  EncatchKmpSampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - framework: ../kmp-sample/build/XCFrameworks/debug/EncatchKmpSample.xcframework
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch KMP Sample"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.kmpsample
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+  EncatchKmpSampleAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.kmpsample.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: EncatchKmpSampleApp
+
+schemes:
+  EncatchKmpSampleApp:
+    build:
+      targets:
+        EncatchKmpSampleApp: all
+        EncatchKmpSampleAppUITests: [test]
+    test:
+      targets:
+        - EncatchKmpSampleAppUITests
+    run:
+      config: Debug

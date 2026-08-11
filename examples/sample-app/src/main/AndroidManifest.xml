@@ -1,0 +1,34 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".SampleApplication"
+        android:allowBackup="true"
+        android:label="Encatch Sample"
+        android:theme="@style/Theme.AppCompat.DayNight">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ComposeMainActivity"
+            android:exported="true" />
+
+        <activity
+            android:name="com.encatch.composesample.ComposeMultiplatformSampleActivity"
+            android:exported="true" />
+
+        <activity
+            android:name="com.encatch.kmpsample.KmpSampleMainActivity"
+            android:exported="true" />
+
+    </application>
+
+</manifest>

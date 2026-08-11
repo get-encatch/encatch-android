@@ -1,0 +1,55 @@
+name: EncatchComposeSample
+options:
+  bundleIdPrefix: com.encatch
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  EncatchComposeSampleApp:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - framework: ../compose-sample/build/XCFrameworks/debug/EncatchComposeSample.xcframework
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Encatch Compose Sample"
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # Required by Compose Multiplatform's iOS UIKit target — without it,
+        # ComposeUIViewController's PlistSanityCheck aborts the process on iPhone.
+        CADisableMinimumFrameDurationOnPhone: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.composesample
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+
+  EncatchComposeSampleAppUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.encatch.composesample.uitests
+        GENERATE_INFOPLIST_FILE: "YES"
+    dependencies:
+      - target: EncatchComposeSampleApp
+
+schemes:
+  EncatchComposeSampleApp:
+    build:
+      targets:
+        EncatchComposeSampleApp: all
+        EncatchComposeSampleAppUITests: [test]
+    test:
+      targets:
+        - EncatchComposeSampleAppUITests
+    run:
+      config: Debug

@@ -1,0 +1,37 @@
+# Publishes swift/ to the github.com/get-encatch/encatch-swift SPM mirror when a
+# swift-v* tag is pushed (e.g. swift-v0.1.4). Runs scripts/publish-encatch-swift.sh — the
+# same copy-and-squash flow as a local release: rsync minus exclusions, leak gate,
+# swift build + test gate, then push of main + the plain X.Y.Z tag to the mirror.
+#
+# The GitHub release on the mirror is NOT created here — the mirror's own CI validates the
+# pushed tag on its (older) Swift toolchain and creates the release only on green.
+#
+# Required repository secret:
+#   ENCATCH_SWIFT_PUSH_TOKEN - fine-grained PAT scoped to get-encatch/encatch-swift with
+#                              Contents: Read and write (the workflow's own GITHUB_TOKEN
+#                              cannot push to a different repository).
+name: Swift mirror release
+
+on:
+  push:
+    tags: ['swift-v*']
+
+jobs:
+  publish:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history so the branch guard's ancestor check works.
+          fetch-depth: 0
+      - name: Require tagged commit to be on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main — releases must ship merged code." >&2
+            exit 1
+          fi
+      - name: Publish to encatch-swift mirror
+        env:
+          ENCATCH_SWIFT_PUSH_TOKEN: ${{ secrets.ENCATCH_SWIFT_PUSH_TOKEN }}
+        run: scripts/publish-encatch-swift.sh "${GITHUB_REF_NAME#swift-v}"
