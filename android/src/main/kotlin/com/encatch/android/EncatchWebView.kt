@@ -3,6 +3,7 @@ package com.encatch.android
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Looper
 import android.provider.MediaStore
@@ -136,47 +137,26 @@ class EncatchWebView(context: Context) : WebView(context) {
                     content.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                 }
 
-                // Offer the camera alongside the file picker when images are acceptable — the
-                // capture writes to a FileProvider-backed cache file (see AndroidManifest).
-                var cameraOutput: Uri? = null
                 val acceptTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() }
                 val acceptsImages = acceptTypes.isEmpty() || acceptTypes.any { it == "*/*" || it.startsWith("image/") }
-                val cameraIntent = if (acceptsImages) {
-                    runCatching {
-                        val photoFile = java.io.File.createTempFile("encatch_capture_", ".jpg", context.cacheDir)
-                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                            context, "${context.packageName}.encatch.fileprovider", photoFile,
-                        )
-                        cameraOutput = uri
-                        Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-                            .putExtra(MediaStore.EXTRA_OUTPUT, uri)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    }.getOrNull()
-                } else {
-                    null
+
+                // Platform rule: an app that DECLARES the CAMERA permission must also HOLD it
+                // before launching ACTION_IMAGE_CAPTURE — otherwise the launch throws
+                // SecurityException and the chooser's camera row silently does nothing. Apps
+                // that never declare CAMERA are exempt. So when the host declares it (any app
+                // using the video/audio question type does) but the user hasn't granted it yet,
+                // ask via the SDK's own permission proxy first, then open the chooser with the
+                // camera option only if granted.
+                val needsCameraGrant = acceptsImages && appDeclaresCameraPermission() &&
+                    context.checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+                if (needsCameraGrant) {
+                    EncatchPermissionActivity.launch(context, arrayOf(android.Manifest.permission.CAMERA)) { granted ->
+                        post { launchFileChooser(content, filePathCallback, includeCamera = granted) }
+                    }
+                    return true
                 }
 
-                val chooser = Intent(Intent.ACTION_CHOOSER).putExtra(Intent.EXTRA_INTENT, content)
-                if (cameraIntent != null) {
-                    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
-                }
-
-                EncatchFileChooserActivity.pendingCallback = filePathCallback
-                EncatchFileChooserActivity.pendingCameraOutput = cameraOutput
-                EncatchFileChooserActivity.pendingChooserIntent = chooser
-                val launched = runCatching {
-                    context.startActivity(
-                        Intent(context, EncatchFileChooserActivity::class.java)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                }.isSuccess
-                if (!launched) {
-                    EncatchFileChooserActivity.pendingCallback = null
-                    EncatchFileChooserActivity.pendingCameraOutput = null
-                    EncatchFileChooserActivity.pendingChooserIntent = null
-                    filePathCallback.onReceiveValue(null)
-                }
-                return launched
+                return launchFileChooser(content, filePathCallback, includeCamera = acceptsImages)
             }
         }
 
@@ -208,6 +188,65 @@ class EncatchWebView(context: Context) : WebView(context) {
                 return true // handled — returning false would kill the entire host app
             }
         }
+    }
+
+    private fun appDeclaresCameraPermission(): Boolean = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+            .requestedPermissions?.contains(android.Manifest.permission.CAMERA) == true
+    }.getOrDefault(false)
+
+    /**
+     * Builds and launches the system chooser for a form `<input type="file">`, optionally
+     * offering camera capture (writes to a FileProvider-backed cache file — see
+     * AndroidManifest). Resolves [filePathCallback] with null on any launch failure; a caller
+     * must not invoke it again after this returns.
+     */
+    private fun launchFileChooser(
+        content: Intent,
+        filePathCallback: ValueCallback<Array<Uri>>,
+        includeCamera: Boolean,
+    ): Boolean {
+        // Defensive: if another chooser raced in while a camera-permission prompt was up,
+        // resolve the stale pending callback rather than leaking it.
+        EncatchFileChooserActivity.pendingCallback?.takeIf { it !== filePathCallback }?.onReceiveValue(null)
+
+        var cameraOutput: Uri? = null
+        val cameraIntent = if (includeCamera) {
+            runCatching {
+                val photoFile = java.io.File.createTempFile("encatch_capture_", ".jpg", context.cacheDir)
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    context, "${context.packageName}.encatch.fileprovider", photoFile,
+                )
+                cameraOutput = uri
+                Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                    .putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        val chooser = Intent(Intent.ACTION_CHOOSER).putExtra(Intent.EXTRA_INTENT, content)
+        if (cameraIntent != null) {
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+        }
+
+        EncatchFileChooserActivity.pendingCallback = filePathCallback
+        EncatchFileChooserActivity.pendingCameraOutput = cameraOutput
+        EncatchFileChooserActivity.pendingChooserIntent = chooser
+        val launched = runCatching {
+            context.startActivity(
+                Intent(context, EncatchFileChooserActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.isSuccess
+        if (!launched) {
+            EncatchFileChooserActivity.pendingCallback = null
+            EncatchFileChooserActivity.pendingCameraOutput = null
+            EncatchFileChooserActivity.pendingChooserIntent = null
+            filePathCallback.onReceiveValue(null)
+        }
+        return launched
     }
 
     fun loadFormUrl(url: String) {
