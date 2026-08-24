@@ -241,7 +241,7 @@ public final class FormWebViewBridge: @unchecked Sendable {
 
             Task {
                 var payload: [String: JSONValue] = [:]
-                guard let bytes = Data(base64Encoded: fileDataBase64) else {
+                guard let bytes = Data(base64Encoded: extractBase64Payload(fileDataBase64)) else {
                     if let requestId { payload["requestId"] = .string(requestId) }
                     payload["error"] = .string("Upload failed")
                     self.sendToWebView(SDKMessage(type: .uploadFileResponse, dataJson: JSONValue.object(payload).toJSONString()))
@@ -411,6 +411,23 @@ private extension ShowFormResponse {
         if let pingOnNextPageVisit { result["pingOnNextPageVisit"] = .bool(pingOnNextPageVisit) }
         return result
     }
+}
+
+/// Extracts the raw base64 payload from an upload's `fileData`, mirroring the Flutter SDK's
+/// `_extractBase64Payload`. The web engine sends bare base64 for engine-generated content
+/// (e.g. a drawn signature, where it strips the canvas data URL itself) but a full
+/// `data:<mime>;base64,<payload>` data URL for user-picked files (signature upload mode reads
+/// them via `FileReader.readAsDataURL`). `Data(base64Encoded:)` rejects the `data:` header —
+/// strip it when present, drop any whitespace, and pass bare base64 through unchanged.
+public func extractBase64Payload(_ fileData: String) -> String {
+    var payload = fileData.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let commaIndex = payload.range(of: ",", options: .backwards)?.lowerBound {
+        let header = payload[..<commaIndex].lowercased()
+        if header.hasPrefix("data:"), header.contains(";base64") {
+            payload = String(payload[payload.index(after: commaIndex)...])
+        }
+    }
+    return payload.filter { !$0.isWhitespace }
 }
 
 /// Normalizes a MIME type string, mirrors `uploadMimeType` from `form-webview-helpers.ts`.

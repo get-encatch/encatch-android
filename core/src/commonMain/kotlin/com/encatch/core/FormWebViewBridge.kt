@@ -236,7 +236,7 @@ class FormWebViewBridge(
 
                 scope.launch {
                     val result = runCatching {
-                        val bytes = Base64.decode(fileDataBase64)
+                        val bytes = Base64.decode(extractBase64Payload(fileDataBase64))
                         Encatch.uploadFile(
                             UploadFileRequest(
                                 feedbackConfigurationId = feedbackConfigurationId,
@@ -385,6 +385,26 @@ private fun ShowFormResponse.toJson(): JsonObject = buildJsonObject {
     projectI18nFileUrl?.let { put("projectI18nFileUrl", it) }
     pingAgainIn?.let { put("pingAgainIn", it) }
     pingOnNextPageVisit?.let { put("pingOnNextPageVisit", it) }
+}
+
+/**
+ * Extracts the raw base64 payload from an upload's `fileData`, mirroring the Flutter SDK's
+ * `_extractBase64Payload`. The web engine sends bare base64 for engine-generated content
+ * (e.g. a drawn signature, where it strips the canvas data URL itself) but a full
+ * `data:<mime>;base64,<payload>` data URL for user-picked files (signature upload mode reads
+ * them via `FileReader.readAsDataURL`). Strict base64 decoders throw on the `data:` header —
+ * strip it when present, drop any whitespace, and pass bare base64 through unchanged.
+ */
+fun extractBase64Payload(fileData: String): String {
+    var payload = fileData.trim()
+    val commaIndex = payload.lastIndexOf(',')
+    if (commaIndex >= 0) {
+        val header = payload.substring(0, commaIndex).lowercase()
+        if (header.startsWith("data:") && header.contains(";base64")) {
+            payload = payload.substring(commaIndex + 1)
+        }
+    }
+    return payload.replace(Regex("\\s+"), "")
 }
 
 /** Normalizes a MIME type string, mirrors `uploadMimeType` from `form-webview-helpers.ts`. */

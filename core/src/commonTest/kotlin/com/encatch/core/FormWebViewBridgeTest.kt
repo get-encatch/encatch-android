@@ -152,4 +152,30 @@ class FormWebViewBridgeTest {
         val formUrl = "https://form.encatch.com/s/react-native-sdk-form?formId=f1"
         assertTrue(bridge.shouldAllowNavigation("https://evil.example.com", formUrl, isTopFrame = false))
     }
+
+    // extractBase64Payload — regression tests for signature upload mode, whose fileData arrives
+    // as a FileReader data URL (draw mode sends bare base64, which must pass through unchanged).
+
+    @Test
+    fun extractBase64Payload_bareBase64_passesThroughUnchanged() {
+        assertEquals("aGVsbG8=", extractBase64Payload("aGVsbG8="))
+    }
+
+    @Test
+    fun extractBase64Payload_dataUrl_stripsHeader() {
+        assertEquals("aGVsbG8=", extractBase64Payload("data:image/jpeg;base64,aGVsbG8="))
+        assertEquals("aGVsbG8=", extractBase64Payload("DATA:IMAGE/PNG;BASE64,aGVsbG8="))
+    }
+
+    @Test
+    fun extractBase64Payload_whitespace_isRemoved() {
+        assertEquals("aGVsbG8=", extractBase64Payload("  aGVs\nbG8= "))
+        assertEquals("aGVsbG8=", extractBase64Payload("data:image/png;base64,aGVs\r\nbG8="))
+    }
+
+    @Test
+    fun extractBase64Payload_commaWithoutDataHeader_isKept() {
+        // A comma alone must not trigger stripping — only a real data-URL header does.
+        assertEquals("abc,def", extractBase64Payload("abc,def"))
+    }
 }
