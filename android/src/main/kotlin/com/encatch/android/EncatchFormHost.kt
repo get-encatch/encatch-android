@@ -3,6 +3,8 @@ package com.encatch.android
 import android.app.Activity
 import android.app.Application
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -67,21 +69,30 @@ object EncatchFormHost {
             },
         )
 
+        // EncatchInternalEmitter.emit(...) runs on whichever thread triggered it — automatic
+        // triggers (track-screen/track-event/identify auto-shows) emit from core's
+        // Dispatchers.Default scope, so never assume main thread before touching the Dialog /
+        // WebView. Mirrors EncatchFormHost.swift's DispatchQueue.main marshaling; without it
+        // the Dialog constructor throws off-main and core's runCatching swallows it — the
+        // modal silently never appears.
+        val mainHandler = Handler(Looper.getMainLooper())
         EncatchInternalEmitter.on { event ->
-            when (event) {
-                is InternalEvent.ShowForm -> {
-                    val activity = currentActivity ?: return@on
-                    if (event.payload.presentation != "modal") return@on
-                    currentDialog?.dismiss()
-                    val dialog = EncatchFormDialog(activity)
-                    currentDialog = dialog
-                    dialog.present(event.payload)
+            mainHandler.post {
+                when (event) {
+                    is InternalEvent.ShowForm -> {
+                        val activity = currentActivity ?: return@post
+                        if (event.payload.presentation != "modal") return@post
+                        currentDialog?.dismiss()
+                        val dialog = EncatchFormDialog(activity)
+                        currentDialog = dialog
+                        dialog.present(event.payload)
+                    }
+                    is InternalEvent.DismissForm -> {
+                        currentDialog?.dismiss()
+                        currentDialog = null
+                    }
+                    else -> Unit
                 }
-                is InternalEvent.DismissForm -> {
-                    currentDialog?.dismiss()
-                    currentDialog = null
-                }
-                else -> Unit
             }
         }
     }

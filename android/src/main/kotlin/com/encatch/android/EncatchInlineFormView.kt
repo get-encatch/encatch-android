@@ -122,7 +122,12 @@ class EncatchInlineFormView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         slotId = InlineSlotRegistry.registerInlineSlot(formId)
-        unsubscribe = EncatchInternalEmitter.on { event -> handleInternalEvent(event) }
+        // See EncatchFormHost's twin comment — emit(...) isn't guaranteed to run on the main
+        // thread (automatic triggers emit from core's Dispatchers.Default scope), and
+        // handleInternalEvent touches views. An event posted just before detach lands after
+        // unsubscribe with slotId nulled, so it no-ops harmlessly.
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        unsubscribe = EncatchInternalEmitter.on { event -> mainHandler.post { handleInternalEvent(event) } }
         lastSystemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
     }

@@ -1,6 +1,7 @@
 package com.encatch.android
 
 import android.app.Activity
+import android.os.Looper
 import android.widget.FrameLayout
 import com.encatch.core.EncatchInternalEmitter
 import com.encatch.core.InlineSlotRegistry
@@ -15,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ActivityController
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -80,7 +82,7 @@ class EncatchInlineFormViewTest {
         val slotId = InlineSlotRegistry.slotsSnapshot().single().slotId
 
         val payload = showFormPayload(presentation = "inline", inlineSlotId = slotId)
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(payload))
+        emitAndIdle(InternalEvent.ShowForm(payload))
 
         assertNotNull(view.getChildAt(0))
         assertTrue((view.layoutParams?.height ?: 0) > 0)
@@ -91,7 +93,7 @@ class EncatchInlineFormViewTest {
         root.addView(view)
 
         val payload = showFormPayload(presentation = "inline", inlineSlotId = "some-other-slot-id")
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(payload))
+        emitAndIdle(InternalEvent.ShowForm(payload))
 
         assertEquals(0, view.childCount)
     }
@@ -101,7 +103,7 @@ class EncatchInlineFormViewTest {
         root.addView(view)
 
         val payload = showFormPayload(presentation = "modal", inlineSlotId = null)
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(payload))
+        emitAndIdle(InternalEvent.ShowForm(payload))
 
         assertEquals(0, view.childCount)
     }
@@ -110,10 +112,10 @@ class EncatchInlineFormViewTest {
     fun dismissFormEvent_clearsActiveForm() {
         root.addView(view)
         val slotId = InlineSlotRegistry.slotsSnapshot().single().slotId
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(showFormPayload("inline", slotId)))
+        emitAndIdle(InternalEvent.ShowForm(showFormPayload("inline", slotId)))
         assertTrue(view.childCount > 0)
 
-        EncatchInternalEmitter.emit(InternalEvent.DismissForm())
+        emitAndIdle(InternalEvent.DismissForm())
 
         assertEquals(0, view.childCount)
         assertEquals(0, view.layoutParams?.height)
@@ -123,13 +125,40 @@ class EncatchInlineFormViewTest {
     fun anotherPresenterTakingOver_clearsThisSlotsActiveForm() {
         root.addView(view)
         val slotId = InlineSlotRegistry.slotsSnapshot().single().slotId
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(showFormPayload("inline", slotId)))
+        emitAndIdle(InternalEvent.ShowForm(showFormPayload("inline", slotId)))
         assertTrue(view.childCount > 0)
 
         // A different form takes over (e.g. modal, or a different inline slot).
-        EncatchInternalEmitter.emit(InternalEvent.ShowForm(showFormPayload("modal", null)))
+        emitAndIdle(InternalEvent.ShowForm(showFormPayload("modal", null)))
 
         assertEquals(0, view.childCount)
+    }
+
+    /**
+     * Regression test for automatic triggers: core emits ShowForm from its Dispatchers.Default
+     * scope, so the event arrives on a background thread. The view must marshal to the main
+     * thread and still load the form (before the fix, the view ops threw off-main and the form
+     * silently never appeared).
+     */
+    @Test
+    fun showFormEvent_emittedFromBackgroundThread_isMarshaledToMainThread() {
+        root.addView(view)
+        val slotId = InlineSlotRegistry.slotsSnapshot().single().slotId
+        val payload = showFormPayload(presentation = "inline", inlineSlotId = slotId)
+
+        val background = Thread { EncatchInternalEmitter.emit(InternalEvent.ShowForm(payload)) }
+        background.start()
+        background.join()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertNotNull(view.getChildAt(0))
+        assertTrue((view.layoutParams?.height ?: 0) > 0)
+    }
+
+    /** Emits on the calling thread, then drains the main looper the view's handler posts to. */
+    private fun emitAndIdle(event: InternalEvent) {
+        EncatchInternalEmitter.emit(event)
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     private fun showFormPayload(presentation: String, inlineSlotId: String?) = ShowFormPayload(
