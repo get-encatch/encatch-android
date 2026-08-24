@@ -110,7 +110,8 @@ data class SecureOptions(
  * One completed SDK HTTP call (request + response), delivered to `Encatch.setOnNetworkLog`
  * callbacks for host-app debugging tools. Only emitted when `EncatchConfig.debugMode` is
  * enabled; the API key header is always masked to its last 5 characters. Covers all JSON POST
- * endpoints — the multipart upload and the Q&A-with-AI SSE stream are not logged.
+ * endpoints and the multipart upload (logged with a `<multipart>` summary line in place of the
+ * binary body) — only the Q&A-with-AI SSE stream is not logged.
  */
 data class NetworkLogEntry(
     val timestampMs: Long,

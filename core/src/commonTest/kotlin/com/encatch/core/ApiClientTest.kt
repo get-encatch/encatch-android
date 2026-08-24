@@ -134,6 +134,59 @@ class ApiClientTest {
     }
 
     @Test
+    fun uploadFile_emitsNetworkLogWithMultipartSummary() = runTest {
+        val logs = mutableListOf<EncatchNetworkLogEntry>()
+        val engine = MockEngine {
+            respond(
+                content = """{"fileUrl":"https://cdn.encatch.com/u/1.jpg"}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val api = EncatchApiClient(
+            httpClient = createHttpClient(engine),
+            baseUrlProvider = { "https://api.encatch.com" },
+            authStateProvider = { AuthState("test-api-key", "session-1", "alice", "user-1", null, "device-1", "com.example.app") },
+            networkLogSink = { logs.add(it) },
+        )
+
+        api.uploadFile("cfg-1", "q-1", ByteArray(2048), "signature.jpg", "image/jpeg")
+
+        val entry = logs.single()
+        assertEquals(Endpoints.UPLOAD, entry.endpoint)
+        assertEquals(200, entry.status)
+        assertEquals("""{"fileUrl":"https://cdn.encatch.com/u/1.jpg"}""", entry.responseBody)
+        // Binary body is summarized, never dumped.
+        assertEquals("<multipart> file=signature.jpg, 2 KB, image/jpeg; formId=cfg-1, questionId=q-1", entry.requestBody)
+        assertEquals("•••i-key", entry.requestHeaders["X-Api-Key"])
+    }
+
+    @Test
+    fun uploadFile_failure_emitsNetworkLogWithError() = runTest {
+        val logs = mutableListOf<EncatchNetworkLogEntry>()
+        val engine = MockEngine {
+            respond(
+                content = """{"message":"file too large"}""",
+                status = HttpStatusCode.PayloadTooLarge,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val api = EncatchApiClient(
+            httpClient = createHttpClient(engine),
+            baseUrlProvider = { "https://api.encatch.com" },
+            authStateProvider = { AuthState("test-api-key", null, null, null, null, null, null) },
+            networkLogSink = { logs.add(it) },
+        )
+
+        assertFailsWith<EncatchApiException> {
+            api.uploadFile("cfg-1", "q-1", ByteArray(10), "big.jpg", "image/jpeg")
+        }
+        val entry = logs.single()
+        assertEquals(413, entry.status)
+        assertEquals("""{"message":"file too large"}""", entry.responseBody)
+    }
+
+    @Test
     fun post_withoutApiKey_throwsNotInitialized() = runTest {
         val engine = MockEngine { respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
         val api = EncatchApiClient(

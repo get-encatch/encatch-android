@@ -21,8 +21,16 @@ public struct EncatchApiException: Error, Sendable, CustomStringConvertible {
 }
 
 /// One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
-/// host-app debugging tools. Covers all JSON POST endpoints; the multipart upload and the
-/// Q&A-with-AI SSE stream are not logged (binary/streaming payloads).
+/// host-app debugging tools. Covers all JSON POST endpoints and the multipart upload (whose
+/// binary body is logged as a `<multipart>` summary line, not the payload); only the
+/// Q&A-with-AI SSE stream is not logged (streaming).
+/// Human-readable byte size for network-log summaries of binary payloads.
+func formatByteSize(_ bytes: Int) -> String {
+    if bytes >= 1_048_576 { return "\(Double(bytes * 10 / 1_048_576) / 10.0) MB" }
+    if bytes >= 1024 { return "\(bytes / 1024) KB" }
+    return "\(bytes) B"
+}
+
 public struct EncatchNetworkLogEntry: Sendable {
     public let timestamp: Date
     public let method: String
@@ -281,16 +289,42 @@ final class EncatchApiClient: @unchecked Sendable {
 
         let delegate = onProgress.map { UploadProgressDelegate(onProgress: $0) }
 
+        // Log like post() does, but summarize the binary body instead of dumping it.
+        let startedAt = Date()
+        var logHeaders = authHeaders
+        logHeaders["Content-Type"] = "multipart/form-data"
+        if let apiKey = logHeaders["X-Api-Key"] {
+            logHeaders["X-Api-Key"] = "•••\(apiKey.suffix(5))"
+        }
+        let logBody = "<multipart> file=\(fileName), \(formatByteSize(fileBytes.count)), " +
+            "\(mimeType ?? "application/octet-stream"); formId=\(feedbackConfigurationId), questionId=\(questionId)"
+        func emitLog(status: Int, responseBody: String, error: String?) {
+            networkLogSink(EncatchNetworkLogEntry(
+                timestamp: startedAt,
+                method: "POST",
+                endpoint: Endpoints.upload,
+                url: urlString,
+                requestHeaders: logHeaders,
+                requestBody: logBody,
+                status: status,
+                responseBody: responseBody,
+                durationMs: Int(Date().timeIntervalSince(startedAt) * 1000),
+                error: error
+            ))
+        }
+
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await session.upload(for: request, from: body, delegate: delegate)
         } catch {
+            emitLog(status: 0, responseBody: "", error: error.localizedDescription)
             throw EncatchApiException(endpoint: Endpoints.upload, status: 0, responseBody: error.localizedDescription)
         }
 
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         let text = String(data: data, encoding: .utf8) ?? ""
+        emitLog(status: statusCode, responseBody: text, error: nil)
 
         guard (200...299).contains(statusCode) else {
             var message = "Upload failed (\(statusCode))"

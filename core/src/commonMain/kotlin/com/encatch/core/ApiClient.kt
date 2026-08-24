@@ -97,10 +97,18 @@ internal fun createHttpClient(engine: HttpClientEngine): HttpClient = HttpClient
 
 /**
  * One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
- * host-app debugging tools. Covers all JSON POST endpoints; the multipart upload and the
- * Q&A-with-AI SSE stream are not logged (binary/streaming payloads). The API key header is
- * masked to its last 5 characters.
+ * host-app debugging tools. Covers all JSON POST endpoints and the multipart upload (whose
+ * binary body is logged as a `<multipart>` summary line, not the payload); only the
+ * Q&A-with-AI SSE stream is not logged (streaming). The API key header is masked to its last
+ * 5 characters.
  */
+/** Human-readable byte size for network-log summaries of binary payloads. */
+internal fun formatByteSize(bytes: Int): String = when {
+    bytes >= 1_048_576 -> "${(bytes * 10L / 1_048_576).toDouble() / 10.0} MB"
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
+}
+
 data class EncatchNetworkLogEntry(
     val timestampMs: Long,
     val method: String,
@@ -221,7 +229,66 @@ class EncatchApiClient internal constructor(
         val authHeaders = buildAuthHeaders()
         val url = "${baseUrlProvider()}/${Endpoints.UPLOAD}"
 
-        val response = httpClient.post(url) {
+        // Log like post() does, but summarize the binary body instead of dumping it.
+        val startedAt = currentTimeMillis()
+        val logHeaders = authHeaders.mapValues { (k, v) ->
+            if (k == "X-Api-Key") "•••${v.takeLast(5)}" else v
+        } + ("Content-Type" to "multipart/form-data")
+        val logBody = "<multipart> file=$fileName, ${formatByteSize(fileBytes.size)}, " +
+            "${mimeType ?: "application/octet-stream"}; formId=$feedbackConfigurationId, questionId=$questionId"
+        fun emitLog(status: Int, responseBody: String, error: String?) {
+            networkLogSink(
+                EncatchNetworkLogEntry(
+                    timestampMs = startedAt,
+                    method = "POST",
+                    endpoint = Endpoints.UPLOAD,
+                    url = url,
+                    requestHeaders = logHeaders,
+                    requestBody = logBody,
+                    status = status,
+                    responseBody = responseBody,
+                    durationMs = currentTimeMillis() - startedAt,
+                    error = error,
+                ),
+            )
+        }
+
+        val response = try {
+            uploadFileRequest(url, authHeaders, feedbackConfigurationId, questionId, fileBytes, fileName, mimeType, onProgress)
+        } catch (err: Throwable) {
+            emitLog(status = 0, responseBody = "", error = err.message ?: err.toString())
+            throw err
+        }
+
+        val text = response.bodyAsText()
+        emitLog(status = response.status.value, responseBody = text, error = null)
+        if (!response.status.isSuccess()) {
+            val message = runCatching {
+                val obj = EncatchJson.parseToJsonElement(text).jsonObject
+                obj["message"]?.jsonPrimitive?.contentOrNull ?: obj["error"]?.jsonPrimitive?.contentOrNull
+            }.getOrNull() ?: "Upload failed (${response.status.value})"
+            throw EncatchApiException(Endpoints.UPLOAD, response.status.value, message)
+        }
+
+        return runCatching {
+            val obj = EncatchJson.parseToJsonElement(text).jsonObject
+            UploadFileResponse(fileUrl = obj["fileUrl"]!!.jsonPrimitive.content)
+        }.getOrElse {
+            throw EncatchApiException(Endpoints.UPLOAD, response.status.value, "Failed to parse upload response")
+        }
+    }
+
+    private suspend fun uploadFileRequest(
+        url: String,
+        authHeaders: Map<String, String>,
+        feedbackConfigurationId: String,
+        questionId: String,
+        fileBytes: ByteArray,
+        fileName: String,
+        mimeType: String?,
+        onProgress: ((Int) -> Unit)?,
+    ): HttpResponse {
+        return httpClient.post(url) {
             headers { authHeaders.forEach { (k, v) -> append(k, v) } }
             setBody(
                 MultiPartFormDataContent(
@@ -251,22 +318,6 @@ class EncatchApiClient internal constructor(
                     }
                 }
             }
-        }
-
-        val text = response.bodyAsText()
-        if (!response.status.isSuccess()) {
-            val message = runCatching {
-                val obj = EncatchJson.parseToJsonElement(text).jsonObject
-                obj["message"]?.jsonPrimitive?.contentOrNull ?: obj["error"]?.jsonPrimitive?.contentOrNull
-            }.getOrNull() ?: "Upload failed (${response.status.value})"
-            throw EncatchApiException(Endpoints.UPLOAD, response.status.value, message)
-        }
-
-        return runCatching {
-            val obj = EncatchJson.parseToJsonElement(text).jsonObject
-            UploadFileResponse(fileUrl = obj["fileUrl"]!!.jsonPrimitive.content)
-        }.getOrElse {
-            throw EncatchApiException(Endpoints.UPLOAD, response.status.value, "Failed to parse upload response")
         }
     }
 
