@@ -123,6 +123,30 @@ public indirect enum JSONValue: Codable, Equatable, Sendable {
         guard let data = try? JSONEncoder().encode(self) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
     }
+
+    /// The wrapped object, or `nil` when this value is not `.object`.
+    public var asObject: [String: JSONValue]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    /// The wrapped array, or `nil` when this value is not `.array`.
+    public var asArray: [JSONValue]? {
+        if case .array(let value) = self { return value }
+        return nil
+    }
+
+    /// The wrapped string, or `nil` when this value is not `.string`.
+    public var asString: String? {
+        if case .string(let value) = self { return value }
+        return nil
+    }
+
+    /// The wrapped number, or `nil` when this value is not `.number`.
+    public var asDouble: Double? {
+        if case .number(let value) = self { return value }
+        return nil
+    }
 }
 
 extension Encodable {

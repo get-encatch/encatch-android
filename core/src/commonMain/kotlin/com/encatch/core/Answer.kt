@@ -20,6 +20,7 @@ data class AnnotationMarker(
     val comment: String,
 )
 
+@Deprecated("The annotation question type is deprecated. Kept for backward compatibility with existing configurations.")
 @Serializable
 data class Annotation(
     val fileType: String,
@@ -110,7 +111,36 @@ data class PaymentsUpiAnswer(
     val sourceEmail: String? = null,
     val upiIntentUri: String? = null,
     val selfReported: Boolean = true,
-)
+) {
+    companion object {
+        /**
+         * Convenience factory that accepts a numeric amount and serializes it as the
+         * schema-required decimal string (whole values without a trailing `.0`).
+         */
+        fun fromNumericAmount(
+            transactionId: String,
+            encatchPaymentReference: String,
+            amount: Double,
+            currency: String = "INR",
+            payeeVpa: String,
+            payeeName: String? = null,
+            sourceEmail: String? = null,
+            upiIntentUri: String? = null,
+        ): PaymentsUpiAnswer = PaymentsUpiAnswer(
+            transactionId = transactionId,
+            encatchPaymentReference = encatchPaymentReference,
+            amount = formatUpiAmount(amount),
+            currency = currency,
+            payeeVpa = payeeVpa,
+            payeeName = payeeName,
+            sourceEmail = sourceEmail,
+            upiIntentUri = upiIntentUri,
+        )
+
+        internal fun formatUpiAmount(amount: Double): String =
+            if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
+    }
+}
 
 /**
  * Flexible answer item — matches `AnswerItemSchema`. Only the field(s) matching the
@@ -132,6 +162,7 @@ data class Answer(
     val multipleChoiceMultiple: List<String>? = null,
     val singleChoiceOther: String? = null,
     val multipleChoiceOther: String? = null,
+    @Deprecated("Part of the deprecated annotation question type. Kept for backward compatibility.")
     val annotation: Annotation? = null,
     val ratingMatrix: Map<String, JsonElement>? = null,
     val matrixSingleChoice: Map<String, String>? = null,

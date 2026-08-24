@@ -17,7 +17,7 @@ yourself.
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("com.encatch:compose-sdk:0.1.0")
+            implementation("com.encatch:compose-sdk:0.1.1")
         }
     }
 }

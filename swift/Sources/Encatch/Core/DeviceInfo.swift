@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 #endif
 
-let SDK_VERSION = "0.1.0"
+let SDK_VERSION = "0.1.1"
 let SDK_PLATFORM = "ios"
 
 /// Platform-sourced device facts, assembled into `ApiDeviceInfo` by `Encatch`.

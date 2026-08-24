@@ -2,6 +2,11 @@ package com.encatch.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 
 /** Default theme for forms. */
 enum class Theme {
@@ -126,6 +131,132 @@ data class PendingCompletionCta(
     val autoTriggerDelayMs: Long = 0,
 )
 
+/**
+ * Form title/description metadata returned by fetch-feedback APIs — mirrors
+ * `@encatch/schema`'s `formConfigurationResponseSchema` (`fetch-feedback-schema.ts`).
+ */
+data class FormConfigurationResponse(
+    val formTitle: String = "",
+    val formDescription: String = "",
+    /** Server-enriched total respondent count, used for the welcome badge. */
+    val respondentsCount: Int? = null,
+) {
+    companion object {
+        /** Defensive parse — unknown/missing fields fall back to defaults, never throws. */
+        fun fromJson(json: JsonObject?): FormConfigurationResponse? {
+            if (json == null) return null
+            return FormConfigurationResponse(
+                formTitle = (json["formTitle"] as? JsonPrimitive)?.contentOrNull ?: "",
+                formDescription = (json["formDescription"] as? JsonPrimitive)?.contentOrNull ?: "",
+                respondentsCount = (json["respondentsCount"] as? JsonPrimitive)?.intOrNull,
+            )
+        }
+    }
+}
+
+/**
+ * A single logic-jump rule evaluated during form navigation — mirrors
+ * `@encatch/schema`'s `logicJumpRuleSchema`. Kept high-level: [jsonLogic] is the raw
+ * JSON Logic expression, not modeled further.
+ */
+data class LogicJumpRule(
+    val jsonLogic: JsonObject = JsonObject(emptyMap()),
+    val targetQuestionId: String = "",
+) {
+    companion object {
+        fun fromJson(json: JsonObject?): LogicJumpRule? {
+            if (json == null) return null
+            return LogicJumpRule(
+                jsonLogic = json["jsonLogic"] as? JsonObject ?: JsonObject(emptyMap()),
+                targetQuestionId = (json["targetQuestionId"] as? JsonPrimitive)?.contentOrNull ?: "",
+            )
+        }
+    }
+}
+
+/** Supported completion CTA actions on thank_you and exit_form screens. */
+enum class CompletionCtaAction(val wireValue: String) {
+    DISMISS("dismiss"),
+    APP_NAVIGATE("app_navigate"),
+    REDIRECT_INTERNAL("redirect_internal"),
+    REDIRECT_EXTERNAL("redirect_external");
+
+    companion object {
+        fun fromWire(value: String?): CompletionCtaAction? = entries.find { it.wireValue == value }
+    }
+}
+
+/**
+ * Per-surface completion CTA action (in-app vs shareable link) — mirrors
+ * `@encatch/schema`'s `platformCompletionCtaSchema`. This is the *static config* shape on
+ * thank_you/exit_form questions; the runtime wire payload the web engine hands back after
+ * submit is [PendingCompletionCta].
+ */
+data class PlatformCompletionCta(
+    val action: CompletionCtaAction,
+    /** App-specific route for [CompletionCtaAction.APP_NAVIGATE]. */
+    val route: String? = null,
+    /** Target URL for the redirect actions. */
+    val url: String? = null,
+) {
+    companion object {
+        /** Defensive parse — an unknown action falls back to [CompletionCtaAction.DISMISS]. */
+        fun fromJson(json: JsonObject?): PlatformCompletionCta? {
+            if (json == null) return null
+            return PlatformCompletionCta(
+                action = CompletionCtaAction.fromWire((json["action"] as? JsonPrimitive)?.contentOrNull)
+                    ?: CompletionCtaAction.DISMISS,
+                route = (json["route"] as? JsonPrimitive)?.contentOrNull,
+                url = (json["url"] as? JsonPrimitive)?.contentOrNull,
+            )
+        }
+    }
+}
+
+/** Optional secondary button on thank_you completion CTAs; label-only configs default to dismiss. */
+data class CompletionCtaSecondary(
+    val label: String,
+    val inApp: PlatformCompletionCta? = null,
+    val link: PlatformCompletionCta? = null,
+) {
+    companion object {
+        fun fromJson(json: JsonObject?): CompletionCtaSecondary? {
+            if (json == null) return null
+            return CompletionCtaSecondary(
+                label = (json["label"] as? JsonPrimitive)?.contentOrNull ?: "",
+                inApp = PlatformCompletionCta.fromJson(json["inApp"] as? JsonObject),
+                link = PlatformCompletionCta.fromJson(json["link"] as? JsonObject),
+            )
+        }
+    }
+}
+
+/**
+ * Completion CTA configuration for thank_you and exit_form questions — mirrors
+ * `@encatch/schema`'s `completionCtaSchema` (`completion-cta-schema.ts`).
+ */
+data class CompletionCta(
+    val label: String? = null,
+    /** When set, auto-fires the primary action after this many milliseconds. */
+    val autoTriggerDelayMs: Long? = null,
+    val inApp: PlatformCompletionCta? = null,
+    val link: PlatformCompletionCta? = null,
+    val secondary: CompletionCtaSecondary? = null,
+) {
+    companion object {
+        fun fromJson(json: JsonObject?): CompletionCta? {
+            if (json == null) return null
+            return CompletionCta(
+                label = (json["label"] as? JsonPrimitive)?.contentOrNull,
+                autoTriggerDelayMs = (json["autoTriggerDelayMs"] as? JsonPrimitive)?.longOrNull,
+                inApp = PlatformCompletionCta.fromJson(json["inApp"] as? JsonObject),
+                link = PlatformCompletionCta.fromJson(json["link"] as? JsonObject),
+                secondary = CompletionCtaSecondary.fromJson(json["secondary"] as? JsonObject),
+            )
+        }
+    }
+}
+
 data class ShowFormInterceptorPayload(
     val formId: String,
     val formConfig: ShowFormResponse,
@@ -168,7 +299,11 @@ data class ShowFormResponse(
     val pingAgainIn: Double? = null,
     val pingOnNextPageVisit: Boolean? = null,
     val feedbackTransactions: String? = null,
-)
+) {
+    /** Parses [formConfiguration] into the typed fetch-feedback shape, or `null` when absent. */
+    val typedFormConfiguration: FormConfigurationResponse?
+        get() = FormConfigurationResponse.fromJson(formConfiguration?.let { JsonObject(it) })
+}
 
 data class RefineTextRequest(
     val questionId: String,
@@ -227,6 +362,8 @@ enum class QuestionType(val wireValue: String) {
     MULTIPLE_CHOICE_MULTIPLE("multiple_choice_multiple"),
     SHORT_ANSWER("short_answer"),
     LONG_TEXT("long_text"),
+
+    @Deprecated("The annotation question type is deprecated. Kept for backward compatibility with existing configurations.")
     ANNOTATION("annotation"),
     WELCOME("welcome"),
     THANK_YOU("thank_you"),
@@ -252,6 +389,8 @@ enum class QuestionType(val wireValue: String) {
     VIDEO_AUDIO("video_audio"),
     SCHEDULER("scheduler"),
     QNA_WITH_AI("qna_with_ai"),
+
+    @Deprecated("The payments_upi question type is slated for removal. Kept for backward compatibility with existing configurations.")
     PAYMENTS_UPI("payments_upi");
 
     companion object {

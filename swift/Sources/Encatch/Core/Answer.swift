@@ -16,6 +16,8 @@ public struct AnnotationMarker: Codable, Sendable, Equatable {
     }
 }
 
+/// - Note: Deprecated — part of the deprecated `annotation` question type. Kept for backward
+///   compatibility with existing configurations. (Doc-level only: see `QuestionType.annotation`.)
 public struct Annotation: Codable, Sendable, Equatable {
     public var fileType: String
     public var fileName: String
@@ -216,6 +218,34 @@ public struct PaymentsUpiAnswer: Codable, Sendable, Equatable {
         self.upiIntentUri = upiIntentUri
         self.selfReported = selfReported
     }
+
+    /// Convenience factory that accepts a numeric amount and serializes it as the
+    /// schema-required decimal string (whole values without a trailing `.0`).
+    public static func fromNumericAmount(
+        transactionId: String,
+        encatchPaymentReference: String,
+        amount: Double,
+        currency: String = "INR",
+        payeeVpa: String,
+        payeeName: String? = nil,
+        sourceEmail: String? = nil,
+        upiIntentUri: String? = nil
+    ) -> PaymentsUpiAnswer {
+        PaymentsUpiAnswer(
+            transactionId: transactionId,
+            encatchPaymentReference: encatchPaymentReference,
+            amount: formatUpiAmount(amount),
+            currency: currency,
+            payeeVpa: payeeVpa,
+            payeeName: payeeName,
+            sourceEmail: sourceEmail,
+            upiIntentUri: upiIntentUri
+        )
+    }
+
+    static func formatUpiAmount(_ amount: Double) -> String {
+        amount.truncatingRemainder(dividingBy: 1) == 0 ? String(Int64(amount)) : String(amount)
+    }
 }
 
 /// Flexible answer item — matches `AnswerItemSchema`. Only the field(s) matching the
@@ -234,6 +264,7 @@ public struct Answer: Codable, Sendable, Equatable {
     public var multipleChoiceMultiple: [String]?
     public var singleChoiceOther: String?
     public var multipleChoiceOther: String?
+    /// - Note: Deprecated — part of the deprecated `annotation` question type.
     public var annotation: Annotation?
     public var ratingMatrix: [String: JSONValue]?
     public var matrixSingleChoice: [String: String]?

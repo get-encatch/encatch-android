@@ -8,7 +8,7 @@ the Encatch backend — functionally equivalent to `@encatch/react-native-sdk`.
 
 ```kotlin
 dependencies {
-    implementation("com.encatch:android:0.1.0")
+    implementation("com.encatch:android:0.1.1")
 }
 ```
 

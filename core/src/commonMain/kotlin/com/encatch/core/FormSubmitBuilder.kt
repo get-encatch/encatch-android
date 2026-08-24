@@ -43,7 +43,7 @@ data class BuildSubmitRequestOptions(
  * types defined in the schema. Unknown types are stored as `shortAnswer` for
  * forward-compatibility, matching the RN helper's fallback.
  */
-@Suppress("UNCHECKED_CAST")
+@Suppress("UNCHECKED_CAST", "DEPRECATION")
 fun toQuestionAnswer(type: String, value: Any?): Answer {
     // Int result (rounded): the backend's scale-answer fields (rating/nps/csat/opinionScale)
     // are i32 — a float on the wire is a 422.

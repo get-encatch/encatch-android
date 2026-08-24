@@ -183,6 +183,159 @@ public struct EventPayload: Sendable {
 
 public typealias EventCallback = (EventType, EventPayload) -> Void
 
+/// Form title/description metadata returned by fetch-feedback APIs — mirrors
+/// `@encatch/schema`'s `formConfigurationResponseSchema` (`fetch-feedback-schema.ts`).
+public struct FormConfigurationResponse: Sendable, Equatable {
+    public var formTitle: String
+    public var formDescription: String
+    /// Server-enriched total respondent count, used for the welcome badge.
+    public var respondentsCount: Int?
+
+    public init(formTitle: String = "", formDescription: String = "", respondentsCount: Int? = nil) {
+        self.formTitle = formTitle
+        self.formDescription = formDescription
+        self.respondentsCount = respondentsCount
+    }
+
+    /// Defensive parse — unknown/missing fields fall back to defaults, never throws.
+    public static func fromJson(_ json: [String: JSONValue]?) -> FormConfigurationResponse? {
+        guard let json else { return nil }
+        return FormConfigurationResponse(
+            formTitle: json["formTitle"]?.asString ?? "",
+            formDescription: json["formDescription"]?.asString ?? "",
+            respondentsCount: json["respondentsCount"]?.asDouble.map { Int($0) }
+        )
+    }
+}
+
+/// A single logic-jump rule evaluated during form navigation — mirrors
+/// `@encatch/schema`'s `logicJumpRuleSchema`. Kept high-level: `jsonLogic` is the raw
+/// JSON Logic expression, not modeled further.
+public struct LogicJumpRule: Sendable, Equatable {
+    public var jsonLogic: [String: JSONValue]
+    public var targetQuestionId: String
+
+    public init(jsonLogic: [String: JSONValue] = [:], targetQuestionId: String = "") {
+        self.jsonLogic = jsonLogic
+        self.targetQuestionId = targetQuestionId
+    }
+
+    public static func fromJson(_ json: [String: JSONValue]?) -> LogicJumpRule? {
+        guard let json else { return nil }
+        return LogicJumpRule(
+            jsonLogic: json["jsonLogic"]?.asObject ?? [:],
+            targetQuestionId: json["targetQuestionId"]?.asString ?? ""
+        )
+    }
+}
+
+/// Supported completion CTA actions on thank_you and exit_form screens.
+public enum CompletionCtaAction: String, Sendable, CaseIterable {
+    case dismiss
+    case appNavigate
+    case redirectInternal
+    case redirectExternal
+
+    public var wireValue: String {
+        switch self {
+        case .dismiss: return "dismiss"
+        case .appNavigate: return "app_navigate"
+        case .redirectInternal: return "redirect_internal"
+        case .redirectExternal: return "redirect_external"
+        }
+    }
+
+    public static func fromWire(_ value: String?) -> CompletionCtaAction? {
+        allCases.first { $0.wireValue == value }
+    }
+}
+
+/// Per-surface completion CTA action (in-app vs shareable link) — mirrors
+/// `@encatch/schema`'s `platformCompletionCtaSchema`. This is the *static config* shape on
+/// thank_you/exit_form questions; the runtime wire payload the web engine hands back after
+/// submit is `PendingCompletionCta`.
+public struct PlatformCompletionCta: Sendable, Equatable {
+    public var action: CompletionCtaAction
+    /// App-specific route for `CompletionCtaAction.appNavigate`.
+    public var route: String?
+    /// Target URL for the redirect actions.
+    public var url: String?
+
+    public init(action: CompletionCtaAction, route: String? = nil, url: String? = nil) {
+        self.action = action
+        self.route = route
+        self.url = url
+    }
+
+    /// Defensive parse — an unknown action falls back to `.dismiss`.
+    public static func fromJson(_ json: [String: JSONValue]?) -> PlatformCompletionCta? {
+        guard let json else { return nil }
+        return PlatformCompletionCta(
+            action: CompletionCtaAction.fromWire(json["action"]?.asString) ?? .dismiss,
+            route: json["route"]?.asString,
+            url: json["url"]?.asString
+        )
+    }
+}
+
+/// Optional secondary button on thank_you completion CTAs; label-only configs default to dismiss.
+public struct CompletionCtaSecondary: Sendable, Equatable {
+    public var label: String
+    public var inApp: PlatformCompletionCta?
+    public var link: PlatformCompletionCta?
+
+    public init(label: String, inApp: PlatformCompletionCta? = nil, link: PlatformCompletionCta? = nil) {
+        self.label = label
+        self.inApp = inApp
+        self.link = link
+    }
+
+    public static func fromJson(_ json: [String: JSONValue]?) -> CompletionCtaSecondary? {
+        guard let json else { return nil }
+        return CompletionCtaSecondary(
+            label: json["label"]?.asString ?? "",
+            inApp: PlatformCompletionCta.fromJson(json["inApp"]?.asObject),
+            link: PlatformCompletionCta.fromJson(json["link"]?.asObject)
+        )
+    }
+}
+
+/// Completion CTA configuration for thank_you and exit_form questions — mirrors
+/// `@encatch/schema`'s `completionCtaSchema` (`completion-cta-schema.ts`).
+public struct CompletionCta: Sendable, Equatable {
+    public var label: String?
+    /// When set, auto-fires the primary action after this many milliseconds.
+    public var autoTriggerDelayMs: Int64?
+    public var inApp: PlatformCompletionCta?
+    public var link: PlatformCompletionCta?
+    public var secondary: CompletionCtaSecondary?
+
+    public init(
+        label: String? = nil,
+        autoTriggerDelayMs: Int64? = nil,
+        inApp: PlatformCompletionCta? = nil,
+        link: PlatformCompletionCta? = nil,
+        secondary: CompletionCtaSecondary? = nil
+    ) {
+        self.label = label
+        self.autoTriggerDelayMs = autoTriggerDelayMs
+        self.inApp = inApp
+        self.link = link
+        self.secondary = secondary
+    }
+
+    public static func fromJson(_ json: [String: JSONValue]?) -> CompletionCta? {
+        guard let json else { return nil }
+        return CompletionCta(
+            label: json["label"]?.asString,
+            autoTriggerDelayMs: json["autoTriggerDelayMs"]?.asDouble.map { Int64($0) },
+            inApp: PlatformCompletionCta.fromJson(json["inApp"]?.asObject),
+            link: PlatformCompletionCta.fromJson(json["link"]?.asObject),
+            secondary: CompletionCtaSecondary.fromJson(json["secondary"]?.asObject)
+        )
+    }
+}
+
 /// Wire-format payload for exit_form completion CTAs deferred to the native SDK timer.
 public struct PendingCompletionCta: Codable, Sendable {
     /// "dismiss" | "app_navigate" | "redirect_internal" | "redirect_external"
@@ -336,6 +489,11 @@ public struct ShowFormResponse: Sendable {
         self.pingOnNextPageVisit = pingOnNextPageVisit
         self.feedbackTransactions = feedbackTransactions
     }
+
+    /// Parses `formConfiguration` into the typed fetch-feedback shape, or `nil` when absent.
+    public var typedFormConfiguration: FormConfigurationResponse? {
+        FormConfigurationResponse.fromJson(formConfiguration)
+    }
 }
 
 public struct RefineTextRequest: Sendable {
@@ -438,6 +596,10 @@ public enum QuestionType: String, Sendable, CaseIterable {
     case multipleChoiceMultiple
     case shortAnswer
     case longText
+
+    /// - Note: Deprecated — the `annotation` question type is no longer supported for new forms.
+    ///   Kept for backward compatibility with existing configurations. (Doc-level only: a formal
+    ///   `@available(*, deprecated)` would warn on the SDK's own exhaustive switches.)
     case annotation
     case welcome
     case thankYou
@@ -463,6 +625,10 @@ public enum QuestionType: String, Sendable, CaseIterable {
     case videoAudio
     case scheduler
     case qnaWithAi
+
+    /// - Note: Deprecated — the `payments_upi` question type is slated for removal.
+    ///   Kept for backward compatibility with existing configurations. (Doc-level only, see
+    ///   `annotation`.)
     case paymentsUpi
 
     public var wireValue: String {

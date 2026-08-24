@@ -1,25 +1,7 @@
 import Foundation
 
 private extension JSONValue {
-    var asObject: [String: JSONValue]? {
-        if case .object(let value) = self { return value }
-        return nil
-    }
-
-    var asArray: [JSONValue]? {
-        if case .array(let value) = self { return value }
-        return nil
-    }
-
-    var asString: String? {
-        if case .string(let value) = self { return value }
-        return nil
-    }
-
-    var asDouble: Double? {
-        if case .number(let value) = self { return value }
-        return nil
-    }
+    // asObject/asArray/asString/asDouble live publicly on JSONValue (JSONValue.swift).
 
     /// True for JSON `true` and the string `"true"` — bridge messages are loose about which
     /// they send (form:layout's fullHeight is a real bool).

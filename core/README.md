@@ -11,7 +11,7 @@ in automatically and adds the classic-Views UI (modal form overlay, WebView brid
 
 ```kotlin
 dependencies {
-    implementation("com.encatch:core:0.1.0")
+    implementation("com.encatch:core:0.1.1")
 }
 ```
 
