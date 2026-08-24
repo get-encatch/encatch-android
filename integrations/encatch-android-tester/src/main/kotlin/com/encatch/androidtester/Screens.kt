@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +31,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -539,14 +541,75 @@ fun InlineAnyScreen(onShowWildcard: (String) -> Unit, onTriggerFallback: () -> U
     }
 }
 
+/**
+ * Modal prompting for a locale/country code to switch the SDK to. Apply is disabled while the
+ * input is blank; the applied value is echoed back in the Localization card so the click has
+ * visible feedback (the SDK setters themselves are silent — they only affect the NEXT showForm).
+ */
+@Composable
+private fun LocaleInputDialog(
+    title: String,
+    placeholder: String,
+    initial: String,
+    onApply: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var input by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                FilledField(input, { input = it }, placeholder = placeholder)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Applies to the next form shown — an already-open form keeps its language.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onApply(input.trim()); onDismiss() },
+                enabled = input.isNotBlank(),
+            ) { Text("Apply", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @Composable
 fun SettingsScreen(
     prefs: TesterPrefs,
-    onSetLocale: () -> Unit,
-    onSetCountry: () -> Unit,
+    appliedLocale: String?,
+    appliedCountry: String?,
+    onSetLocale: (String) -> Unit,
+    onSetCountry: (String) -> Unit,
     onChangeSetup: () -> Unit,
 ) {
     LaunchedEffect(Unit) { Encatch.trackScreen("Settings") }
+    var showLocaleDialog by remember { mutableStateOf(false) }
+    var showCountryDialog by remember { mutableStateOf(false) }
+
+    if (showLocaleDialog) {
+        LocaleInputDialog(
+            title = "Set Locale",
+            placeholder = "e.g. fr-FR, hi-IN",
+            initial = appliedLocale ?: "",
+            onApply = onSetLocale,
+            onDismiss = { showLocaleDialog = false },
+        )
+    }
+    if (showCountryDialog) {
+        LocaleInputDialog(
+            title = "Set Country",
+            placeholder = "e.g. FR, IN",
+            initial = appliedCountry ?: "",
+            onApply = onSetCountry,
+            onDismiss = { showCountryDialog = false },
+        )
+    }
 
     Column(
         Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
@@ -570,9 +633,13 @@ fun SettingsScreen(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader("Localization")
             TesterCard {
-                SecondaryPillButton("Set Locale → fr-FR", onClick = onSetLocale)
+                InfoRow("Locale", appliedLocale ?: "(device default)")
+                HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outline)
+                InfoRow("Country", appliedCountry ?: "(unset)")
+                Spacer(Modifier.height(12.dp))
+                SecondaryPillButton("Set Locale…", onClick = { showLocaleDialog = true })
                 Spacer(Modifier.height(10.dp))
-                SecondaryPillButton("Set Country → FR", onClick = onSetCountry)
+                SecondaryPillButton("Set Country…", onClick = { showCountryDialog = true })
             }
         }
 

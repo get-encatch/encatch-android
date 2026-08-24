@@ -138,7 +138,8 @@ Full parity with `encatch-ios-tester`, Mac-native presentation:
 11. **Theme cycling:** header theme button through system → light → dark → system — confirm both
     the SDK's own form theming and the host app's own window appearance (sidebar, controls)
     switch together.
-12. **Settings:** Cmd+, (or the sidebar row) selects Settings; Set Locale → fr-FR, Set Country →
-    FR, Change API Key & Setup.
+12. **Settings:** Cmd+, (or the sidebar row) selects Settings; Set Locale… and Set Country…
+    (each opens a modal to type the code, e.g. fr-FR / FR; applied values show in the Region
+    section), Change API Key & Setup.
 13. **Logout / change setup:** header Logout re-presents the onboarding sheet at Login (SDK
     state persists). Settings → Change API Key & Setup wipes local config and returns to Setup.

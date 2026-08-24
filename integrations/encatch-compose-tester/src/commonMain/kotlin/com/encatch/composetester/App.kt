@@ -30,7 +30,9 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -86,6 +88,8 @@ private fun TesterScreens() {
         mutableStateOf<Screen>(if (TesterPrefs.isSetupComplete) Screen.Login else Screen.Setup)
     }
     var tab by remember { mutableStateOf(TesterTab.HOME) }
+    var appliedLocale by remember { mutableStateOf<String?>(null) }
+    var appliedCountry by remember { mutableStateOf<String?>(null) }
     var lastEvent by remember { mutableStateOf("No events yet") }
     var selectedUsername by remember { mutableStateOf(TesterPrefs.userName) }
     var savedUsers by remember { mutableStateOf(TestUsersStore.list()) }
@@ -281,8 +285,10 @@ private fun TesterScreens() {
                         )
                         TesterTab.LOGS -> LogsScreen()
                         TesterTab.SETTINGS -> SettingsScreen(
-                            onSetLocale = { Encatch.setLocale("fr-FR") },
-                            onSetCountry = { Encatch.setCountry("FR") },
+                            appliedLocale = appliedLocale,
+                            appliedCountry = appliedCountry,
+                            onSetLocale = { Encatch.setLocale(it); appliedLocale = it },
+                            onSetCountry = { Encatch.setCountry(it); appliedCountry = it },
                             onChangeSetup = {
                                 scope.launch {
                                     Encatch.resetUser()
@@ -828,10 +834,75 @@ private fun InlineAnyScreen(onShowWildcard: (String) -> Unit, onTriggerFallback:
     }
 }
 
+/**
+ * Modal prompting for a locale/country code to switch the SDK to. Apply is disabled while the
+ * input is blank; the applied value is echoed back in the Localization card so the click has
+ * visible feedback (the SDK setters themselves are silent — they only affect the NEXT showForm).
+ */
 @Composable
-private fun SettingsScreen(onSetLocale: () -> Unit, onSetCountry: () -> Unit, onChangeSetup: () -> Unit) {
+private fun LocaleInputDialog(
+    title: String,
+    placeholder: String,
+    initial: String,
+    onApply: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var input by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                FilledField(input, { input = it }, placeholder = placeholder)
+                Spacer(8)
+                Text(
+                    "Applies to the next form shown — an already-open form keeps its language.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onApply(input.trim()); onDismiss() },
+                enabled = input.isNotBlank(),
+            ) { Text("Apply", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun SettingsScreen(
+    appliedLocale: String?,
+    appliedCountry: String?,
+    onSetLocale: (String) -> Unit,
+    onSetCountry: (String) -> Unit,
+    onChangeSetup: () -> Unit,
+) {
     LaunchedEffect(Unit) { Encatch.trackScreen("Settings") }
     val cs = MaterialTheme.colorScheme
+    var showLocaleDialog by remember { mutableStateOf(false) }
+    var showCountryDialog by remember { mutableStateOf(false) }
+
+    if (showLocaleDialog) {
+        LocaleInputDialog(
+            title = "Set Locale",
+            placeholder = "e.g. fr-FR, hi-IN",
+            initial = appliedLocale ?: "",
+            onApply = onSetLocale,
+            onDismiss = { showLocaleDialog = false },
+        )
+    }
+    if (showCountryDialog) {
+        LocaleInputDialog(
+            title = "Set Country",
+            placeholder = "e.g. FR, IN",
+            initial = appliedCountry ?: "",
+            onApply = onSetCountry,
+            onDismiss = { showCountryDialog = false },
+        )
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Spacer(16)
@@ -853,9 +924,13 @@ private fun SettingsScreen(onSetLocale: () -> Unit, onSetCountry: () -> Unit, on
         SectionHeader("Localization")
         Spacer(8)
         TesterCard {
-            SecondaryPillButton(text = "Set Locale → fr-FR", onClick = onSetLocale)
+            InfoRow("Locale", appliedLocale ?: "(device default)")
+            SettingsDivider()
+            InfoRow("Country", appliedCountry ?: "(unset)")
+            Spacer(12)
+            SecondaryPillButton(text = "Set Locale…", onClick = { showLocaleDialog = true })
             Spacer(10)
-            SecondaryPillButton(text = "Set Country → FR", onClick = onSetCountry)
+            SecondaryPillButton(text = "Set Country…", onClick = { showCountryDialog = true })
         }
 
         Spacer(20)

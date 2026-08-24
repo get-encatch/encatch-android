@@ -51,6 +51,8 @@ class MainActivity : Activity() {
     private var screen: Screen = Screen.Setup
     private var tab: TesterTab = TesterTab.HOME
     private var lastEvent = "No events yet"
+    private var appliedLocale: String? = null
+    private var appliedCountry: String? = null
     private var selectedUsername: String? = null
     private var currentTheme = "SYSTEM"
     private val blockedForms = mutableListOf<BlockedFormItem>()
@@ -571,6 +573,30 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /**
+     * Modal prompting for a locale/country code to switch the SDK to. Blank input is ignored;
+     * the applied value is echoed back in the settings info rows (the SDK setters are silent —
+     * they only affect the NEXT showForm).
+     */
+    private fun promptLocaleInput(title: String, hintText: String, initial: String?, onApply: (String) -> Unit) {
+        val field = filledField(hintText).apply { setText(initial ?: "") }
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20f), dp(8f), dp(20f), 0)
+            addView(field, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            addView(body("Applies to the next form shown — an already-open form keeps its language."))
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(wrapper)
+            .setPositiveButton("Apply") { _, _ ->
+                val value = field.text.toString().trim()
+                if (value.isNotEmpty()) onApply(value)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun copyToClipboard(text: String) {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Encatch logs", text))
@@ -638,10 +664,24 @@ class MainActivity : Activity() {
         infoRow("API base URL", prefs.apiBaseUrl ?: "(default)")
         infoRow("Web host", prefs.webHost ?: "(default)")
         infoRow("Interceptor form id", prefs.interceptorFormId ?: "(none)")
+        infoRow("Locale", appliedLocale ?: "(device default)")
+        infoRow("Country", appliedCountry ?: "(unset)")
         col.addView(info)
         col.addView(chipRow { row ->
-            row.addView(chipButton("Set Locale → fr-FR") { TesterController.setLocale("fr-FR") })
-            row.addView(chipButton("Set Country → FR") { TesterController.setCountry("FR") })
+            row.addView(chipButton("Set Locale…") {
+                promptLocaleInput("Set Locale", "e.g. fr-FR, hi-IN", appliedLocale) {
+                    TesterController.setLocale(it)
+                    appliedLocale = it
+                    render(Screen.Main)
+                }
+            })
+            row.addView(chipButton("Set Country…") {
+                promptLocaleInput("Set Country", "e.g. FR, IN", appliedCountry) {
+                    TesterController.setCountry(it)
+                    appliedCountry = it
+                    render(Screen.Main)
+                }
+            })
         })
         col.addView(
             quietButton("Change API key & setup") {

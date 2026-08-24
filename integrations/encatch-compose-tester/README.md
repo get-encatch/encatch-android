@@ -70,8 +70,8 @@ schema-definition repo:
   `formConfigJson`/`buildSubmitRequest` (previously a gap in `:kmp-sdk` itself, closed as part of
   this parity pass).
 - **Inline (Exact)** — `EncatchInlineForm` claiming the default form id (exact-match only).
-- **Settings** — environment/form id/interceptor id summary, **Set Locale → fr-FR**
-  (`setLocale`), **Set Country → FR** (`setCountry`), and **Change API key & setup** (clears local
+- **Settings** — environment/form id/interceptor id summary, **Set Locale…** (modal input,
+  `setLocale`), **Set Country…** (modal input, `setCountry`), and **Change API key & setup** (clears local
   config and SDK state, returns to Setup).
 - **Screen tracking** — Each screen calls `trackScreen(...)`.
 - **CTA navigation** — A single `Encatch.on(...)` listener registered at app start watches for

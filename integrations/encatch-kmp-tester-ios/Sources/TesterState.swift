@@ -187,12 +187,20 @@ final class TesterState: ObservableObject {
         }
     }
 
-    func setLocaleFrFr() {
-        TesterController.shared.setLocale(locale: "fr-FR")
+    /// Last locale/country applied via the Settings modal — echoed back in the Localization
+    /// card so the click has visible feedback (the SDK setters are silent; they only affect
+    /// the NEXT showForm).
+    @Published var appliedLocale: String?
+    @Published var appliedCountry: String?
+
+    func setLocale(_ locale: String) {
+        TesterController.shared.setLocale(locale: locale)
+        appliedLocale = locale
     }
 
-    func setCountryFr() {
-        TesterController.shared.setCountry(country: "FR")
+    func setCountry(_ country: String) {
+        TesterController.shared.setCountry(country: country)
+        appliedCountry = country
     }
 
     func logOut() {

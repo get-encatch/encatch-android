@@ -72,7 +72,7 @@ narrative — this one calls out only what's different since both native UIs go 
 - **Inline (Exact) / Inline (Any)** — the real native inline view embedded directly (`:android`'s
   `EncatchInlineFormView` / `swift`'s via this module's own cinterop bridge) — a known gap in
   `:kmp-sdk` itself, same one `kmp-sample` already has (see `build.gradle.kts`'s comment).
-- **Settings** — environment/form id summary, **Set Locale → fr-FR** / **Set Country → FR**
+- **Settings** — environment/form id summary, **Set Locale…** / **Set Country…** (modal input)
   (`TesterController.setLocale`/`setCountry`), **Change API key & setup**.
 - **Screen tracking** — Each screen calls `trackScreen(...)`.
 - **CTA navigation** — A single `TesterController.onEvent(...)` listener registered at app start

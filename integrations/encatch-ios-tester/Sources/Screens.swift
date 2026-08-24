@@ -624,8 +624,48 @@ struct InlineAnyTabView: View {
     }
 }
 
+/// Modal prompting for a locale/country code to switch the SDK to. Sheet-based (not an
+/// alert TextField) so it works on the app's iOS 15 deployment target. Apply is disabled
+/// while the input is blank.
+struct LocaleInputSheet: View {
+    let title: String
+    let placeholder: String
+    @State var input: String
+    let onApply: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var trimmed: String { input.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationView {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField(placeholder, text: $input)
+                    .textFieldStyle(.roundedBorder)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                Text("Applies to the next form shown — an already-open form keeps its language.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding()
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") { onApply(trimmed); dismiss() }
+                        .disabled(trimmed.isEmpty)
+                }
+            }
+        }
+    }
+}
+
 struct SettingsTabView: View {
     @ObservedObject var state: TesterState
+    @State private var showLocaleSheet = false
+    @State private var showCountrySheet = false
 
     var body: some View {
         ScrollView {
@@ -649,16 +689,35 @@ struct SettingsTabView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionHeader(title: "Localization", icon: "globe")
                     VStack(spacing: 10) {
-                        Button(action: { state.setLocaleFrFr() }) {
-                            Label("Set Locale → fr-FR", systemImage: "character.bubble")
+                        InfoRow(label: "Locale", value: state.appliedLocale ?? "(device default)")
+                        Divider()
+                        InfoRow(label: "Country", value: state.appliedCountry ?? "(unset)")
+                        Button(action: { showLocaleSheet = true }) {
+                            Label("Set Locale…", systemImage: "character.bubble")
                         }
                         .buttonStyle(SecondaryButtonStyle())
-                        Button(action: { state.setCountryFr() }) {
-                            Label("Set Country → FR", systemImage: "flag.fill")
+                        Button(action: { showCountrySheet = true }) {
+                            Label("Set Country…", systemImage: "flag.fill")
                         }
                         .buttonStyle(SecondaryButtonStyle())
                     }
                     .card()
+                }
+                .sheet(isPresented: $showLocaleSheet) {
+                    LocaleInputSheet(
+                        title: "Set Locale",
+                        placeholder: "e.g. fr-FR, hi-IN",
+                        input: state.appliedLocale ?? "",
+                        onApply: { state.setLocale($0) }
+                    )
+                }
+                .sheet(isPresented: $showCountrySheet) {
+                    LocaleInputSheet(
+                        title: "Set Country",
+                        placeholder: "e.g. FR, IN",
+                        input: state.appliedCountry ?? "",
+                        onApply: { state.setCountry($0) }
+                    )
                 }
 
                 Button("Change API key & setup") { state.clearSetup() }

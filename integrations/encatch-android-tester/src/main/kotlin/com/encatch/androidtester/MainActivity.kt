@@ -82,6 +82,8 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
         mutableStateOf<Screen>(if (prefs.isSetupComplete) Screen.Login else Screen.Setup)
     }
     var tab by remember { mutableStateOf(TesterTab.HOME) }
+    var appliedLocale by remember { mutableStateOf<String?>(null) }
+    var appliedCountry by remember { mutableStateOf<String?>(null) }
     var lastEvent by remember { mutableStateOf("No events yet") }
     var selectedUsername by remember { mutableStateOf(prefs.userName) }
     var savedUsers by remember { mutableStateOf(usersStore.list()) }
@@ -315,8 +317,10 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                         TesterTab.LOGS -> LogsScreen()
                         TesterTab.SETTINGS -> SettingsScreen(
                             prefs = prefs,
-                            onSetLocale = { Encatch.setLocale("fr-FR") },
-                            onSetCountry = { Encatch.setCountry("FR") },
+                            appliedLocale = appliedLocale,
+                            appliedCountry = appliedCountry,
+                            onSetLocale = { Encatch.setLocale(it); appliedLocale = it },
+                            onSetCountry = { Encatch.setCountry(it); appliedCountry = it },
                             onChangeSetup = {
                                 scope.launch {
                                     Encatch.resetUser()

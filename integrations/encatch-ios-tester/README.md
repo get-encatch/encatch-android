@@ -67,8 +67,8 @@ schema-definition repo:
 - **Inline (Any)** — a wildcard `EncatchInlineFormView` (`formId = nil`) you can target by typing
   any other form id, plus a button that shows a deliberately unmatched form id to demonstrate the
   modal fallback.
-- **Settings** — environment/form id/interceptor id summary, **Set Locale → fr-FR**
-  (`setLocale`), **Set Country → FR** (`setCountry`), and **Change API key & setup** (clears local
+- **Settings** — environment/form id/interceptor id summary, **Set Locale…** (modal input,
+  `setLocale`), **Set Country…** (modal input, `setCountry`), and **Change API key & setup** (clears local
   config and SDK state, returns to Setup).
 - **Screen tracking** — Each screen calls `trackScreen(...)` in `onAppear`.
 - **CTA navigation** — A single `Encatch.shared.on(...)` listener registered at app start watches
@@ -99,6 +99,6 @@ schema-definition repo:
 10. **app_navigate (404):** Use a form with an unmapped route, e.g. `"does/not/exist"`. Expect
     **Route not found** with the requested route, then **Go back**.
 11. **Theme cycling:** tap the header theme button through system → light → dark → system.
-12. **Locale/Country:** Settings → **Set Locale → fr-FR** / **Set Country → FR**.
+12. **Locale/Country:** Settings → **Set Locale…** / **Set Country…** — each opens a modal to type the code (e.g. fr-FR / FR); the applied value shows in the Localization card and takes effect on the next form shown.
 13. **Logout / change setup:** header **Logout** returns to Login (SDK state persists).
     Settings → **Change API key & setup** wipes local config and returns to Setup.
