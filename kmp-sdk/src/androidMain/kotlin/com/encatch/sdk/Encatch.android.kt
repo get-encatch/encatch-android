@@ -185,6 +185,7 @@ actual object Encatch {
                         responseBody = entry.responseBody,
                         durationMs = entry.durationMs,
                         error = entry.error,
+                        responseHeaders = entry.responseHeaders,
                     ),
                 )
             }

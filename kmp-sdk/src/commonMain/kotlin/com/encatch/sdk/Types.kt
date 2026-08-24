@@ -124,6 +124,8 @@ data class NetworkLogEntry(
     val responseBody: String,
     val durationMs: Long,
     val error: String?,
+    /** Response headers (e.g. `x-encatch-id` for correlating with server-side logs); empty when the request never got a response. */
+    val responseHeaders: Map<String, String> = emptyMap(),
 )
 
 data class IdentifyOptions(

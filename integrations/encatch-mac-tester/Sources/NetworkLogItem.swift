@@ -37,6 +37,13 @@ struct NetworkLogItem: Identifiable {
         lines.append("--- Request body ---")
         lines.append(prettyJson(entry.requestBody))
         lines.append("")
+        if !entry.responseHeaders.isEmpty {
+            lines.append("--- Response headers ---")
+            for (key, value) in entry.responseHeaders.sorted(by: { $0.key < $1.key }) {
+                lines.append("\(key): \(value)")
+            }
+            lines.append("")
+        }
         lines.append("--- Response (\(statusLabel)) ---")
         lines.append(entry.responseBody.isEmpty ? (entry.error ?? "(empty)") : prettyJson(entry.responseBody))
         return lines.joined(separator: "\n")

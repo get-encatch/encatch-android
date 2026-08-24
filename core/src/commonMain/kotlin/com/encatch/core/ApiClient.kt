@@ -2,8 +2,11 @@ package com.encatch.core
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.onUpload
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -90,10 +93,38 @@ val EncatchJson: Json = Json {
     encodeDefaults = true
 }
 
+/** JSON POST timeouts (ms). Uploads and the SSE stream override per-request below. */
+internal const val DEFAULT_TIMEOUT_MS = 30_000L
+
+/**
+ * Upload idle timeout (ms). Uploads get NO total-time limit — a 50 MB video on a slow uplink
+ * can legitimately take many minutes, so any fixed request timeout eventually kills a valid
+ * upload (a 120s cap was observed killing a 14 MB video mid-transfer). Instead only the
+ * socket (idle) timeout applies: the upload fails when no data moves for this long, matching
+ * the RN (XHR), Flutter (http), and Swift (URLSession inactivity timer) SDKs' semantics.
+ */
+internal const val UPLOAD_IDLE_TIMEOUT_MS = 120_000L
+
 internal fun createHttpClient(engine: HttpClientEngine): HttpClient = HttpClient(engine) {
     install(ContentNegotiation) { json(EncatchJson) }
     install(SSE)
+    install(HttpTimeout) {
+        connectTimeoutMillis = DEFAULT_TIMEOUT_MS
+        requestTimeoutMillis = DEFAULT_TIMEOUT_MS
+        socketTimeoutMillis = DEFAULT_TIMEOUT_MS
+    }
 }
+
+/** Human-readable byte size for network-log summaries of binary payloads. */
+internal fun formatByteSize(bytes: Int): String = when {
+    bytes >= 1_048_576 -> "${(bytes * 10L / 1_048_576).toDouble() / 10.0} MB"
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
+}
+
+/** Flattens Ktor response headers into a plain map for [EncatchNetworkLogEntry] (multi-value headers joined with ", "). */
+internal fun io.ktor.http.Headers.flattenForLog(): Map<String, String> =
+    entries().associate { (name, values) -> name to values.joinToString(", ") }
 
 /**
  * One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
@@ -102,13 +133,6 @@ internal fun createHttpClient(engine: HttpClientEngine): HttpClient = HttpClient
  * Q&A-with-AI SSE stream is not logged (streaming). The API key header is masked to its last
  * 5 characters.
  */
-/** Human-readable byte size for network-log summaries of binary payloads. */
-internal fun formatByteSize(bytes: Int): String = when {
-    bytes >= 1_048_576 -> "${(bytes * 10L / 1_048_576).toDouble() / 10.0} MB"
-    bytes >= 1024 -> "${bytes / 1024} KB"
-    else -> "$bytes B"
-}
-
 data class EncatchNetworkLogEntry(
     val timestampMs: Long,
     val method: String,
@@ -120,6 +144,8 @@ data class EncatchNetworkLogEntry(
     val responseBody: String,
     val durationMs: Long,
     val error: String?,
+    /** Response headers (e.g. `x-encatch-id` for correlating with server-side logs); empty when the request never got a response. */
+    val responseHeaders: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -166,7 +192,7 @@ class EncatchApiClient internal constructor(
         val logHeaders = authHeaders.mapValues { (k, v) ->
             if (k == "X-Api-Key") "•••${v.takeLast(5)}" else v
         } + ("Content-Type" to "application/json")
-        fun emitLog(status: Int, responseBody: String, error: String?) {
+        fun emitLog(status: Int, responseBody: String, error: String?, responseHeaders: Map<String, String> = emptyMap()) {
             networkLogSink(
                 EncatchNetworkLogEntry(
                     timestampMs = startedAt,
@@ -179,6 +205,7 @@ class EncatchApiClient internal constructor(
                     responseBody = responseBody,
                     durationMs = currentTimeMillis() - startedAt,
                     error = error,
+                    responseHeaders = responseHeaders,
                 ),
             )
         }
@@ -196,7 +223,7 @@ class EncatchApiClient internal constructor(
 
         val responseText = response.bodyAsText()
         val parsed = runCatching { EncatchJson.parseToJsonElement(responseText).jsonObject }.getOrNull()
-        emitLog(status = response.status.value, responseBody = responseText, error = null)
+        emitLog(status = response.status.value, responseBody = responseText, error = null, responseHeaders = response.headers.flattenForLog())
 
         logger.debug("POST $endpoint <- ${response.status.value}")
         logger.debug("Response body:\n${parsed ?: responseText}")
@@ -236,7 +263,7 @@ class EncatchApiClient internal constructor(
         } + ("Content-Type" to "multipart/form-data")
         val logBody = "<multipart> file=$fileName, ${formatByteSize(fileBytes.size)}, " +
             "${mimeType ?: "application/octet-stream"}; formId=$feedbackConfigurationId, questionId=$questionId"
-        fun emitLog(status: Int, responseBody: String, error: String?) {
+        fun emitLog(status: Int, responseBody: String, error: String?, responseHeaders: Map<String, String> = emptyMap()) {
             networkLogSink(
                 EncatchNetworkLogEntry(
                     timestampMs = startedAt,
@@ -249,6 +276,7 @@ class EncatchApiClient internal constructor(
                     responseBody = responseBody,
                     durationMs = currentTimeMillis() - startedAt,
                     error = error,
+                    responseHeaders = responseHeaders,
                 ),
             )
         }
@@ -261,7 +289,7 @@ class EncatchApiClient internal constructor(
         }
 
         val text = response.bodyAsText()
-        emitLog(status = response.status.value, responseBody = text, error = null)
+        emitLog(status = response.status.value, responseBody = text, error = null, responseHeaders = response.headers.flattenForLog())
         if (!response.status.isSuccess()) {
             val message = runCatching {
                 val obj = EncatchJson.parseToJsonElement(text).jsonObject
@@ -289,6 +317,10 @@ class EncatchApiClient internal constructor(
         onProgress: ((Int) -> Unit)?,
     ): HttpResponse {
         return httpClient.post(url) {
+            timeout {
+                requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                socketTimeoutMillis = UPLOAD_IDLE_TIMEOUT_MS
+            }
             headers { authHeaders.forEach { (k, v) -> append(k, v) } }
             setBody(
                 MultiPartFormDataContent(
@@ -353,6 +385,12 @@ class EncatchApiClient internal constructor(
                 authHeaders.forEach { (k, v) -> header(k, v) }
                 contentType(ContentType.Application.Json)
                 setBody(bodyJson)
+                // A streamed AI answer can legitimately run (and idle between chunks) far past
+                // the JSON-post defaults — exempt the stream from the request timeout entirely.
+                timeout {
+                    requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                    socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                }
             },
         ) {
             incoming.collect { event ->

@@ -345,6 +345,7 @@ public final class EncatchBridgeNetworkLogEntry: NSObject {
     @objc public let responseBody: String
     @objc public let durationMs: Int
     @objc public let error: String?
+    @objc public let responseHeadersJSON: String
 
     init(_ entry: EncatchNetworkLogEntry) {
         self.timestampMs = Int64(entry.timestamp.timeIntervalSince1970 * 1000)
@@ -357,6 +358,7 @@ public final class EncatchBridgeNetworkLogEntry: NSObject {
         self.responseBody = entry.responseBody
         self.durationMs = entry.durationMs
         self.error = entry.error
+        self.responseHeadersJSON = JSONValue.object(entry.responseHeaders.mapValues { .string($0) }).toJSONString()
     }
 }
 

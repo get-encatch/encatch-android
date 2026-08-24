@@ -83,6 +83,11 @@ private fun EncatchNetworkLogEntry.fullText(): String = buildString {
     appendLine("--- Request body ---")
     appendLine(requestBody)
     appendLine()
+    if (responseHeaders.isNotEmpty()) {
+        appendLine("--- Response headers ---")
+        responseHeaders.entries.sortedBy { it.key }.forEach { (k, v) -> appendLine("$k: $v") }
+        appendLine()
+    }
     appendLine("--- Response (${statusLabel()}) ---")
     append(responseBody.ifEmpty { error ?: "(empty)" })
 }

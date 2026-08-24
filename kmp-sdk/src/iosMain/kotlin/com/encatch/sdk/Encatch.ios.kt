@@ -318,10 +318,12 @@ actual object Encatch {
         }
         EncatchBridge.shared().setOnNetworkLog { entry ->
             if (entry != null) {
-                val headers = runCatching {
-                    (kotlinx.serialization.json.Json.parseToJsonElement(entry.requestHeadersJSON()) as? JsonObject)
+                fun parseHeaders(json: String): Map<String, String> = runCatching {
+                    (kotlinx.serialization.json.Json.parseToJsonElement(json) as? JsonObject)
                         ?.mapValues { (it.value as? JsonPrimitive)?.content ?: it.value.toString() }
                 }.getOrNull() ?: emptyMap()
+                val headers = parseHeaders(entry.requestHeadersJSON())
+                val responseHeaders = parseHeaders(entry.responseHeadersJSON())
                 callback(
                     NetworkLogEntry(
                         timestampMs = entry.timestampMs(),
@@ -334,6 +336,7 @@ actual object Encatch {
                         responseBody = entry.responseBody(),
                         durationMs = entry.durationMs(),
                         error = entry.error(),
+                        responseHeaders = responseHeaders,
                     ),
                 )
             }

@@ -487,6 +487,7 @@ SWIFT_CLASS_NAMED("EncatchBridgeNetworkLogEntry")
 @property (nonatomic, readonly, copy) NSString * _Nonnull responseBody;
 @property (nonatomic, readonly) NSInteger durationMs;
 @property (nonatomic, readonly, copy) NSString * _Nullable error;
+@property (nonatomic, readonly, copy) NSString * _Nonnull responseHeadersJSON;
 - (nonnull instancetype)init SWIFT_UNAVAILABLE;
 + (nonnull instancetype)new SWIFT_UNAVAILABLE_MSG("-init is unavailable");
 @end

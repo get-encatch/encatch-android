@@ -20,10 +20,16 @@ public struct EncatchApiException: Error, Sendable, CustomStringConvertible {
     public var description: String { message }
 }
 
-/// One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
-/// host-app debugging tools. Covers all JSON POST endpoints and the multipart upload (whose
-/// binary body is logged as a `<multipart>` summary line, not the payload); only the
-/// Q&A-with-AI SSE stream is not logged (streaming).
+/// Flattens response headers into a plain map for `EncatchNetworkLogEntry`.
+func flattenHeadersForLog(_ response: URLResponse) -> [String: String] {
+    guard let http = response as? HTTPURLResponse else { return [:] }
+    var result: [String: String] = [:]
+    for (key, value) in http.allHeaderFields {
+        result["\(key)"] = "\(value)"
+    }
+    return result
+}
+
 /// Human-readable byte size for network-log summaries of binary payloads.
 func formatByteSize(_ bytes: Int) -> String {
     if bytes >= 1_048_576 { return "\(Double(bytes * 10 / 1_048_576) / 10.0) MB" }
@@ -31,6 +37,10 @@ func formatByteSize(_ bytes: Int) -> String {
     return "\(bytes) B"
 }
 
+/// One completed SDK HTTP call (request + response), emitted to `Encatch.onNetworkLog` for
+/// host-app debugging tools. Covers all JSON POST endpoints and the multipart upload (whose
+/// binary body is logged as a `<multipart>` summary line, not the payload); only the
+/// Q&A-with-AI SSE stream is not logged (streaming).
 public struct EncatchNetworkLogEntry: Sendable {
     public let timestamp: Date
     public let method: String
@@ -42,6 +52,8 @@ public struct EncatchNetworkLogEntry: Sendable {
     public let responseBody: String
     public let durationMs: Int
     public let error: String?
+    /// Response headers (e.g. `x-encatch-id` for correlating with server-side logs); empty when the request never got a response.
+    public let responseHeaders: [String: String]
 }
 
 /// Thrown when a public method is called before `Encatch.initialize`.
@@ -201,7 +213,7 @@ final class EncatchApiClient: @unchecked Sendable {
         if let apiKey = logHeaders["X-Api-Key"] {
             logHeaders["X-Api-Key"] = "•••\(apiKey.suffix(5))"
         }
-        func emitLog(status: Int, responseBody: String, error: String?) {
+        func emitLog(status: Int, responseBody: String, error: String?, responseHeaders: [String: String] = [:]) {
             networkLogSink(EncatchNetworkLogEntry(
                 timestamp: startedAt,
                 method: "POST",
@@ -212,7 +224,8 @@ final class EncatchApiClient: @unchecked Sendable {
                 status: status,
                 responseBody: responseBody,
                 durationMs: Int(Date().timeIntervalSince(startedAt) * 1000),
-                error: error
+                error: error,
+                responseHeaders: responseHeaders
             ))
         }
 
@@ -230,7 +243,7 @@ final class EncatchApiClient: @unchecked Sendable {
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         let responseText = String(data: data, encoding: .utf8) ?? ""
         let parsed = JSONValue.parse(responseText)
-        emitLog(status: statusCode, responseBody: responseText, error: nil)
+        emitLog(status: statusCode, responseBody: responseText, error: nil, responseHeaders: flattenHeadersForLog(response))
 
         logger.debug("POST \(endpoint) <- \(statusCode)")
         logger.debug("Response body:\n\(parsed?.toJSONString() ?? responseText)")
@@ -284,6 +297,10 @@ final class EncatchApiClient: @unchecked Sendable {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // URLRequest.timeoutInterval is an INACTIVITY timer (it resets while data flows), so
+        // this is an idle timeout, not a total-time cap — a 50 MB upload that keeps moving
+        // never trips it. 120s idle matches the Kotlin core's upload socket timeout.
+        request.timeoutInterval = 120
         for (key, value) in authHeaders { request.setValue(value, forHTTPHeaderField: key) }
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
@@ -298,7 +315,7 @@ final class EncatchApiClient: @unchecked Sendable {
         }
         let logBody = "<multipart> file=\(fileName), \(formatByteSize(fileBytes.count)), " +
             "\(mimeType ?? "application/octet-stream"); formId=\(feedbackConfigurationId), questionId=\(questionId)"
-        func emitLog(status: Int, responseBody: String, error: String?) {
+        func emitLog(status: Int, responseBody: String, error: String?, responseHeaders: [String: String] = [:]) {
             networkLogSink(EncatchNetworkLogEntry(
                 timestamp: startedAt,
                 method: "POST",
@@ -309,7 +326,8 @@ final class EncatchApiClient: @unchecked Sendable {
                 status: status,
                 responseBody: responseBody,
                 durationMs: Int(Date().timeIntervalSince(startedAt) * 1000),
-                error: error
+                error: error,
+                responseHeaders: responseHeaders
             ))
         }
 
@@ -324,7 +342,7 @@ final class EncatchApiClient: @unchecked Sendable {
 
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
         let text = String(data: data, encoding: .utf8) ?? ""
-        emitLog(status: statusCode, responseBody: text, error: nil)
+        emitLog(status: statusCode, responseBody: text, error: nil, responseHeaders: flattenHeadersForLog(response))
 
         guard (200...299).contains(statusCode) else {
             var message = "Upload failed (\(statusCode))"
