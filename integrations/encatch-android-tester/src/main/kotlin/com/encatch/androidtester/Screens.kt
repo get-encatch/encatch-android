@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -79,7 +80,7 @@ fun SetupScreen(
     var interceptorFormId by remember { mutableStateOf("") }
 
     Column(
-        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         HeroHeader(
@@ -157,7 +158,7 @@ fun LoginScreen(
     var newDisplayName by remember { mutableStateOf("") }
 
     Column(
-        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         HeroHeader(
@@ -265,7 +266,7 @@ fun EditProfileScreen(
     var displayName by remember { mutableStateOf(initialDisplayName) }
 
     Column(
-        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         HeroHeader(
@@ -309,7 +310,7 @@ fun HomeScreen(
     }
 
     Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         if (!userName.isNullOrBlank()) {
@@ -412,7 +413,7 @@ fun EventsScreen(onTrackEvent: (String) -> Unit, onTrackScreen: (String) -> Unit
     var customScreen by remember { mutableStateOf("/dashboard/encatch-test") }
 
     Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -484,7 +485,7 @@ private fun InlineSlot(content: @Composable () -> Unit) {
 fun InlineExactScreen(exactFormId: String, onShowExact: () -> Unit) {
     LaunchedEffect(Unit) { Encatch.trackScreen("InlineExact") }
     Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         InfoCard("Claims \"$exactFormId\" — only renders inline when that exact form id is shown.")
@@ -508,7 +509,7 @@ fun InlineAnyScreen(onShowWildcard: (String) -> Unit, onTriggerFallback: () -> U
     var wildcardFormId by remember { mutableStateOf("") }
 
     Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         InfoCard("Catches any form id not exactly claimed elsewhere.")
@@ -548,7 +549,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) { Encatch.trackScreen("Settings") }
 
     Column(
-        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()),
+        Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

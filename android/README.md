@@ -67,6 +67,13 @@ container.addView(inlineForm)
 Leave `formId` unset to make the view a wildcard slot that catches any `showForm(...)` call not
 claimed by another exact-match inline slot — otherwise, calls fall through to the modal overlay.
 
+The view grows to the form's full content height and delegates all scrolling to your layout, so
+the host must also handle keyboard (IME) insets — otherwise the keyboard covers the form's text
+inputs with no way to scroll them into view. In Compose, add `Modifier.imePadding()` to the
+scroll container; in a classic View layout use `windowSoftInputMode="adjustResize"`, and on
+Android 15+ (enforced edge-to-edge) additionally apply `WindowInsetsCompat.Type.ime()` insets
+yourself. The modal overlay handles all of this internally; only inline delegates it to the host.
+
 ## Default hosts
 
 | Option | Default |

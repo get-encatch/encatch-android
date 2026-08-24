@@ -42,6 +42,15 @@ import kotlin.math.roundToInt
  * screen-focus tracking, a host using ViewPager/off-screen page retention should explicitly
  * detach (or set [formId] to a sentinel no form will ever match) while backgrounded, otherwise
  * a wildcard slot on a hidden page could intercept a showForm meant for the visible one.
+ *
+ * Keyboard/IME: this view grows to the form's full content height and disables its own
+ * scrolling — the HOST layout owns scrolling and must also handle IME insets, or the keyboard
+ * will cover the form's text inputs with no way to scroll them into view. In Compose, add
+ * `Modifier.imePadding()` to the scroll container; in a classic View layout, use
+ * `windowSoftInputMode="adjustResize"` — and on Android 15+ (edge-to-edge enforced) apply
+ * `WindowInsetsCompat.Type.ime()` insets yourself, since adjustResize alone no longer resizes
+ * the window. (The modal [EncatchFormDialog] handles all of this internally; only inline
+ * delegates it to the host.)
  */
 class EncatchInlineFormView @JvmOverloads constructor(
     context: Context,
