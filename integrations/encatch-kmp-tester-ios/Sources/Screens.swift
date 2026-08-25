@@ -5,8 +5,8 @@ import EncatchKmpTester
 struct SetupView: View {
     @ObservedObject var state: TesterState
     @State private var environment: TesterEnvironment
-    @State private var apiKey = ""
-    @State private var formId = ""
+    @State private var apiKey = DevDefaults.apiKey
+    @State private var formId = DevDefaults.formId
     @State private var interceptorFormId = ""
 
     init(state: TesterState) {
@@ -671,6 +671,8 @@ struct SettingsTabView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     SectionHeader(title: "Current configuration", icon: "gearshape.fill")
                     VStack(spacing: 6) {
+                        InfoRow(label: "SDK variant", value: "KMP (com.encatch:kmp-sdk, iOS)")
+                        Divider()
                         InfoRow(label: "Environment", value: state.prefs.environment.label)
                         Divider()
                         InfoRow(label: "Form id", value: state.prefs.formId ?? "—")

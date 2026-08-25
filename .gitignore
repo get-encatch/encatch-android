@@ -4,6 +4,8 @@ build/
 .idea/
 *.iml
 local.properties
+# Developer-local defaults baked into tester Setup screens (API key etc.) — never committed.
+dev-tester-defaults.properties
 .DS_Store
 .kotlin/
 .swiftpm/

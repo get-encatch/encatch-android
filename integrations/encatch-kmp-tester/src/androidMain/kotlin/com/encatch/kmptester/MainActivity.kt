@@ -190,8 +190,9 @@ class MainActivity : Activity() {
 
     private fun buildSetupScreen(): View {
         var environment = prefs.environment
-        val apiKeyInput = input("API key *")
-        val formIdInput = input("Default form id (feedback config) *")
+        // Prefilled (still editable) from the developer-local dev-tester-defaults.properties.
+        val apiKeyInput = input("API key *").apply { setText(BuildConfig.DEV_DEFAULT_API_KEY) }
+        val formIdInput = input("Default form id (feedback config) *").apply { setText(BuildConfig.DEV_DEFAULT_FORM_ID) }
         val interceptorFormIdInput = input("Interceptor test form id (optional)")
 
         val col = column()
@@ -659,6 +660,7 @@ class MainActivity : Activity() {
             })
             info.addView(row)
         }
+        infoRow("SDK variant", "KMP (com.encatch:kmp-sdk, Android)")
         infoRow("Environment", prefs.environment.label)
         infoRow("Form id", prefs.formId ?: "(none)")
         infoRow("API base URL", prefs.apiBaseUrl ?: "(default)")

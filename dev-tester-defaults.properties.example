@@ -1,0 +1,8 @@
+# Developer-local defaults for the tester apps' Setup screen. Copy to
+# dev-tester-defaults.properties (git-ignored) and fill in your own values — the tester
+# builds bake them in as prefilled (still editable) Setup fields, so a fresh install of a
+# tester APK starts on the Dev tab with your key and form id already typed.
+#
+# NEVER commit dev-tester-defaults.properties: it contains a real API key.
+encatch.dev.apiKey=en-pk_dev_your_key_here
+encatch.dev.formId=00000000-0000-0000-0000-000000000000

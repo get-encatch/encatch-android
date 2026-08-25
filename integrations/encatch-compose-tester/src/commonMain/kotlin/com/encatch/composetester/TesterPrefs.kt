@@ -10,7 +10,7 @@ enum class TesterEnvironment(val label: String, val apiBaseUrl: String, val webH
     ;
 
     companion object {
-        fun fromName(value: String?): TesterEnvironment = entries.find { it.name == value } ?: PROD
+        fun fromName(value: String?): TesterEnvironment = entries.find { it.name == value } ?: DEV
     }
 }
 

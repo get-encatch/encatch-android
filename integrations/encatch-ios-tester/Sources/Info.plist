@@ -20,6 +20,10 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>EncatchDevApiKey</key>
+	<string>$(ENCATCH_DEV_API_KEY)</string>
+	<key>EncatchDevFormId</key>
+	<string>$(ENCATCH_DEV_FORM_ID)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

@@ -77,8 +77,10 @@ fun SetupScreen(
     onContinue: (environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) -> Unit,
 ) {
     var environment by remember { mutableStateOf(initialEnvironment) }
-    var apiKey by remember { mutableStateOf("") }
-    var formId by remember { mutableStateOf("") }
+    // Prefilled (still editable) from the developer-local dev-tester-defaults.properties
+    // baked in at build time — empty strings when the git-ignored file is absent.
+    var apiKey by remember { mutableStateOf(BuildConfig.DEV_DEFAULT_API_KEY) }
+    var formId by remember { mutableStateOf(BuildConfig.DEV_DEFAULT_FORM_ID) }
     var interceptorFormId by remember { mutableStateOf("") }
 
     Column(
@@ -618,6 +620,8 @@ fun SettingsScreen(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader("Current configuration")
             TesterCard {
+                InfoRow("SDK variant", "Android native (com.encatch:android)")
+                HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outline)
                 InfoRow("Environment", prefs.environment.label)
                 HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outline)
                 InfoRow("Form id", prefs.formId ?: "—")

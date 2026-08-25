@@ -97,6 +97,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Setup") {
+                LabeledContent("SDK variant", value: "Mac Catalyst (iOS native Encatch Swift Package)")
                 LabeledContent("Environment", value: state.prefs.environment.label)
                 LabeledContent("Form id", value: state.prefs.formId ?? "(none)")
                 LabeledContent("API base URL", value: state.prefs.apiBaseUrl ?? "(default)")

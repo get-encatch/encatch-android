@@ -73,7 +73,7 @@ final class TesterPrefs {
     }
 
     var environment: TesterEnvironment {
-        get { TesterEnvironment(rawValue: defaults.string(forKey: Keys.environment) ?? "") ?? .prod }
+        get { TesterEnvironment(rawValue: defaults.string(forKey: Keys.environment) ?? "") ?? .dev }
         set { defaults.set(newValue.rawValue, forKey: Keys.environment) }
     }
 
@@ -125,4 +125,12 @@ final class TestUsersStore {
         guard let data = try? JSONEncoder().encode(users) else { return }
         defaults.set(data, forKey: key)
     }
+}
+
+/// Developer-local Setup-screen defaults injected into Info.plist at build time (see
+/// scripts/install-testers-on-device.sh and the git-ignored dev-tester-defaults.properties).
+/// Empty strings when not injected — Setup starts blank. Prefill only; fields stay editable.
+enum DevDefaults {
+    static let apiKey = (Bundle.main.object(forInfoDictionaryKey: "EncatchDevApiKey") as? String) ?? ""
+    static let formId = (Bundle.main.object(forInfoDictionaryKey: "EncatchDevFormId") as? String) ?? ""
 }

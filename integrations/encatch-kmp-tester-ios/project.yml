@@ -19,6 +19,11 @@ targets:
       properties:
         CFBundleDisplayName: "Encatch KMP Tester"
         UILaunchScreen: {}
+        # Developer-local Setup-screen defaults, expanded from build settings at build time
+        # (scripts pass ENCATCH_DEV_API_KEY/ENCATCH_DEV_FORM_ID from the git-ignored root
+        # dev-tester-defaults.properties; unset -> empty string, Setup starts blank).
+        EncatchDevApiKey: "$(ENCATCH_DEV_API_KEY)"
+        EncatchDevFormId: "$(ENCATCH_DEV_FORM_ID)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         # The form's video/audio recording questions use getUserMedia — iOS kills the app

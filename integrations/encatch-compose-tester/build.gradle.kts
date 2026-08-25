@@ -1,3 +1,5 @@
+import java.util.Properties
+
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
 plugins {
@@ -76,6 +78,19 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+
+        // Developer-local Setup-screen defaults from the git-ignored root
+        // dev-tester-defaults.properties (see its .example twin) — empty when absent.
+        val devDefaults = Properties().apply {
+            val f = rootProject.file("dev-tester-defaults.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        buildConfigField("String", "DEV_DEFAULT_API_KEY", "\"${devDefaults.getProperty("encatch.dev.apiKey", "")}\"")
+        buildConfigField("String", "DEV_DEFAULT_FORM_ID", "\"${devDefaults.getProperty("encatch.dev.formId", "")}\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     lint {

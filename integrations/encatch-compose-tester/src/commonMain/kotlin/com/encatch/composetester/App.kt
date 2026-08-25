@@ -402,8 +402,9 @@ private fun SetupScreen(
     onContinue: (environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) -> Unit,
 ) {
     var environment by remember { mutableStateOf(initialEnvironment) }
-    var apiKey by remember { mutableStateOf("") }
-    var formId by remember { mutableStateOf("") }
+    // Prefilled (still editable) from the developer-local dev-tester-defaults.properties.
+    var apiKey by remember { mutableStateOf(devDefaultApiKey) }
+    var formId by remember { mutableStateOf(devDefaultFormId) }
     var interceptorFormId by remember { mutableStateOf("") }
     val cs = MaterialTheme.colorScheme
 
@@ -909,6 +910,8 @@ private fun SettingsScreen(
         SectionHeader("Current configuration")
         Spacer(8)
         TesterCard {
+            InfoRow("SDK variant", "Compose (com.encatch:compose-sdk, $testerPlatformName)")
+            SettingsDivider()
             InfoRow("Environment", TesterPrefs.environment.label)
             SettingsDivider()
             InfoRow("Form id", TesterPrefs.formId ?: "—")

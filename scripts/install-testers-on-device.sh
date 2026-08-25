@@ -47,6 +47,17 @@ echo "Target device: $DEVICE_ID"
 
 DEVELOPMENT_TEAM="${2:-${ENCATCH_DEVELOPMENT_TEAM:-UG3272Y9F9}}"
 echo "Development team: $DEVELOPMENT_TEAM"
+
+# Developer-local Setup-screen defaults (git-ignored; see dev-tester-defaults.properties.example).
+# Injected into each app's Info.plist via the $(ENCATCH_DEV_*) build settings referenced in
+# project.yml — absent file means empty values and a blank Setup screen, same as before.
+DEV_DEFAULT_API_KEY=""
+DEV_DEFAULT_FORM_ID=""
+if [ -f dev-tester-defaults.properties ]; then
+    DEV_DEFAULT_API_KEY="$(grep '^encatch.dev.apiKey=' dev-tester-defaults.properties | cut -d= -f2- || true)"
+    DEV_DEFAULT_FORM_ID="$(grep '^encatch.dev.formId=' dev-tester-defaults.properties | cut -d= -f2- || true)"
+    echo "Dev defaults: baked in from dev-tester-defaults.properties"
+fi
 echo
 
 echo "--- Building iOS XCFrameworks ---"
@@ -78,7 +89,9 @@ for entry in "${APPS[@]}"; do
     # destination specifier".
     xcodebuild -project $project_path -scheme "$scheme" \
         -destination 'generic/platform=iOS' -derivedDataPath "$derived_data" \
-        DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" -allowProvisioningUpdates build \
+        DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+        ENCATCH_DEV_API_KEY="$DEV_DEFAULT_API_KEY" ENCATCH_DEV_FORM_ID="$DEV_DEFAULT_FORM_ID" \
+        -allowProvisioningUpdates build \
         2>&1 | grep -E '\*\* BUILD|error:' || true
 
     app_path="$derived_data/Build/Products/Debug-iphoneos/$scheme.app"
