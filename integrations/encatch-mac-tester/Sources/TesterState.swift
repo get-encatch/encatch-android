@@ -17,6 +17,8 @@ final class TesterState: ObservableObject {
     @Published var currentTheme: Theme = .system
     @Published var blockedForms: [BlockedFormItem] = []
     @Published var openedForm: BlockedFormItem?
+    /// Presents the row-based addToResponse prefill sheet (see Prefill.swift).
+    @Published var showPrefillSheet = false
     /// Rolling capture of every SDK HTTP call (newest first), fed by Encatch.onNetworkLog.
     @Published var networkLogs: [NetworkLogItem] = []
 
@@ -171,9 +173,13 @@ final class TesterState: ObservableObject {
         showForm(formId)
     }
 
-    func showPrefilledForm() {
+    /// Applies validated prefill rows (from PrefillSheet), then shows the default form.
+    func applyPrefill(_ entries: [(String, Any?)]) {
         guard let formId = prefs.formId else { return }
-        Encatch.shared.addToResponse(questionId: "prefill-question", value: "hello")
+        Encatch.shared.clearPendingResponses()
+        for (questionId, value) in entries {
+            Encatch.shared.addToResponse(questionId: questionId, value: value)
+        }
         showForm(formId)
     }
 

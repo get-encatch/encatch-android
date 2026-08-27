@@ -35,7 +35,7 @@ struct EncatchMacTesterApp: App {
             CommandMenu("Tester") {
                 Button("Show Form") { state.showModalForm() }
                     .keyboardShortcut("f", modifiers: [.command, .shift])
-                Button("Show Form (Prefilled)") { state.showPrefilledForm() }
+                Button("Prefill Answers & Show Form…") { state.showPrefillSheet = true }
                 Divider()
                 Button("Cycle Theme") { state.cycleTheme() }
                     .keyboardShortcut("t", modifiers: [.command, .shift])

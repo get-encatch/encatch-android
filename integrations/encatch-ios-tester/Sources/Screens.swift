@@ -414,10 +414,13 @@ struct HomeTabView: View {
                         }
                         .buttonStyle(PrimaryButtonStyle())
 
-                        Button(action: { state.showPrefilledForm() }) {
-                            Label("Show Form (prefilled)", systemImage: "text.badge.checkmark")
+                        Button(action: { state.showPrefillSheet = true }) {
+                            Label("Prefill answers & show form…", systemImage: "text.badge.checkmark")
                         }
                         .buttonStyle(SecondaryButtonStyle())
+                        .sheet(isPresented: $state.showPrefillSheet) {
+                            PrefillSheet(onApply: { state.applyPrefill($0) })
+                        }
 
                         if let interceptorFormId = state.prefs.interceptorFormId, !interceptorFormId.isEmpty {
                             Button(action: { state.showInterceptorForm() }) {

@@ -359,7 +359,7 @@ fun HomeScreen(
             TesterCard {
                 PrimaryPillButton("Show Form", onClick = onShowModalForm)
                 Spacer(Modifier.height(10.dp))
-                SecondaryPillButton("Show Form (prefilled)", onClick = onShowPrefilledForm)
+                SecondaryPillButton("Prefill answers & show form…", onClick = onShowPrefilledForm)
                 if (!interceptorFormId.isNullOrBlank()) {
                     Spacer(Modifier.height(10.dp))
                     SecondaryPillButton("Show Form (interceptor test)", onClick = { onShowInterceptorForm(interceptorFormId) })

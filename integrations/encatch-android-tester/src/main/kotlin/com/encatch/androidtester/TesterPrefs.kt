@@ -44,6 +44,11 @@ class TesterPrefs(context: Context) {
         get() = TesterEnvironment.fromName(prefs.getString(KEY_ENVIRONMENT, null))
         set(value) = prefs.edit().putString(KEY_ENVIRONMENT, value.name).apply()
 
+    /** Persisted prefill rows (JSON, see PrefillSpec) so the setup survives app restarts. */
+    var prefillRowsJson: String?
+        get() = prefs.getString("prefill_rows", null)
+        set(value) = prefs.edit().putString("prefill_rows", value).apply()
+
     var userName: String?
         get() = prefs.getString(KEY_USER_NAME, null)
         set(value) = prefs.edit().putString(KEY_USER_NAME, value).apply()

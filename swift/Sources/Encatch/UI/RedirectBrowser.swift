@@ -29,6 +29,10 @@ extension UIApplication {
         guard let root = (scene?.windows.first { $0.isKeyWindow })?.rootViewController else { return nil }
         var top = root
         while let presented = top.presentedViewController {
+            // A sheet mid-dismissal is still linked as presentedViewController but its view has
+            // left the hierarchy — presenting on it is silently dropped by UIKit ("whose view
+            // is not in the window hierarchy"). Stop at its presenter instead.
+            if presented.isBeingDismissed { break }
             top = presented
         }
         return top

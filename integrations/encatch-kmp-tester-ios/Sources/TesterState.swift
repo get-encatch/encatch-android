@@ -16,6 +16,8 @@ final class TesterState: ObservableObject {
     @Published var currentTheme = "SYSTEM"
     @Published var blockedForms: [BlockedFormItem] = []
     @Published var openedForm: BlockedFormItem?
+    /// Presents the row-based addToResponse prefill sheet (see Prefill.swift).
+    @Published var showPrefillSheet = false
     /// Rolling capture of every SDK HTTP call (newest first), fed by TesterController's
     /// flattened setOnNetworkLog passthrough. Only populates in debugMode.
     @Published var networkLogs: [NetworkLogItem] = []
@@ -158,9 +160,14 @@ final class TesterState: ObservableObject {
         showForm(formId)
     }
 
-    func showPrefilledForm() {
+    /// Applies validated prefill rows (from PrefillSheet), then shows the default form.
+    func applyPrefill(_ entries: [(String, Any?)]) {
         guard let formId = prefs.formId else { return }
-        Task { try? await TesterController.shared.showPrefilledForm(formId: formId, questionId: "prefill-question", value: "hello") }
+        TesterController.shared.clearPendingResponses()
+        for (questionId, value) in entries {
+            TesterController.shared.addToResponse(questionId: questionId, value: value)
+        }
+        showForm(formId)
     }
 
     func showInterceptorForm() {

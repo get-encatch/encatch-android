@@ -28,6 +28,10 @@ actual object TesterPrefs {
         get() = defaults.stringForKey("interceptor_form_id")
         set(value) = defaults.setObject(value, forKey = "interceptor_form_id")
 
+    actual var prefillRowsJson: String?
+        get() = defaults.stringForKey("prefill_rows")
+        set(value) = defaults.setObject(value, forKey = "prefill_rows")
+
     actual var environment: TesterEnvironment
         get() = TesterEnvironment.fromName(defaults.stringForKey("environment"))
         set(value) = defaults.setObject(value.name, forKey = "environment")

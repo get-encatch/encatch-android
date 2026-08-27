@@ -84,6 +84,25 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
     var tab by remember { mutableStateOf(TesterTab.HOME) }
     var appliedLocale by remember { mutableStateOf<String?>(null) }
     var appliedCountry by remember { mutableStateOf<String?>(null) }
+    var showPrefillDialog by remember { mutableStateOf(false) }
+    var prefillRows by remember { mutableStateOf(decodePrefillRows(prefs.prefillRowsJson)) }
+
+    if (showPrefillDialog) {
+        PrefillDialog(
+            initialRows = prefillRows,
+            onDismiss = { showPrefillDialog = false },
+            onApply = { rows, parsed ->
+                prefillRows = rows
+                prefs.prefillRowsJson = encodePrefillRows(rows)
+                showPrefillDialog = false
+                scope.launch {
+                    Encatch.clearPendingResponses()
+                    parsed.forEach { (questionId, value) -> Encatch.addToResponse(questionId, value) }
+                    Encatch.showForm(prefs.formId.orEmpty())
+                }
+            },
+        )
+    }
     var lastEvent by remember { mutableStateOf("No events yet") }
     var selectedUsername by remember { mutableStateOf(prefs.userName) }
     var savedUsers by remember { mutableStateOf(usersStore.list()) }
@@ -301,12 +320,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                             lastEvent = lastEvent,
                             interceptorFormId = prefs.interceptorFormId,
                             onShowModalForm = { scope.launch { Encatch.showForm(prefs.formId.orEmpty()) } },
-                            onShowPrefilledForm = {
-                                scope.launch {
-                                    Encatch.addToResponse("prefill-question", "hello")
-                                    Encatch.showForm(prefs.formId.orEmpty())
-                                }
-                            },
+                            onShowPrefilledForm = { showPrefillDialog = true },
                             onShowInterceptorForm = { id -> scope.launch { Encatch.showForm(id) } },
                             onEditProfile = { prefs.userName?.let { screen = Screen.EditProfile(it) } },
                         )

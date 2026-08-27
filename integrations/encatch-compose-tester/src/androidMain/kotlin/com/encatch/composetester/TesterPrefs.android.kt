@@ -39,6 +39,12 @@ actual object TesterPrefs {
             prefs.edit().putString("interceptor_form_id", value).apply()
         }
 
+    actual var prefillRowsJson: String?
+        get() = prefs.getString("prefill_rows", null)
+        set(value) {
+            prefs.edit().putString("prefill_rows", value).apply()
+        }
+
     actual var environment: TesterEnvironment
         get() = TesterEnvironment.fromName(prefs.getString("environment", null))
         set(value) {

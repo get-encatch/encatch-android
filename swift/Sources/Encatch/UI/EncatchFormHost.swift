@@ -21,12 +21,27 @@ public enum EncatchFormHost {
                 switch event {
                 case .showForm(let payload):
                     guard payload.presentation != "inline" else { return }
-                    let show = {
+                    // The host app may trigger showForm right as it dismisses its own sheet
+                    // (e.g. an "apply & show form" flow) — during that transition the topmost
+                    // controller is mid-dismissal or still has a presented child, and UIKit
+                    // silently drops a present() aimed at it. Wait for a stable presenter
+                    // (bounded retries) instead of presenting into the transition.
+                    func presentWhenStable(retriesLeft: Int = 10) {
                         guard let presenter = UIApplication.topmostViewController() else { return }
+                        let transitioning = presenter.isBeingDismissed
+                            || presenter.presentedViewController != nil
+                            || presenter.view.window == nil
+                        if transitioning, retriesLeft > 0 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                presentWhenStable(retriesLeft: retriesLeft - 1)
+                            }
+                            return
+                        }
                         let controller = EncatchFormViewController()
                         currentController = controller
                         controller.present(payload: payload, from: presenter)
                     }
+                    let show = { presentWhenStable() }
                     // If a previous form is still presented (including mid exit-animation),
                     // resolve the presenter only AFTER its dismissal completes. Presenting
                     // immediately would resolve topmostViewController() to the dismissing

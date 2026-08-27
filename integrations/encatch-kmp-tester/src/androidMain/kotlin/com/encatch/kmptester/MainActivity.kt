@@ -475,8 +475,8 @@ class MainActivity : Activity() {
         col.addView(body("Last event: $lastEvent"))
         col.addView(primaryButton("Show Form") { scope.launch { runCatching { TesterController.showForm(prefs.formId.orEmpty()) } } })
         col.addView(
-            secondaryButton("Show Form (prefilled)") {
-                scope.launch { runCatching { TesterController.showPrefilledForm(prefs.formId.orEmpty(), "prefill-question", "hello") } }
+            secondaryButton("Prefill answers & show form…") {
+                showPrefillDialog()
             },
         )
         val interceptorFormId = prefs.interceptorFormId
@@ -572,6 +572,136 @@ class MainActivity : Activity() {
             .setPositiveButton("Copy") { _, _ -> copyToClipboard(row.fullText) }
             .setNegativeButton("Close", null)
             .show()
+    }
+
+    /**
+     * Row-based `addToResponse` prefill editor, ported from the web tester's
+     * `AddToResponsePrefillRows` (slash-admin-encatch): per-row question id, question-type
+     * picker, type-aware value text with a one-tap sample, strict validation on apply. Rows
+     * persist in [TesterPrefs.prefillRowsJson].
+     */
+    private fun showPrefillDialog() {
+        val rows = decodePrefillRows(prefs.prefillRowsJson).ifEmpty { listOf(PrefillRow()) }.toMutableList()
+        // Per-row live inputs, so typing doesn't force a re-render (which would drop focus).
+        data class RowViews(val questionId: EditText, val value: EditText)
+
+        val rowViews = mutableListOf<RowViews>()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20f), dp(8f), dp(20f), dp(8f))
+        }
+        val errorView = TextView(this).apply {
+            setTextColor(0xFFDC2626.toInt())
+            textSize = 12f
+            visibility = View.GONE
+            setPadding(0, dp(6f), 0, 0)
+        }
+
+        fun syncRowsFromViews() {
+            rowViews.forEachIndexed { i, views ->
+                if (i < rows.size) {
+                    rows[i] = rows[i].copy(
+                        questionId = views.questionId.text.toString(),
+                        value = views.value.text.toString(),
+                    )
+                }
+            }
+        }
+
+        lateinit var render: () -> Unit
+
+        fun rowView(index: Int): View {
+            val row = rows[index]
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(6f), 0, dp(6f))
+            }
+            val questionIdInput = filledField("question id (uuid or slug)").apply { setText(row.questionId) }
+            val valueInput = filledField(row.type.hint).apply {
+                setText(row.value)
+                if (row.type.editor == PrefillEditor.JSON || row.type.editor == PrefillEditor.LONG_TEXT) {
+                    isSingleLine = false
+                    minLines = 3
+                }
+            }
+            rowViews.add(RowViews(questionIdInput, valueInput))
+            col.addView(questionIdInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            col.addView(chipRow { chips ->
+                chips.addView(chipButton("Type: ${row.type.label}") {
+                    syncRowsFromViews()
+                    val labels = ALL_PREFILL_TYPES.map { type ->
+                        val category = PREFILL_CATEGORIES.first { it.types.contains(type) }.label
+                        "$category · ${type.label}"
+                    }
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Question type")
+                        .setItems(labels.toTypedArray()) { _, which ->
+                            val type = ALL_PREFILL_TYPES[which]
+                            // Type change resets the value to that type's sample, like the web tester.
+                            rows[index] = rows[index].copy(typeWire = type.wire, value = type.sample)
+                            render()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                })
+                chips.addView(chipButton("Sample") {
+                    syncRowsFromViews()
+                    rows[index] = rows[index].copy(value = rows[index].type.sample)
+                    render()
+                })
+                chips.addView(chipButton("Remove") {
+                    syncRowsFromViews()
+                    rows.removeAt(index)
+                    if (rows.isEmpty()) rows.add(PrefillRow())
+                    render()
+                })
+            })
+            col.addView(valueInput, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            col.addView(body(row.type.hint))
+            return col
+        }
+
+        render = {
+            rowViews.clear()
+            container.removeAllViews()
+            container.addView(body("Each row becomes an addToResponse(questionId, value) call before the form is shown."))
+            rows.indices.forEach { container.addView(rowView(it)) }
+            container.addView(secondaryButton("Add row") {
+                syncRowsFromViews()
+                rows.add(PrefillRow())
+                render()
+            })
+            container.addView(errorView)
+        }
+        render()
+
+        val scroll = ScrollView(this).apply { addView(container) }
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Prefill answers")
+            .setView(scroll)
+            .setPositiveButton("Apply & Show Form", null) // set below so validation can keep it open
+            .setNegativeButton("Cancel", null)
+            .show()
+
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            syncRowsFromViews()
+            val filled = rows.filter { it.questionId.isNotBlank() }
+            if (filled.isEmpty()) {
+                errorView.text = "Add at least one row with a question id."
+                errorView.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+            val parsed = try {
+                filled.map { it.questionId.trim() to parsePrefillValue(it.type, it.value) }
+            } catch (e: IllegalArgumentException) {
+                errorView.text = e.message
+                errorView.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
+            prefs.prefillRowsJson = encodePrefillRows(rows)
+            dialog.dismiss()
+            scope.launch { runCatching { TesterController.applyPrefillAndShowForm(prefs.formId.orEmpty(), parsed) } }
+        }
     }
 
     /**

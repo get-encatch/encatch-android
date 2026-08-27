@@ -100,6 +100,23 @@ object TesterController {
         Encatch.showForm(formId)
     }
 
+    /** Row-based prefill: clears pending responses, adds each entry, then shows the form. */
+    suspend fun applyPrefillAndShowForm(formId: String, entries: List<Pair<String, Any?>>) {
+        Encatch.clearPendingResponses()
+        entries.forEach { (questionId, value) -> Encatch.addToResponse(questionId, value) }
+        Encatch.showForm(formId)
+    }
+
+    // Flat single-entry passthroughs for the Swift tester (Kotlin List<Pair<...>> is awkward
+    // to build from Swift): clear, then addToResponse per row, then showForm.
+    fun addToResponse(questionId: String, value: Any?) {
+        Encatch.addToResponse(questionId, value)
+    }
+
+    fun clearPendingResponses() {
+        Encatch.clearPendingResponses()
+    }
+
     @Throws(Exception::class)
     suspend fun dismissForm(formId: String?) {
         Encatch.dismissForm(formId)

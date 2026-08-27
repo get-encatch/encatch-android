@@ -45,11 +45,14 @@ struct HomeView: View {
                         }
                         .buttonStyle(.borderedProminent)
 
-                        Button(action: { state.showPrefilledForm() }) {
-                            Label("Show Form (Prefilled)", systemImage: "text.badge.checkmark")
+                        Button(action: { state.showPrefillSheet = true }) {
+                            Label("Prefill Answers & Show Form…", systemImage: "text.badge.checkmark")
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(.bordered)
+                        .sheet(isPresented: $state.showPrefillSheet) {
+                            PrefillSheet(onApply: { state.applyPrefill($0) })
+                        }
 
                         if let interceptorFormId = state.prefs.interceptorFormId, !interceptorFormId.isEmpty {
                             Button(action: { state.showInterceptorForm() }) {

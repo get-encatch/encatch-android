@@ -90,6 +90,8 @@ private fun TesterScreens() {
     var tab by remember { mutableStateOf(TesterTab.HOME) }
     var appliedLocale by remember { mutableStateOf<String?>(null) }
     var appliedCountry by remember { mutableStateOf<String?>(null) }
+    var showPrefillDialog by remember { mutableStateOf(false) }
+    var prefillRows by remember { mutableStateOf(decodePrefillRows(TesterPrefs.prefillRowsJson)) }
     var lastEvent by remember { mutableStateOf("No events yet") }
     var selectedUsername by remember { mutableStateOf(TesterPrefs.userName) }
     var savedUsers by remember { mutableStateOf(TestUsersStore.list()) }
@@ -97,6 +99,23 @@ private fun TesterScreens() {
     var blockedForms by remember { mutableStateOf(listOf<BlockedFormItem>()) }
     var openedForm by remember { mutableStateOf<BlockedFormItem?>(null) }
     val scope = rememberCoroutineScope()
+
+    if (showPrefillDialog) {
+        PrefillDialog(
+            initialRows = prefillRows,
+            onDismiss = { showPrefillDialog = false },
+            onApply = { rows, parsed ->
+                prefillRows = rows
+                TesterPrefs.prefillRowsJson = encodePrefillRows(rows)
+                showPrefillDialog = false
+                scope.launch {
+                    Encatch.clearPendingResponses()
+                    parsed.forEach { (questionId, value) -> Encatch.addToResponse(questionId, value) }
+                    Encatch.showForm(TesterPrefs.formId.orEmpty())
+                }
+            },
+        )
+    }
 
     DisposableEffect(Unit) {
         NetworkLogStore.install()
@@ -270,12 +289,7 @@ private fun TesterScreens() {
                             lastEvent = lastEvent,
                             interceptorFormId = TesterPrefs.interceptorFormId,
                             onShowModalForm = { scope.launch { Encatch.showForm(TesterPrefs.formId.orEmpty()) } },
-                            onShowPrefilledForm = {
-                                scope.launch {
-                                    Encatch.addToResponse("prefill-question", "hello")
-                                    Encatch.showForm(TesterPrefs.formId.orEmpty())
-                                }
-                            },
+                            onShowPrefilledForm = { showPrefillDialog = true },
                             onShowInterceptorForm = { id -> scope.launch { Encatch.showForm(id) } },
                             onEditProfile = { TesterPrefs.userName?.let { screen = Screen.EditProfile(it) } },
                         )
@@ -683,7 +697,7 @@ private fun HomeScreen(
         TesterCard {
             PrimaryPillButton(text = "Show Form", onClick = onShowModalForm)
             Spacer(10)
-            SecondaryPillButton(text = "Show Form (prefilled)", onClick = onShowPrefilledForm)
+            SecondaryPillButton(text = "Prefill answers & show form…", onClick = onShowPrefilledForm)
             if (!interceptorFormId.isNullOrBlank()) {
                 Spacer(10)
                 SecondaryPillButton(

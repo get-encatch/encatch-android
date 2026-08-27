@@ -21,6 +21,9 @@ expect object TesterPrefs {
     var apiBaseUrl: String?
     var webHost: String?
     var interceptorFormId: String?
+
+    /** Persisted prefill rows (JSON, see PrefillSpec) so the setup survives app restarts. */
+    var prefillRowsJson: String?
     var environment: TesterEnvironment
     var userName: String?
     val isSetupComplete: Boolean

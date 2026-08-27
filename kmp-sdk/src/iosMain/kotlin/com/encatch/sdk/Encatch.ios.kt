@@ -160,7 +160,11 @@ actual object Encatch {
     // ============================================================================
 
     actual fun addToResponse(questionId: String, value: Any?) {
-        EncatchBridge.shared().addToResponseWithQuestionId(questionId, value)
+        // A kotlinx JsonElement crosses the ObjC boundary as an opaque Kotlin object the Swift
+        // side's JSONValue.from(any:) can't interpret (it would be stringified) — flatten it to
+        // plain Kotlin values first, which Kotlin/Native bridges to NSDictionary/NSArray/NSNumber.
+        val bridgeValue = if (value is JsonElement) value.toPlain() else value
+        EncatchBridge.shared().addToResponseWithQuestionId(questionId, bridgeValue)
     }
 
     actual fun getPendingResponses(): Map<String, Any?> {
