@@ -16,6 +16,7 @@ class EncatchStorage internal constructor(
         private const val KEY_DEVICE_ID = "@encatch/device_id"
         private const val KEY_USER_NAME = "@encatch/user_name"
         private const val KEY_USER_ID_PREFIX = "@encatch/user_id_"
+        private const val KEY_USER_SIGNATURE_PREFIX = "@encatch/user_signature_"
         private const val KEY_FT_PREFIX = "@encatch/ft_"
         private const val KEY_PREFERENCES = "@encatch/preferences"
         private const val KEY_SESSION_STOPPED = "@encatch/session_stopped"
@@ -63,6 +64,27 @@ class EncatchStorage internal constructor(
 
     fun clearUserId(userName: String) {
         runCatching { settings.remove(KEY_USER_ID_PREFIX + userName) }
+    }
+
+    /**
+     * The secure-identify signature of [userName], kept after a successful secure identify and sent
+     * on every request of that user, so it survives a restart (RN 1.4.4 item 16, `storage.ts`).
+     */
+    internal fun getUserSignature(userName: String): StoredSignature? {
+        val raw = runCatching { settings.getStringOrNull(KEY_USER_SIGNATURE_PREFIX + userName) }.getOrNull() ?: return null
+        return runCatching {
+            val map = Json.decodeFromString<Map<String, String?>>(raw)
+            map["signature"]?.let { StoredSignature(it, map["time"]) }
+        }.getOrNull()
+    }
+
+    internal fun setUserSignature(userName: String, value: StoredSignature) {
+        val map = mapOf("signature" to value.signature, "time" to value.time)
+        runCatching { settings[KEY_USER_SIGNATURE_PREFIX + userName] = Json.encodeToString(map) }
+    }
+
+    internal fun clearUserSignature(userName: String) {
+        runCatching { settings.remove(KEY_USER_SIGNATURE_PREFIX + userName) }
     }
 
     private fun ftKey(identityKey: String) = KEY_FT_PREFIX + identityKey
@@ -134,9 +156,14 @@ class EncatchStorage internal constructor(
             settings.remove(KEY_PREFERENCES)
             settings.remove(KEY_SESSION_STOPPED)
             settings.remove(KEY_RETRY_QUEUE)
-            settings.keys.filter { it.startsWith(KEY_USER_ID_PREFIX) || it.startsWith(KEY_FT_PREFIX) }
+            settings.keys.filter {
+                it.startsWith(KEY_USER_ID_PREFIX) || it.startsWith(KEY_FT_PREFIX) || it.startsWith(KEY_USER_SIGNATURE_PREFIX)
+            }
                 .forEach { settings.remove(it) }
         }
         inMemorySessionId = null
     }
 }
+
+/** A stored secure-identify signature; [time] is `generatedDateTimeInUtc` as given (epoch ms), when the key has a session time. */
+internal data class StoredSignature(val signature: String, val time: String?)

@@ -53,10 +53,24 @@ object Encatch {
     private var isFullScreenState = false
     private var onBeforeShowForm: BeforeShowFormInterceptor? = null
 
-    // Identity
-    private var userNameState: String? = null
-    private var userIdState: String? = null
-    private var userSignature: String? = null
+    // Identity. [userIdState] is always the id of [userNameState] (or null): a request carries both
+    // identity headers or neither (RN 1.4.4 item 11).
+    @Volatile private var userNameState: String? = null
+    @Volatile private var userIdState: String? = null
+    /** After a successful secure identify: the signature and its time, sent on every request of that user. */
+    @Volatile private var userSignature: String? = null
+    @Volatile private var userSignatureTime: String? = null
+    /**
+     * The stored session-time signature expired (a 401): until the next successful identify, events,
+     * screens, ping and automatic surveys are skipped and survey submits are held (RN 1.4.4 item 16).
+     */
+    @Volatile private var signatureExpired = false
+    private val heldSubmits = mutableListOf<SubmitFormRequest>()
+    private val secureLock = Mutex()
+    /** identifyUser and resetUser run one after the other (RN 1.4.4 item 13). */
+    private val identityMutex = Mutex()
+    /** The last identify sent or in flight, to skip an identical one (RN 1.4.4 item 3). */
+    @Volatile private var lastIdentifyKey: String? = null
 
     // Preferences
     private var localeState: String? = null
@@ -176,6 +190,7 @@ object Encatch {
                     userSignature = userSignature,
                     deviceId = deviceIdState,
                     appPackageName = appPackageName,
+                    userSignatureTime = userSignatureTime,
                 )
             },
             networkLogSink = { entry ->
@@ -188,6 +203,7 @@ object Encatch {
                 resetUser()
             },
             logger = logger,
+            onSignatureExpired = { onSignatureExpired() },
         )
         retryQueue = RetryQueue(scope, storage)
         sessionManager = SessionManager(scope, isFormVisible = { isFormVisible }, onPing = { doPing() })
@@ -204,8 +220,10 @@ object Encatch {
         prefs.country?.let { countryState = it }
 
         if (storedName != null) {
+            // a name without its id (a device left half-identified) goes out as a visitor
             userNameState = storedName
             userIdState = storage.getUserId(storedName)
+            loadStoredSignature(storedName)
             feedbackTransactions = storage.getFeedbackTransactions(storedName)
         } else {
             feedbackTransactions = storage.getFeedbackTransactions("anonymous")
@@ -226,8 +244,40 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun identifyUser(userName: String, traits: UserTraits? = null, options: IdentifyOptions? = null) {
         if (!initialized) return
+        // one after the other with resetUser, so a reset fired just before can't undo this identify
+        identityMutex.withLock { identifyNow(userName, traits, options) }
+    }
 
-        userNameState = userName
+    private suspend fun identifyNow(userName: String, traits: UserTraits?, options: IdentifyOptions?) {
+        val secure = options?.secure
+        val attributes = traits?.toJson()
+        // Skip a call identical to the last identify sent or still in flight; forgotten when that
+        // identify is dropped, on resetUser and on clearAll.
+        val identifyKey = stableJsonKey(
+            buildJsonObject {
+                put("userName", userName)
+                put("traits", attributes ?: kotlinx.serialization.json.JsonNull)
+                put("locale", options?.locale)
+                put("country", options?.country)
+                put("signature", secure?.signature)
+                put("signatureTime", secure?.generatedDateTimeInUtc)
+            },
+        )
+        if (identifyKey == lastIdentifyKey) {
+            logger.debug("identifyUser \"$userName\" skipped: same as the last identify (duplicate)")
+            return
+        }
+        lastIdentifyKey = identifyKey
+
+        // Switching user: take this user's own stored id (or none) with the name, so a request never
+        // pairs this name with another user's id; without one, requests go as a visitor until the
+        // reply. The previous user's signature is not carried over.
+        if (userName != userNameState) {
+            userIdState = null
+            userNameState = userName
+            userIdState = storage.getUserId(userName)
+            loadStoredSignature(userName)
+        }
         storage.setUserName(userName)
 
         options?.locale?.let {
@@ -243,18 +293,39 @@ object Encatch {
         val req = buildJsonObject {
             put("userName", userName)
             userIdState?.let { put("userId", it) }
-            (options?.secure?.signature ?: userSignature)?.let { put("userSignature", it) }
+            secure?.signature?.let { put("userSignature", it) }
             put("\$deviceInfo", deviceInfo.toJson())
-            traits?.let { put("userAttributes", it.toJson()) }
+            attributes?.let { put("userAttributes", it) }
             feedbackTransactions?.let { put("\$feedbackTransactions", it) }
         }
+        val auth = IdentifyAuth(userName, secure?.signature, secure?.generatedDateTimeInUtc)
 
-        retryQueue.enqueue("identifyUser") {
-            val res = apiClient.post(Endpoints.IDENTIFY_USER, req, signatureTime = options?.secure?.generatedDateTimeInUtc)
+        retryQueue.enqueue(
+            "identifyUser",
+            onDrop = { if (lastIdentifyKey == identifyKey) lastIdentifyKey = null },
+        ) {
+            val res = apiClient.send(Endpoints.IDENTIFY_USER, req, identify = auth)
+            // a reply for a user who is no longer current (reset or switched since): not applied
+            if (userNameState != userName) {
+                logger.debug("identify reply for \"$userName\" ignored: no longer the current user")
+                return@enqueue
+            }
             res["userId"]?.jsonPrimitive?.contentOrNull?.let {
                 userIdState = it
                 storage.setUserId(userName, it)
             }
+            // Secure identify: from now on the signature (and its time) go on every request of this
+            // user and survive a restart; an identify without `secure` clears them.
+            if (secure != null) {
+                userSignature = secure.signature
+                userSignatureTime = secure.generatedDateTimeInUtc
+                storage.setUserSignature(userName, StoredSignature(secure.signature, secure.generatedDateTimeInUtc))
+            } else {
+                userSignature = null
+                userSignatureTime = null
+                storage.clearUserSignature(userName)
+            }
+            endSignatureExpired()
             res["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull?.let {
                 feedbackTransactions = it
                 storage.setFeedbackTransactions(userName, it)
@@ -274,6 +345,45 @@ object Encatch {
         }
 
         scope.launch { retryQueue.flush() }
+    }
+
+    private fun loadStoredSignature(userName: String) {
+        val stored = storage.getUserSignature(userName)
+        userSignature = stored?.signature
+        userSignatureTime = stored?.time
+    }
+
+    /** The stored session-time signature expired (a 401): warn once and wait for a new identify. */
+    private suspend fun onSignatureExpired() {
+        secureLock.withLock {
+            if (signatureExpired) return
+            signatureExpired = true
+        }
+        logger.warn(
+            "[Encatch] Secure identify signature expired (401). Call identifyUser() with a fresh signature; " +
+                "until then events, screens, ping and automatic surveys are skipped and survey submits are held.",
+        )
+        userSignature = null
+        userSignatureTime = null
+        userNameState?.let { storage.clearUserSignature(it) }
+    }
+
+    /** Keeps a survey submit until the next successful identify (in memory, the latest [MAX_HELD_SUBMITS]). */
+    private suspend fun holdSubmit(params: SubmitFormRequest) {
+        secureLock.withLock {
+            heldSubmits.add(params)
+            if (heldSubmits.size > MAX_HELD_SUBMITS) heldSubmits.removeAt(0)
+        }
+        logger.debug("submitForm held until the next identify (secure signature expired)")
+    }
+
+    /** A successful identify ends the expired state and sends the held submits. */
+    private suspend fun endSignatureExpired() {
+        val held = secureLock.withLock {
+            signatureExpired = false
+            heldSubmits.toList().also { heldSubmits.clear() }
+        }
+        held.forEach { params -> scope.launch { submitForm(params) } }
     }
 
     // ============================================================================
@@ -301,6 +411,10 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun trackEvent(eventName: String) {
         if (!initialized || isFullScreenState) return
+        if (signatureExpired) {
+            logger.debug("trackEvent \"$eventName\" skipped: secure signature expired, waiting for identify")
+            return
+        }
 
         val deviceInfo = buildDeviceInfo()
         val req = buildJsonObject {
@@ -329,6 +443,10 @@ object Encatch {
     suspend fun trackFormEvent(eventName: String, feedbackConfigurationId: String?) {
         if (!initialized) return
         // survey events are an identified user's: the server answers 403 to a visitor's (RN 1.4.4 item 8)
+        if (signatureExpired) {
+            logger.debug("survey event $eventName skipped: secure signature expired")
+            return
+        }
         if (!hasIdentity) {
             logger.debug("survey event $eventName skipped: visitor")
             return
@@ -354,6 +472,10 @@ object Encatch {
         if (!initialized || isFullScreenState) return
 
         currentScreen = screenName
+        if (signatureExpired) {
+            logger.debug("trackScreen \"$screenName\" skipped: secure signature expired, waiting for identify")
+            return
+        }
         val deviceInfo = buildDeviceInfo(screenName)
         val req = buildJsonObject {
             put("\$deviceInfo", deviceInfo.toJson())
@@ -399,6 +521,10 @@ object Encatch {
 
     /** One pending automatic show at a time; none while a survey is pending, loading or open. */
     private suspend fun scheduleAutoShow(formId: String, delayMs: Long) {
+        if (signatureExpired) {
+            logger.debug("survey $formId offered: skipped (secure signature expired)")
+            return
+        }
         surveyGuard.withLock {
             if (pendingAutoShow?.isActive == true || loadingFormId != null || isFormVisible) {
                 logger.debug("survey $formId offered while another is pending or open: skipped (survey-open)")
@@ -432,7 +558,7 @@ object Encatch {
             }
             when {
                 // an automatic show never interrupts a survey that is loading or open
-                triggerType == TriggerType.AUTOMATIC && (loadingFormId != null || isFormVisible) -> false
+                triggerType == TriggerType.AUTOMATIC && (signatureExpired || loadingFormId != null || isFormVisible) -> false
                 // asking again for the survey already loading or open keeps the answers in progress
                 triggerType == TriggerType.MANUAL && (loadingFormId == formId || (isFormVisible && formId in openFormIds)) -> false
                 else -> {
@@ -613,6 +739,11 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun submitForm(params: SubmitFormRequest) {
         if (!initialized) return
+        // secure signature expired: the answers wait for the next identify
+        if (signatureExpired) {
+            holdSubmit(params)
+            return
+        }
         val deviceInfo = buildDeviceInfo()
         val req = buildJsonObject {
             params.triggerType?.let { put("triggerType", it) }
@@ -623,7 +754,11 @@ object Encatch {
             val res = apiClient.post(Endpoints.SUBMIT_FORM, req)
             applyFeedbackTransactions(res)
             sessionManager.handleResponseMeta(res.toResponseMeta())
-        }.onFailure { logger.warn("submitForm API error: ${it.message}") }
+        }.onFailure {
+            if (it is CancellationException) throw it
+            if (it is EncatchApiException && it.status == 401 && signatureExpired) holdSubmit(params)
+            else logger.warn("submitForm API error: ${it.message}")
+        }
     }
 
     // ============================================================================
@@ -690,6 +825,7 @@ object Encatch {
     suspend fun clearAll() {
         if (::sessionManager.isInitialized) sessionManager.stopPingInterval()
         cancelPendingAutoShow()
+        lastIdentifyKey = null
 
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
@@ -703,6 +839,9 @@ object Encatch {
         userNameState = null
         userIdState = null
         userSignature = null
+        userSignatureTime = null
+        signatureExpired = false
+        secureLock.withLock { heldSubmits.clear() }
         feedbackTransactions = null
         deviceIdState = null
         sessionIdState = null
@@ -769,21 +908,36 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun resetUser() {
         if (!initialized) return
-        userNameState?.let { name ->
+        identityMutex.withLock { resetNow() }
+    }
+
+    private suspend fun resetNow() {
+        lastIdentifyKey = null
+        // the in-memory identity first, so nothing goes out with a half-cleared one
+        val previous = userNameState
+        userIdState = null
+        userNameState = null
+        userSignature = null
+        userSignatureTime = null
+        val dropped = secureLock.withLock {
+            signatureExpired = false
+            heldSubmits.size.also { heldSubmits.clear() }
+        }
+        if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: the user was reset")
+        feedbackTransactions = null
+        localeState = null
+        countryState = null
+
+        previous?.let { name ->
             storage.clearUserId(name)
             storage.clearFeedbackTransactions(name)
+            storage.clearUserSignature(name)
         }
         storage.clearFeedbackTransactions("anonymous")
         storage.clearUserName()
         storage.clearSession()
         storage.clearPreferences()
 
-        userNameState = null
-        userIdState = null
-        userSignature = null
-        feedbackTransactions = null
-        localeState = null
-        countryState = null
         sessionIdState = storage.getOrCreateSessionId()
 
         isSessionPaused = false
@@ -845,6 +999,10 @@ object Encatch {
     // ============================================================================
 
     private suspend fun doPing() {
+        if (signatureExpired) {
+            logger.debug("ping skipped: secure signature expired")
+            return
+        }
         val deviceInfo = buildDeviceInfo(currentScreen)
         val req = buildJsonObject {
             put("\$deviceInfo", deviceInfo.toJson())
@@ -961,6 +1119,19 @@ internal fun JsonObject.toShowFormResponse(): ShowFormResponse = ShowFormRespons
     pingOnNextPageVisit = this["pingOnNextPageVisit"]?.jsonPrimitive?.booleanOrNull,
     feedbackTransactions = this["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull,
 )
+
+/** Survey submits kept while the secure signature is expired (oldest dropped first). */
+private const val MAX_HELD_SUBMITS = 10
+
+/** JSON with object keys sorted, so equal values give equal strings (the identify dedupe key). */
+internal fun stableJsonKey(value: JsonElement): String {
+    fun norm(v: JsonElement): JsonElement = when (v) {
+        is JsonObject -> JsonObject(v.entries.sortedBy { it.key }.associate { it.key to norm(it.value) })
+        is JsonArray -> JsonArray(v.map { norm(it) })
+        else -> v
+    }
+    return norm(value).toString()
+}
 
 internal expect fun createDefaultEngine(): io.ktor.client.engine.HttpClientEngine
 internal expect fun isoStringFromEpochMillis(epochMillis: Long): String

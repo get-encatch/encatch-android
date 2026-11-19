@@ -134,6 +134,83 @@ class ApiClientTest {
     }
 
     @Test
+    fun post_userPendingRetryExhaustedInCamelCase_triggersCallback() = runTest {
+        var called = false
+        val api = client(onUserPendingRetryExhausted = { called = true }) { _ ->
+            respond(
+                content = """{"pingAgainIn":900,"userPendingRetryExhausted":true}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+
+        api.post(Endpoints.PING, buildJsonObject { })
+
+        assertTrue(called)
+    }
+
+    @Test
+    fun post_nameWithoutId_goesAsAVisitor() = runTest {
+        var headers: io.ktor.http.Headers? = null
+        val engine = MockEngine { request ->
+            headers = request.headers
+            respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val api = EncatchApiClient(
+            httpClient = createHttpClient(engine),
+            baseUrlProvider = { "https://api.encatch.com" },
+            authStateProvider = { AuthState("k", null, "alice", null, "sig", null, null, "123") },
+        )
+        api.post(Endpoints.TRACK_EVENT, buildJsonObject { })
+        assertEquals(null, headers?.get("X-User-Name"))
+        assertEquals(null, headers?.get("X-User-Id"))
+        assertEquals(null, headers?.get("X-User-Signature"), "never on a visitor's request")
+    }
+
+    @Test
+    fun post_401WithTimedSignature_reportsExpiry_butNotOnIdentify() = runTest {
+        var expired = 0
+        val engine = MockEngine { respond("""{"message":"unauthorized"}""", HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/json")) }
+        val api = EncatchApiClient(
+            httpClient = createHttpClient(engine),
+            baseUrlProvider = { "https://api.encatch.com" },
+            authStateProvider = { AuthState("k", null, "alice", "user-1", "sig", null, null, "123") },
+            onSignatureExpired = { expired++ },
+        )
+        assertFailsWith<EncatchApiException> { api.post(Endpoints.TRACK_EVENT, buildJsonObject { }) }
+        assertEquals(1, expired)
+        assertFailsWith<EncatchApiException> {
+            api.send(Endpoints.IDENTIFY_USER, buildJsonObject { }, IdentifyAuth("alice", "sig2", "456"))
+        }
+        assertEquals(1, expired, "an identify's 401 is not an expiry")
+    }
+
+    @Test
+    fun debugLog_masksTheSignatureInHeadersAndBody() = runTest {
+        val lines = mutableListOf<String>()
+        val logger = object : EncatchLogger {
+            override fun debug(message: String) { lines.add(message) }
+            override fun warn(message: String) { lines.add(message) }
+        }
+        val engine = MockEngine { respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
+        val api = EncatchApiClient(
+            httpClient = createHttpClient(engine),
+            baseUrlProvider = { "https://api.encatch.com" },
+            authStateProvider = { AuthState("secret-api-key", null, "alice", "user-1", "sig-stored", null, null, "123") },
+            logger = logger,
+        )
+        api.send(
+            Endpoints.IDENTIFY_USER,
+            buildJsonObject { put("userName", JsonPrimitive("alice")); put("userSignature", JsonPrimitive("sig-call")) },
+            IdentifyAuth("alice", "sig-call", "123"),
+        )
+        api.post(Endpoints.TRACK_EVENT, buildJsonObject { })
+        val all = lines.joinToString("\n")
+        assertTrue(!all.contains("sig-call") && !all.contains("sig-stored") && !all.contains("secret-api-key"), all)
+        assertTrue(all.contains("X-User-Signature: ***"))
+    }
+
+    @Test
     fun uploadFile_emitsNetworkLogWithMultipartSummary() = runTest {
         val logs = mutableListOf<EncatchNetworkLogEntry>()
         val engine = MockEngine {

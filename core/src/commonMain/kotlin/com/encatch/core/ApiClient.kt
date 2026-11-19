@@ -72,7 +72,9 @@ internal fun JsonObject.toResponseMeta(): ResponseMeta = ResponseMeta(
     pingAgainIn = this["pingAgainIn"]?.jsonPrimitive?.doubleOrNull,
     pingOnNextPageVisit = this["pingOnNextPageVisit"]?.jsonPrimitive?.booleanOrNull,
     feedbackTransactions = this["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull,
-    userPendingRetryExhausted = this["user_pending_retry_exhausted"]?.jsonPrimitive?.booleanOrNull ?: false,
+    // the core API sends camelCase (RN 1.4.4 item 14); snake_case kept for older servers
+    userPendingRetryExhausted = this["userPendingRetryExhausted"]?.jsonPrimitive?.booleanOrNull == true ||
+        this["user_pending_retry_exhausted"]?.jsonPrimitive?.booleanOrNull == true,
 )
 
 /** Snapshot of auth-relevant SDK state, used to build request headers per call. */
@@ -84,7 +86,26 @@ internal data class AuthState(
     val userSignature: String?,
     val deviceId: String?,
     val appPackageName: String?,
+    /** `generatedDateTimeInUtc` of [userSignature] (keys with a session time). */
+    val userSignatureTime: String? = null,
 )
+
+/**
+ * identify-user's own identity (RN 1.4.4 items 12, 15): `X-User-Name` is the call's user name (the
+ * body's), never `X-User-Id`; the call's secure signature goes in `X-User-Signature`, its time in
+ * `X-User-Session-Time` (what the gateway reads) and `X-User-Signature-Time` (compatibility).
+ */
+internal data class IdentifyAuth(val userName: String, val signature: String?, val signatureTime: String?)
+
+/** Headers and body fields that never reach a log in clear. */
+private val MASKED_HEADERS = setOf("X-Api-Key", "X-User-Signature")
+
+/** The request body for a log: a secure identify's `userSignature` masked (RN 1.4.4 item 17). */
+internal fun bodyForLog(body: JsonElement): String {
+    val obj = body as? JsonObject ?: return body.toString()
+    if (obj["userSignature"] == null) return body.toString()
+    return JsonObject(obj + ("userSignature" to kotlinx.serialization.json.JsonPrimitive("***"))).toString()
+}
 
 /** Shared JSON config used across the SDK; public so the `:android` bridge can (de)serialize wire messages too. */
 val EncatchJson: Json = Json {
@@ -159,18 +180,40 @@ class EncatchApiClient internal constructor(
     private val onUserPendingRetryExhausted: suspend () -> Unit = {},
     private val logger: EncatchLogger = DefaultEncatchLogger { false },
     private val networkLogSink: (EncatchNetworkLogEntry) -> Unit = {},
+    /** A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16). */
+    private val onSignatureExpired: suspend () -> Unit = {},
 ) {
-    private fun buildAuthHeaders(signatureTime: String? = null): Map<String, String> {
+    /**
+     * `X-User-Name` and `X-User-Id` go out both or neither (RN 1.4.4 item 11; the core API answers 401
+     * to one without the other): a name without its id is sent as a visitor. identify-user sends only
+     * its own user name ([identify]). After a successful secure identify the stored signature (and its
+     * time) go on every request of that user — never on a visitor's.
+     */
+    private fun buildAuthHeaders(identify: IdentifyAuth? = null, signatureTime: String? = null): Map<String, String> {
         val auth = authStateProvider()
         val apiKey = auth.apiKey ?: throw EncatchNotInitializedException()
         return buildMap {
             put("X-Api-Key", apiKey)
             auth.sessionId?.let { put("X-Session-Id", it) }
-            auth.userName?.let { put("X-User-Name", it) }
-            auth.userId?.let { put("X-User-Id", it) }
-            auth.userSignature?.let { put("X-User-Signature", it) }
+            if (identify != null) {
+                put("X-User-Name", identify.userName)
+            } else if (auth.userName != null && auth.userId != null) {
+                put("X-User-Name", auth.userName)
+                put("X-User-Id", auth.userId)
+                auth.userSignature?.let { signature ->
+                    put("X-User-Signature", signature)
+                    auth.userSignatureTime?.let {
+                        put("X-User-Session-Time", it)
+                        put("X-User-Signature-Time", it)
+                    }
+                }
+            }
             auth.deviceId?.let { put("X-Device-Id", it) }
-            signatureTime?.let { put("X-User-Signature-Time", it) }
+            identify?.signature?.let { put("X-User-Signature", it) }
+            (identify?.signatureTime ?: signatureTime)?.let {
+                put("X-User-Session-Time", it)
+                put("X-User-Signature-Time", it)
+            }
             auth.appPackageName?.let { put("Referer", it) }
         }
     }
@@ -178,19 +221,34 @@ class EncatchApiClient internal constructor(
     private fun HttpStatusCode.isSuccess() = value in 200..299
 
     /** POSTs [body] (already-serialized JSON) to [endpoint], returns the parsed JSON response. */
-    suspend fun post(endpoint: String, body: JsonElement, signatureTime: String? = null): JsonObject {
+    suspend fun post(endpoint: String, body: JsonElement, signatureTime: String? = null): JsonObject =
+        send(endpoint, body, identify = null, signatureTime = signatureTime)
+
+    /** [post], with identify-user's own identity ([identify]) when it is that call. */
+    internal suspend fun send(
+        endpoint: String,
+        body: JsonElement,
+        identify: IdentifyAuth?,
+        signatureTime: String? = null,
+    ): JsonObject {
         val url = "${baseUrlProvider()}/$endpoint"
-        val authHeaders = buildAuthHeaders(signatureTime)
+        val authHeaders = buildAuthHeaders(identify, signatureTime)
+        val loggedBody = bodyForLog(body)
 
         logger.debug("POST $endpoint -> $url")
         logger.debug("Request headers:\n${redactedHeadersForLog(authHeaders)}")
-        logger.debug("Request body:\n$body")
+        logger.debug("Request body:\n$loggedBody")
 
         val startedAt = currentTimeMillis()
         // Even in debugMode, never expose the full API key — keep just the last 5 characters
-        // so entries can be matched to a key without being usable as one.
+        // so entries can be matched to a key without being usable as one. The secure-identify
+        // signature is masked in full, in the headers and in the body.
         val logHeaders = authHeaders.mapValues { (k, v) ->
-            if (k == "X-Api-Key") "•••${v.takeLast(5)}" else v
+            when (k) {
+                "X-Api-Key" -> "•••${v.takeLast(5)}"
+                "X-User-Signature" -> "***"
+                else -> v
+            }
         } + ("Content-Type" to "application/json")
         fun emitLog(status: Int, responseBody: String, error: String?, responseHeaders: Map<String, String> = emptyMap()) {
             networkLogSink(
@@ -200,7 +258,7 @@ class EncatchApiClient internal constructor(
                     endpoint = endpoint,
                     url = url,
                     requestHeaders = logHeaders,
-                    requestBody = body.toString(),
+                    requestBody = loggedBody,
                     status = status,
                     responseBody = responseBody,
                     durationMs = currentTimeMillis() - startedAt,
@@ -232,6 +290,12 @@ class EncatchApiClient internal constructor(
             onUserPendingRetryExhausted()
         }
 
+        if (response.status.value == 401 && identify == null &&
+            authHeaders["X-User-Signature"] != null && authHeaders["X-User-Session-Time"] != null
+        ) {
+            onSignatureExpired()
+        }
+
         if (!response.status.isSuccess() || parsed == null) {
             val error = EncatchApiException(endpoint, response.status.value, responseText)
             logger.warn(error.message ?: "[Encatch API] $endpoint failed")
@@ -242,7 +306,7 @@ class EncatchApiClient internal constructor(
     }
 
     private fun redactedHeadersForLog(headers: Map<String, String>): String =
-        headers.entries.joinToString("\n") { (k, v) -> "$k: ${if (k == "X-Api-Key") "***" else v}" }
+        headers.entries.joinToString("\n") { (k, v) -> "$k: ${if (k in MASKED_HEADERS) "***" else v}" }
 
     /** Multipart file upload with progress, mirrors the RN SDK's XHR-based `uploadFile`. */
     suspend fun uploadFile(
@@ -259,7 +323,11 @@ class EncatchApiClient internal constructor(
         // Log like post() does, but summarize the binary body instead of dumping it.
         val startedAt = currentTimeMillis()
         val logHeaders = authHeaders.mapValues { (k, v) ->
-            if (k == "X-Api-Key") "•••${v.takeLast(5)}" else v
+            when (k) {
+                "X-Api-Key" -> "•••${v.takeLast(5)}"
+                "X-User-Signature" -> "***"
+                else -> v
+            }
         } + ("Content-Type" to "multipart/form-data")
         val logBody = "<multipart> file=$fileName, ${formatByteSize(fileBytes.size)}, " +
             "${mimeType ?: "application/octet-stream"}; formId=$feedbackConfigurationId, questionId=$questionId"

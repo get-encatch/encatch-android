@@ -39,6 +39,8 @@ internal class RetryQueue(
         val maxRetries: Int,
         val createdAt: Long,
         val label: String,
+        /** Called when the item is dropped without succeeding (a 4xx, or out of attempts). */
+        val onDrop: (() -> Unit)? = null,
     )
 
     private val mutex = Mutex()
@@ -66,7 +68,7 @@ internal class RetryQueue(
         storage.setRetryQueueRaw(Json.encodeToString(serializable))
     }
 
-    fun enqueue(label: String, maxRetries: Int = MAX_RETRIES, fn: suspend () -> Unit) {
+    fun enqueue(label: String, maxRetries: Int = MAX_RETRIES, onDrop: (() -> Unit)? = null, fn: suspend () -> Unit) {
         scope.launch {
             mutex.withLock {
                 val item = QueuedRequest(
@@ -76,6 +78,7 @@ internal class RetryQueue(
                     maxRetries = maxRetries,
                     createdAt = currentTimeMillis(),
                     label = label,
+                    onDrop = onDrop,
                 )
                 queue.add(item)
                 persistQueue()
@@ -121,6 +124,7 @@ internal class RetryQueue(
                     queue.removeAll { it.id == item.id }
                     persistQueue()
                 }
+                runCatching { item.onDrop?.invoke() }
                 return
             }
             item.retries += 1
@@ -129,6 +133,7 @@ internal class RetryQueue(
                     queue.removeAll { it.id == item.id }
                     persistQueue()
                 }
+                runCatching { item.onDrop?.invoke() }
             } else {
                 mutex.withLock { persistQueue() }
                 val delayMs = backoffMs(item.retries)
