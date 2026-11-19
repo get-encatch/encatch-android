@@ -18,9 +18,8 @@ contract, same survey and identity rules. Kotlin (`core`, used by `android`, `km
   an automatic survey is skipped while another is waiting, loading or open; asking again for the
   open survey keeps the answers in progress; "not eligible now" (404) is logged at debug only.
 - **Closing a survey told the server nothing.** Closing it before the final submit (its ✕, a tap
-  outside it, the back button) is now a dismissal: `dismiss-form` with the form's UUID — for
-  visitors too, so a survey that stops on "Dismissed" is not offered again — and `form:dismissed`
-  for an identified user. Closing it on the thank-you screen, after "remind me later" or a
+  outside it, the back button) is now a dismissal: `dismiss-form` with the form's UUID — sent for
+  visitors too, as the web SDK does — and `form:dismissed` for an identified user. Closing it on the thank-you screen, after "remind me later" or a
   call-to-action is not. The survey page is first asked to save a partial answer (up to 500 ms).
 - **"Remind me later" was not sent.** It now sends `form:remindmelater` with the form's id
   (identified users), so the survey can come back after its wait. It is not a dismissal.
@@ -34,21 +33,35 @@ contract, same survey and identity rules. Kotlin (`core`, used by `android`, `km
   identify run one after the other, and a late reply for a user who is no longer current is
   ignored; `userPendingRetryExhausted` (the server's spelling) resets the user.
 - **Secure identify:** the signature goes in the `X-User-Signature` header with
-  `X-User-Session-Time` / `X-User-Signature-Time`, then on every request of that user (persisted
-  per user). An expired signature (401) pauses background calls and holds survey submits until the
-  next identify. The signature is masked in logs.
-- **Ping:** the server's `pingAgainIn` is honoured from every reply; `stopSession()` holds (also
-  across a restart, until `startSession()` or an identify); no ping while a survey is open.
-- **Request bursts:** a 429 pauses that group of calls for `Retry-After` (60 s by default, at most
-  5 minutes) instead of retrying; survey submits wait and retry up to 3 times; one retry-queue
-  flush at a time, a 4xx drops only that item; identical identify calls, and identical events or
-  screens within 1 s, are sent once.
+  `X-User-Session-Time` / `X-User-Signature-Time`, then on every request of that user. It is stored
+  on the device in plain app storage (SharedPreferences / UserDefaults) until a reset, an identify
+  without `secure`, another user or its expiry. For keys with a session time, a 401 on a signed
+  request means it expired: events, screens and pings are skipped and survey submits held (in
+  memory, the latest 10) until the next identify; held submits are dropped if another user is
+  identified, on reset, re-init or app restart. The signature is masked in logs.
+- **Ping:** the server's `pingAgainIn` is honoured from every reply; no ping while a survey is open.
+  `stopSession()` holds, also across a restart, until `startSession()`, an identify, a reset or a
+  re-init; it also closes an open survey.
+- **Request bursts:** after a 429, calls of that group (tracking, show-form, submit) made during
+  the `Retry-After` pause (60 s by default, at most 5 minutes) are skipped, not queued; an identify
+  is held (the latest) and survey submits wait and retry up to 3 times. One retry-queue flush at a
+  time; a 4xx drops only that item. A repeat of the last identify (same user, traits, locale,
+  country, signature) is not sent again until the user changes, resets or it fails; identical
+  events, or the same screen, within 1 s are sent once.
 - **`$sdkVersion`** now reports this version.
+
+### Added
+
+- `Encatch.setFormVisible(visible, formId)` (Kotlin and Swift); the one-argument form is kept.
+- Android: `EncatchFormHost.attach(activity)` / `attach(context)` and `EncatchFormHost.isInstalled`.
 
 ### Changed
 
-- `kmp-sdk` on Android now brings `com.encatch:android` (the survey UI), and `compose-sdk` exposes
+- `kmp-sdk` on Android now brings `com.encatch:android` (the survey UI, with its file-chooser
+  activity and FileProvider), so modal surveys show with no extra dependency; `compose-sdk` exposes
   it as an API dependency. Keep `com.encatch:android` at the same version if you also declare it.
+- `com.encatch:android` depends on `androidx.startup` and adds an `InitializationProvider` entry to
+  the manifest. An app that removed that provider calls `EncatchFormHost.install(application)`.
 
 ### Known
 

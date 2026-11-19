@@ -31,7 +31,8 @@ EXCLUDES=(
 
 VERSION="${1:-}"
 [[ -n "$VERSION" ]] || { echo "usage: $0 <version>  (e.g. $0 0.1.0)" >&2; exit 1; }
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "error: '$VERSION' is not plain semver X.Y.Z" >&2; exit 1; }
+# X.Y.Z, or a pre-release X.Y.Z-label (e.g. 0.2.0-beta.1)
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] || { echo "error: '$VERSION' is not semver X.Y.Z or X.Y.Z-prerelease" >&2; exit 1; }
 
 # Preflight: monorepo tree must be clean so the release matches a real commit.
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain swift)" ]]; then
