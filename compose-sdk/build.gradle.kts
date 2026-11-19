@@ -97,7 +97,10 @@ kotlin {
         }
         val androidMain by getting {
             dependencies {
-                implementation(project(":android"))
+                // api, not implementation: the app's own code may name com.encatch.android types
+                // (EncatchFormHost, EncatchInlineFormView) without adding com.encatch:android
+                // itself — the published POM lists it at compile scope, not runtime.
+                api(project(":android"))
                 implementation(libs.androidx.activity.compose)
                 implementation(libs.androidx.core.ktx)
             }

@@ -6,10 +6,10 @@ one thing a pure KMP consumer wouldn't need: `EncatchInlineForm`, a composable w
 platform-native inline form view (`AndroidView`/`UIKitView` interop — no WebView reimplementation,
 no third-party dependency).
 
-Setup is genuinely zero-plumbing on both platforms — the modal form host installs itself
-automatically the first time you call `Encatch.init(...)` (iOS) or the first time
-`EncatchInlineForm` composes (Android, via `LocalContext`). You never call an install function
-yourself.
+Setup is zero-plumbing on both platforms — the modal form host installs itself: on iOS the first
+time you call `Encatch.init(...)`, on Android at app start (through AndroidX App Startup, before
+`Application.onCreate`). Modal surveys work whether or not an `EncatchInlineForm` is on screen.
+You never call an install function yourself.
 
 ## Installation
 
@@ -23,7 +23,13 @@ kotlin {
 }
 ```
 
-This transitively brings in `com.encatch:kmp-sdk`'s `Encatch` API — no separate dependency needed.
+This transitively brings in `com.encatch:kmp-sdk`'s `Encatch` API and, on Android,
+`com.encatch:android` (the modal survey host and the native views) — no separate dependency needed.
+
+If your app removed AndroidX App Startup's `InitializationProvider` from its manifest, nothing of
+Encatch's starts by itself: run `com.encatch.core.EncatchContextInitializer` and
+`com.encatch.android.EncatchFormHostInitializer` with `AppInitializer`, or call
+`com.encatch.android.EncatchFormHost.install(this)` in `Application.onCreate`.
 
 ## Usage
 

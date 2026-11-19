@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application>
         <!-- Invisible proxy that launches the system file chooser for the form WebView's
              <input type="file"> — see EncatchFileChooserActivity. -->
@@ -27,6 +28,19 @@
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/encatch_file_paths" />
+        </provider>
+
+        <!-- Installs EncatchFormHost (the modal survey host) at process start, before
+             Application.onCreate — merged into the app's single App Startup provider, next to
+             core's EncatchContextInitializer. Apps need no install call. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="com.encatch.android.EncatchFormHostInitializer"
+                android:value="androidx.startup" />
         </provider>
     </application>
 </manifest>

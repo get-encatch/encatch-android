@@ -1,6 +1,5 @@
 package com.encatch.sdk.compose
 
-import android.app.Application
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
@@ -10,42 +9,20 @@ import com.encatch.android.EncatchFormHost
 import com.encatch.android.EncatchInlineFormView
 
 /**
- * Android `actual`. Copied from `compose-sample`'s former
- * `EncatchInlineFormHost.android.kt` (now deleted in favour of this library composable), renamed.
+ * Android `actual`: the platform-native [EncatchInlineFormView] in an [AndroidView].
  *
- * Also lazily installs the modal form host on first composition — see this file's own doc below
- * for why Android needs this and iOS doesn't.
- *
- * ### Why this asymmetry exists between platforms
- *
- * `:kmp-sdk`'s `Encatch.init(apiKey, config)` is deliberately platform-agnostic `commonMain` API
- * with no `Context`/`Application` parameter (iOS has no equivalent concept, so adding one there
- * would leak an Android-only concern into the shared surface). But Android's
- * [EncatchFormHost.install] needs a real [Application] instance to register
- * `ActivityLifecycleCallbacks` (it tracks the foreground Activity to host the modal form dialog) —
- * so it can't be called from inside `Encatch.init(...)` on Android the way `EncatchBridge
- * .installFormHost()` is called from inside `Encatch.ios.kt`'s `init(...)` on iOS (no
- * Application-equivalent needed there at all).
- *
- * `:compose-sdk` is the natural place to close that gap: unlike a raw `:kmp-sdk` consumer (which
- * might not be Compose, or even might not be an Activity-based app), a `:compose-sdk` customer is
- * always running inside an Android `Activity`/`Application` context by construction. So
- * [EncatchInlineForm]'s Android `actual` grabs `LocalContext.current.applicationContext` on first
- * composition and installs the form host automatically — the customer never has to think about it
- * on either platform, matching the "few lines, no plumbing" goal. This mirrors an app calling
- * `EncatchFormHost.install(application)` from `Application.onCreate()` by hand, just triggered
- * lazily from Compose instead.
- *
- * [EncatchFormHost.install] already no-ops after the first call (`if (installed) return`), so
- * calling it again on every recomposition/every additional [EncatchInlineForm] instance is
- * harmless — no extra guarding needed here beyond `LaunchedEffect(Unit)` limiting it to once per
- * composition of a given call site.
+ * The modal form host ([EncatchFormHost]) does not depend on this composable: `com.encatch:android`
+ * installs it at process start through AndroidX App Startup, so an app with modal surveys only
+ * (no inline form on screen) still gets them. The [EncatchFormHost.attach] below is a fallback for
+ * an app that removed App Startup's provider: it installs the host if needed and hands it this
+ * already-resumed screen, which a host installed this late would otherwise not know. It is a no-op
+ * when the host is installed and already knows a screen.
  */
 @Composable
 actual fun EncatchInlineForm(formId: String?, modifier: Modifier) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
-        EncatchFormHost.install(context.applicationContext as Application)
+        EncatchFormHost.attach(context)
     }
     AndroidView(
         modifier = modifier,

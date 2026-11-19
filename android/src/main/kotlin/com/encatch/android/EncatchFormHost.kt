@@ -2,33 +2,51 @@ package com.encatch.android
 
 import android.app.Activity
 import android.app.Application
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleInitializer
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.startup.Initializer
+import com.encatch.core.EncatchContextInitializer
 import com.encatch.core.Encatch
 import com.encatch.core.EncatchInternalEmitter
 import com.encatch.core.InternalEvent
 import com.encatch.core.PendingCompletionCtaScheduler
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Installs the Encatch form UI at the application root, mirroring how `EncatchProvider`/
- * `EncatchWebView` mount once in the RN SDK's component tree. Call [install] once, typically
- * from [Application.onCreate].
+ * `EncatchWebView` mount once in the RN SDK's component tree.
+ *
+ * Installed automatically at process start by [EncatchFormHostInitializer] (AndroidX App Startup,
+ * before `Application.onCreate`), so Native Android, KMP and Compose apps on Android need no code
+ * for it. Calling [install] yourself (as earlier versions asked) still works: every call after the
+ * first is a no-op, so listeners are registered once and one survey opens one dialog.
  *
  * Tracks the current foreground [Activity] to host the modal form overlay, and wires
  * [Encatch.pendingCtaScheduler] plus retry-queue-flush-on-foreground via [ProcessLifecycleOwner].
  */
 object EncatchFormHost {
-    private var installed = false
-    private var currentActivity: Activity? = null
+    private val installed = AtomicBoolean(false)
+    @Volatile private var currentActivity: Activity? = null
     private var currentDialog: EncatchFormDialog? = null
 
+    /** Whether the host is installed (by [EncatchFormHostInitializer] or an [install] call). */
+    val isInstalled: Boolean get() = installed.get()
+
+    /**
+     * Installs the host. Idempotent and thread-safe: only the first call registers anything.
+     * Normally done for you at process start; call it only if you removed AndroidX App Startup's
+     * `InitializationProvider` from your manifest.
+     */
     fun install(application: Application) {
-        if (installed) return
-        installed = true
+        if (!installed.compareAndSet(false, true)) return
 
         application.registerActivityLifecycleCallbacks(
             object : Application.ActivityLifecycleCallbacks {
@@ -41,6 +59,7 @@ object EncatchFormHost {
                 }
 
                 override fun onActivityDestroyed(activity: Activity) {
+                    if (currentActivity === activity) currentActivity = null
                     if (currentDialog?.context === activity) {
                         currentDialog?.dismiss()
                         currentDialog = null
@@ -100,4 +119,59 @@ object EncatchFormHost {
             }
         }
     }
+
+    /**
+     * Installs the host (if needed) and, when [activity] is already resumed and the host knows no
+     * screen yet, uses it as the screen to show surveys on. For a host installed late — after the
+     * screen resumed, so it missed `onActivityResumed` (e.g. App Startup disabled and the host
+     * installed from a composable) — a survey asked for right away still opens.
+     */
+    fun attach(activity: Activity) {
+        install(activity.application)
+        val runOnMain = Runnable {
+            if (currentActivity == null && isResumed(activity)) currentActivity = activity
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) runOnMain.run()
+        else Handler(Looper.getMainLooper()).post(runOnMain)
+    }
+
+    /** [attach] for any [Context]: unwraps it to its [Activity]; otherwise installs from the application. */
+    fun attach(context: Context) {
+        val activity = context.findActivity()
+        if (activity != null) {
+            attach(activity)
+        } else {
+            (context.applicationContext as? Application)?.let { install(it) }
+        }
+    }
+
+    private fun isResumed(activity: Activity): Boolean {
+        if (activity.isFinishing || activity.isDestroyed) return false
+        val owner = activity as? LifecycleOwner
+            ?: return activity.hasWindowFocus()
+        return owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+    }
+
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext?.findActivity()
+        else -> null
+    }
+}
+
+/**
+ * Installs [EncatchFormHost] at process start via AndroidX App Startup (registered in this
+ * library's AndroidManifest.xml, merged into the app's `InitializationProvider` next to core's
+ * [EncatchContextInitializer]). Runs before `Application.onCreate` and before any Activity is
+ * created, so the host sees the first screen resume.
+ */
+class EncatchFormHostInitializer : Initializer<Unit> {
+    override fun create(context: Context) {
+        (context.applicationContext as? Application)?.let { EncatchFormHost.install(it) }
+    }
+
+    // ProcessLifecycleOwner must be initialised before install() observes it (it is
+    // initialised by its own startup Initializer, whose order relative to ours is otherwise undefined).
+    override fun dependencies(): List<Class<out Initializer<*>>> =
+        listOf(EncatchContextInitializer::class.java, ProcessLifecycleInitializer::class.java)
 }

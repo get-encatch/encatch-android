@@ -25,22 +25,16 @@ kotlin {
 
 ## Setup
 
-**Android:** install the modal form host once, typically in your `Application.onCreate` — this
-module doesn't do this for you automatically, since it has no `Context`/`Application` reference
-available from `commonMain` (unlike `com.encatch:compose-sdk`, which can do this lazily via
-Compose's `LocalContext`):
+Nothing to do on either platform:
 
-```kotlin
-class MyApplication : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        com.encatch.android.EncatchFormHost.install(this)
-    }
-}
-```
-
-**iOS:** nothing to do — `Encatch.init(...)` installs the modal form host automatically the first
-time it's called.
+- **Android:** the modal form host installs itself at app start (AndroidX App Startup, before
+  `Application.onCreate`). It comes with this module — `com.encatch:android` is a dependency of
+  its Android variant, so you don't add it yourself. Apps that already call
+  `com.encatch.android.EncatchFormHost.install(this)` can keep the call; it is a no-op when the
+  host is installed. If your app removed App Startup's `InitializationProvider`, keep (or add)
+  that call in `Application.onCreate`.
+- **iOS:** `Encatch.init(...)` installs the modal form host automatically the first time it's
+  called.
 
 ## Usage
 

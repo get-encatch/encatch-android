@@ -14,16 +14,13 @@ dependencies {
 
 ## Setup
 
-Install the form UI once, typically in your `Application.onCreate`:
+Nothing to install: the form UI (the modal survey host) installs itself at app start through
+AndroidX App Startup, before `Application.onCreate`.
 
-```kotlin
-class MyApplication : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        EncatchFormHost.install(this)
-    }
-}
-```
+`EncatchFormHost.install(this)` in `Application.onCreate` still works and is a no-op once the host
+is installed — keep it if you have it. You need it only if your app removed App Startup's
+`InitializationProvider` from its manifest (then also run `com.encatch.core.EncatchContextInitializer`
+with `AppInitializer`).
 
 ## Usage
 

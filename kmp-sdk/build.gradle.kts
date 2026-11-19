@@ -93,6 +93,11 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 implementation(project(":core"))
+                // The modal survey host: com.encatch:android installs it at process start (AndroidX
+                // App Startup), so a KMP app on Android shows modal surveys with no extra dependency
+                // or install call — as on iOS, where Encatch.init installs it. api so the app can
+                // still name EncatchFormHost / EncatchInlineFormView from androidMain.
+                api(project(":android"))
             }
         }
         val androidUnitTest by getting {
