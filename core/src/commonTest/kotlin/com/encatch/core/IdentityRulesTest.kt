@@ -359,6 +359,43 @@ class IdentityRulesTest {
     }
 
     @Test
+    fun re_init_drops_what_the_old_queue_held_in_backoff() = runTest {
+        api.reply = { endpoint, _ ->
+            if (endpoint == "track-event") MockApi.Reply(status = HttpStatusCode.ServiceUnavailable, body = """{"message":"down"}""") else MockApi.Reply()
+        }
+        Encatch.trackEvent("backing_off")
+        eventually { api.called("track-event").size == 1 }
+        Encatch.init("other-key")
+        api.reply = { _, _ -> MockApi.Reply() }
+        settle(3_000) // past the 2 s backoff
+        assertEquals(1, api.called("track-event").size, "nothing queued for the old key goes out with the new one")
+    }
+
+    @Test
+    fun switching_user_drops_the_previous_user_s_held_submits_and_ends_the_expired_state() = runTest {
+        identified("alice", secure)
+        api.reply = { endpoint, _ ->
+            when (endpoint) {
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "identify-user" -> MockApi.Reply(body = """{"userId":"user-2"}""")
+                else -> MockApi.Reply()
+            }
+        }
+        Encatch.trackEvent("expires")
+        eventually { api.called("track-event").size == 1 }
+        settle(200)
+        Encatch.submitForm(SubmitFormRequest(triggerType = "manual", formDetails = FormDetails(formConfigurationId = "form-a")))
+        Encatch.identifyUser("bob")
+        eventually { Encatch.userId == "user-2" }
+        settle(500)
+        assertTrue(api.called("submit-form").isEmpty(), "alice's answers are never sent as bob's")
+        api.reply = { _, _ -> MockApi.Reply() }
+        Encatch.trackEvent("as_bob") // the expired state ended
+        eventually { api.called("track-event").size == 2 }
+        assertEquals("bob", api.called("track-event")[1].header("X-User-Name"))
+    }
+
+    @Test
     fun stable_json_key_ignores_key_order() {
         val a = JsonObject(mapOf("x" to JsonPrimitive(1), "y" to JsonObject(mapOf("b" to JsonPrimitive("2"), "a" to JsonPrimitive("1")))))
         val b = JsonObject(mapOf("y" to JsonObject(mapOf("a" to JsonPrimitive("1"), "b" to JsonPrimitive("2"))), "x" to JsonPrimitive(1)))

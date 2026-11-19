@@ -217,5 +217,18 @@ internal class RetryQueue(
         return removed.size
     }
 
+    /**
+     * Forgets every queued item and the pending wake, without sending or reporting them (re-init with
+     * another key: nothing queued for the old one may go out with the new key or base URL).
+     */
+    suspend fun clear() {
+        mutex.withLock {
+            wakeJob?.cancel()
+            wakeJob = null
+            queue.clear()
+            persistQueue()
+        }
+    }
+
     fun queueSize(): Int = queue.size
 }

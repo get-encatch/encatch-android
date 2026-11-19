@@ -146,6 +146,17 @@ class PingRulesTest {
     }
 
     @Test
+    fun resume_session_does_not_restart_pings_while_stopped() = runTest {
+        start(intervalMs = 200)
+        Encatch.startSession(StartSessionOptions(skipImmediatePing = true))
+        Encatch.stopSession()
+        Encatch.pauseSession()
+        Encatch.resumeSession()
+        settle(900)
+        assertEquals(0, pings())
+    }
+
+    @Test
     fun a_successful_identify_or_reset_user_clears_a_saved_stop() = runTest {
         start(intervalMs = 200)
         Encatch.stopSession()

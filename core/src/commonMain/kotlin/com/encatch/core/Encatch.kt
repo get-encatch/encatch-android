@@ -160,9 +160,12 @@ object Encatch {
             logger.debug("SDK already initialized — reconfiguring with new apiKey/config")
             val oldSessionManager = sessionManager
             val oldRetryFlushJob = retryFlushJob
+            val oldRetryQueue = retryQueue
             val teardown = scope.launch {
                 oldSessionManager.stopPingIntervalAndJoin()
                 oldRetryFlushJob?.join()
+                // items in backoff or held by a pause must not go out later with the new key
+                oldRetryQueue.clear()
             }
             pendingReinitJob = teardown
             teardown.join()
@@ -301,6 +304,13 @@ object Encatch {
         if (userName != userNameState) {
             // a queued identify of the previous user is not sent any more
             retryQueue.removeQueued("identifyUser")
+            // nor are the previous user's held survey answers, and their expired signature ends here
+            // (never send one user's answers as another's)
+            val dropped = secureLock.withLock {
+                signatureExpired = false
+                heldSubmits.size.also { heldSubmits.clear() }
+            }
+            if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
             userIdState = null
             userNameState = userName
             userIdState = storage.getUserId(userName)
@@ -969,6 +979,8 @@ object Encatch {
     fun resumeSession() {
         if (!isSessionPaused) return
         isSessionPaused = false
+        // a stopSession() in effect wins: only startSession() or a successful identify restarts pings
+        if (isSessionStopped) return
         sessionManager.startPingInterval()
     }
 
