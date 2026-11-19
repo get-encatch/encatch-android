@@ -1,18 +1,25 @@
 package com.encatch.core
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
+/** The retry queue (RN 1.4.4 item 1), in virtual time: the queue's clock is the test scheduler's. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RetryQueueTest {
 
+    private fun TestScope.newQueue(limiter: RateLimiter? = null) =
+        RetryQueue(this, EncatchStorage(InMemorySettings()), limiter, clock = { testScheduler.currentTime })
+
     @Test
     fun enqueue_successfulCall_isRemovedFromQueue() = runTest {
-        val storage = EncatchStorage(InMemorySettings())
-        val queue = RetryQueue(this, storage)
+        val queue = newQueue()
 
         queue.enqueue("trackEvent") { /* succeeds */ }
         advanceUntilIdle()
@@ -22,24 +29,24 @@ class RetryQueueTest {
 
     @Test
     fun enqueue_clientError_isDroppedWithoutRetry() = runTest {
-        val storage = EncatchStorage(InMemorySettings())
-        val queue = RetryQueue(this, storage)
+        val queue = newQueue()
         var attempts = 0
+        var dropped = 0
 
-        queue.enqueue("identifyUser") {
+        queue.enqueue("identifyUser", onDrop = { dropped++ }) {
             attempts++
             throw EncatchApiException("identify-user", 404, "not found")
         }
         advanceUntilIdle()
 
         assertEquals(1, attempts)
+        assertEquals(1, dropped)
         assertEquals(0, queue.queueSize())
     }
 
     @Test
     fun enqueue_serverError_retriesUpToMaxThenDrops() = runTest {
-        val storage = EncatchStorage(InMemorySettings())
-        val queue = RetryQueue(this, storage)
+        val queue = newQueue()
         var attempts = 0
 
         queue.enqueue("trackScreen") {
@@ -55,8 +62,7 @@ class RetryQueueTest {
 
     @Test
     fun enqueue_succeedsAfterTransientServerErrors() = runTest {
-        val storage = EncatchStorage(InMemorySettings())
-        val queue = RetryQueue(this, storage)
+        val queue = newQueue()
         var attempts = 0
 
         queue.enqueue("trackEvent") {
@@ -67,5 +73,102 @@ class RetryQueueTest {
 
         assertEquals(3, attempts)
         assertEquals(0, queue.queueSize())
+    }
+
+    @Test
+    fun retries_back_off_two_then_four_seconds() = runTest {
+        val queue = newQueue()
+        val at = mutableListOf<Long>()
+
+        queue.enqueue("trackEvent") {
+            at.add(testScheduler.currentTime)
+            throw EncatchApiException("track-event", 502, "bad gateway")
+        }
+        advanceUntilIdle()
+
+        assertEquals(listOf(0L, 2_000L, 6_000L), at)
+    }
+
+    @Test
+    fun overlapping_flushes_send_an_item_once() = runTest {
+        val queue = newQueue()
+        var sends = 0
+
+        queue.enqueue("trackEvent") {
+            sends++
+            delay(1_000)
+        }
+        repeat(3) { launch { queue.flush() } }
+        advanceUntilIdle()
+
+        assertEquals(1, sends)
+        assertEquals(0, queue.queueSize())
+    }
+
+    @Test
+    fun a_4xx_drops_that_item_and_the_flush_carries_on() = runTest {
+        val queue = newQueue()
+        val sent = mutableListOf<String>()
+
+        queue.enqueue("a") { sent.add("a"); throw EncatchApiException("track-event", 400, "bad") }
+        queue.enqueue("b") { sent.add("b") }
+        queue.enqueue("c") { sent.add("c") }
+        advanceUntilIdle()
+
+        assertEquals(listOf("a", "b", "c"), sent)
+        assertEquals(0, queue.queueSize())
+    }
+
+    @Test
+    fun a_backed_off_item_does_not_hold_up_the_items_behind_it() = runTest {
+        val queue = newQueue()
+        val sent = mutableListOf<Pair<String, Long>>()
+        var failures = 0
+
+        queue.enqueue("flaky") {
+            sent.add("flaky" to testScheduler.currentTime)
+            if (failures++ == 0) throw EncatchApiException("track-event", 500, "oops")
+        }
+        queue.enqueue("next") { sent.add("next" to testScheduler.currentTime) }
+        advanceUntilIdle()
+
+        assertEquals(listOf("flaky" to 0L, "next" to 0L, "flaky" to 2_000L), sent)
+    }
+
+    @Test
+    fun a_429_drops_the_item_and_holds_the_rest_until_the_pause_ends() = runTest {
+        val limiter = RateLimiter(this, warn = {}, clock = { testScheduler.currentTime })
+        val queue = newQueue(limiter)
+        var limitedAttempts = 0
+        var heldSentAt = -1L
+        var dropped = 0
+
+        queue.enqueue("limited", onDrop = { dropped++ }) {
+            limitedAttempts++
+            limiter.pauseFor(RateBucket.TRACKING, 5_000) // what the API client does on a 429
+            throw EncatchApiException("track-event", 429, "too many")
+        }
+        queue.enqueue("held") { heldSentAt = testScheduler.currentTime }
+        advanceUntilIdle()
+
+        assertEquals(1, limitedAttempts, "a 429 is never retried")
+        assertEquals(1, dropped)
+        assertTrue(heldSentAt >= 5_000, "held until the pause ended, sent at $heldSentAt")
+        assertEquals(0, queue.queueSize())
+    }
+
+    @Test
+    fun remove_queued_drops_items_with_that_label() = runTest {
+        val limiter = RateLimiter(this, warn = {}, clock = { testScheduler.currentTime })
+        limiter.pauseFor(RateBucket.TRACKING, 1_000)
+        val queue = newQueue(limiter)
+        val sent = mutableListOf<String>()
+        queue.enqueue("identifyUser") { sent.add("first") }
+        queue.enqueue("trackEvent") { sent.add("event") }
+        assertEquals(1, queue.removeQueued("identifyUser"))
+        queue.enqueue("identifyUser") { sent.add("latest") }
+        advanceUntilIdle()
+
+        assertEquals(listOf("event", "latest"), sent)
     }
 }

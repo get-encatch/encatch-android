@@ -182,6 +182,8 @@ class EncatchApiClient internal constructor(
     private val networkLogSink: (EncatchNetworkLogEntry) -> Unit = {},
     /** A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16). */
     private val onSignatureExpired: suspend () -> Unit = {},
+    /** A 429: the endpoint and its Retry-After in ms (null when missing), to pause that bucket (RN 1.4.4 item 2). */
+    private val onRateLimited: suspend (endpoint: String, retryAfterMs: Long?) -> Unit = { _, _ -> },
 ) {
     /**
      * `X-User-Name` and `X-User-Id` go out both or neither (RN 1.4.4 item 11; the core API answers 401
@@ -294,6 +296,10 @@ class EncatchApiClient internal constructor(
             authHeaders["X-User-Signature"] != null && authHeaders["X-User-Session-Time"] != null
         ) {
             onSignatureExpired()
+        }
+
+        if (response.status.value == 429) {
+            onRateLimited(endpoint, parseRetryAfter(response.headers[HttpHeaders.RetryAfter]))
         }
 
         if (!response.status.isSuccess() || parsed == null) {

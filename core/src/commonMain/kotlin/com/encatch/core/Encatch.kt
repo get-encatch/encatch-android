@@ -99,9 +99,11 @@ object Encatch {
     @Volatile private var openFormIds: Set<String> = emptySet()
     private val surveyGuard = Mutex()
 
-    // Test seams: an HTTP engine and a settings store other than the platform's (commonTest only).
+    // Test seams: an HTTP engine and a settings store other than the platform's, and a shorter
+    // regular ping interval (commonTest only; read at init).
     internal var engineFactory: (() -> io.ktor.client.engine.HttpClientEngine)? = null
     internal var settingsFactory: (() -> com.russhwolf.settings.Settings)? = null
+    internal var pingIntervalMs: Long = SessionManager.PING_INTERVAL_MS
 
     // Session control
     private var isSessionPaused = false
@@ -121,6 +123,10 @@ object Encatch {
     private lateinit var apiClient: EncatchApiClient
     private lateinit var retryQueue: RetryQueue
     private lateinit var sessionManager: SessionManager
+    /** The 429 pause per bucket (RN 1.4.4 item 2). */
+    private lateinit var rateLimiter: RateLimiter
+    /** Identical trackEvent / trackScreen calls within 1 s go out once (RN 1.4.4 item 4). */
+    private val collapser = CallCollapser()
     private var logger: EncatchLogger = DefaultEncatchLogger { debugModeState }
 
     // Tracks the retry-queue flush kicked off at the end of the most recent `init()`, and
@@ -160,6 +166,7 @@ object Encatch {
             }
             pendingReinitJob = teardown
             teardown.join()
+            rateLimiter.clear()
             isSessionPaused = false
             isSessionStopped = false
             isFormVisible = false
@@ -178,6 +185,8 @@ object Encatch {
         logger.debug("Initializing SDK...")
 
         storage = settingsFactory?.let { EncatchStorage(it()) } ?: EncatchStorage()
+        val limiter = RateLimiter(scope, warn = { logger.warn(it) })
+        rateLimiter = limiter
         apiClient = EncatchApiClient(
             httpClient = createHttpClient(engineFactory?.invoke() ?: createDefaultEngine()),
             baseUrlProvider = { apiBaseUrlState },
@@ -199,14 +208,20 @@ object Encatch {
                 if (debugModeState) onNetworkLog?.invoke(entry)
             },
             onUserPendingRetryExhausted = {
-                sessionManager.stopPingInterval()
+                sessionManager.stopPingIntervalNow()
                 resetUser()
             },
             logger = logger,
             onSignatureExpired = { onSignatureExpired() },
+            onRateLimited = { endpoint, retryAfterMs -> limiter.pauseFor(bucketOf(endpoint), retryAfterMs) },
         )
-        retryQueue = RetryQueue(scope, storage)
-        sessionManager = SessionManager(scope, isFormVisible = { isFormVisible }, onPing = { doPing() })
+        retryQueue = RetryQueue(scope, storage, limiter, logger)
+        sessionManager = SessionManager(
+            scope,
+            isFormVisible = { isFormVisible },
+            onPing = { backgroundPing() },
+            intervalMs = pingIntervalMs,
+        )
 
         val storedName = storage.getUserName()
         deviceIdState = storage.getOrCreateDeviceId()
@@ -218,6 +233,9 @@ object Encatch {
 
         prefs.locale?.let { localeState = it }
         prefs.country?.let { countryState = it }
+
+        // a stopSession() from an earlier run stays in effect until startSession() or a successful identify
+        isSessionStopped = storage.getSessionStopped()
 
         if (storedName != null) {
             // a name without its id (a device left half-identified) goes out as a visitor
@@ -300,6 +318,10 @@ object Encatch {
         }
         val auth = IdentifyAuth(userName, secure?.signature, secure?.generatedDateTimeInUtc)
 
+        // While tracking is paused after a 429, hold only the latest identify: it goes out when the
+        // pause ends, so a sign-in during a pause isn't lost and repeated calls don't pile up.
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) retryQueue.removeQueued("identifyUser")
+
         retryQueue.enqueue(
             "identifyUser",
             onDrop = { if (lastIdentifyKey == identifyKey) lastIdentifyKey = null },
@@ -343,8 +365,6 @@ object Encatch {
 
             handleSurveyInReply(res)
         }
-
-        scope.launch { retryQueue.flush() }
     }
 
     private fun loadStoredSignature(userName: String) {
@@ -411,8 +431,16 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun trackEvent(eventName: String) {
         if (!initialized || isFullScreenState) return
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) {
+            logger.debug("trackEvent \"$eventName\" skipped: rate limited")
+            return
+        }
         if (signatureExpired) {
             logger.debug("trackEvent \"$eventName\" skipped: secure signature expired, waiting for identify")
+            return
+        }
+        if (!collapser.admitEvent(eventName)) {
+            logger.debug("trackEvent \"$eventName\" collapsed (same event within ${COLLAPSE_WINDOW_MS} ms)")
             return
         }
 
@@ -430,8 +458,6 @@ object Encatch {
             sessionManager.handleResponseMeta(meta)
             handleSurveyInReply(res)
         }
-
-        scope.launch { retryQueue.flush() }
     }
 
     /**
@@ -443,6 +469,10 @@ object Encatch {
     suspend fun trackFormEvent(eventName: String, feedbackConfigurationId: String?) {
         if (!initialized) return
         // survey events are an identified user's: the server answers 403 to a visitor's (RN 1.4.4 item 8)
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) {
+            logger.debug("survey event $eventName skipped: rate limited")
+            return
+        }
         if (signatureExpired) {
             logger.debug("survey event $eventName skipped: secure signature expired")
             return
@@ -471,9 +501,19 @@ object Encatch {
     suspend fun trackScreen(screenName: String) {
         if (!initialized || isFullScreenState) return
 
+        // the current screen is remembered even when nothing is sent (it goes with the next ping)
         currentScreen = screenName
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) {
+            logger.debug("trackScreen \"$screenName\" skipped: rate limited")
+            return
+        }
         if (signatureExpired) {
             logger.debug("trackScreen \"$screenName\" skipped: secure signature expired, waiting for identify")
+            return
+        }
+        // only the same screen as the last one tracked collapses (A -> B -> A is sent in full)
+        if (!collapser.admitScreen(screenName)) {
+            logger.debug("trackScreen \"$screenName\" collapsed (same screen within ${COLLAPSE_WINDOW_MS} ms)")
             return
         }
         val deviceInfo = buildDeviceInfo(screenName)
@@ -489,8 +529,6 @@ object Encatch {
             sessionManager.handleResponseMeta(meta)
             handleSurveyInReply(res)
         }
-
-        scope.launch { retryQueue.flush() }
     }
 
     // ============================================================================
@@ -550,6 +588,11 @@ object Encatch {
         context: Map<String, ContextValue>?,
         fromSchedule: Boolean = false,
     ) {
+        if (rateLimiter.isPaused(RateBucket.SHOW_FORM)) {
+            if (fromSchedule) surveyGuard.withLock { pendingAutoShow = null }
+            logger.debug("showForm $formId skipped: rate limited")
+            return
+        }
         val proceed = surveyGuard.withLock {
             // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
             if (fromSchedule) {
@@ -750,14 +793,25 @@ object Encatch {
             put("formDetails", EncatchJson.encodeToJsonElement(FormDetails.serializer(), params.formDetails))
             put("\$deviceInfo", deviceInfo.toJson())
         }
-        runCatching {
-            val res = apiClient.post(Endpoints.SUBMIT_FORM, req)
-            applyFeedbackTransactions(res)
-            sessionManager.handleResponseMeta(res.toResponseMeta())
-        }.onFailure {
-            if (it is CancellationException) throw it
-            if (it is EncatchApiException && it.status == 401 && signatureExpired) holdSubmit(params)
-            else logger.warn("submitForm API error: ${it.message}")
+        // A submit carries the user's answers, so it is never dropped for a 429: it waits for the
+        // pause to end and is retried, up to SUBMIT_MAX_ATTEMPTS in all (in memory only).
+        for (attempt in 1..SUBMIT_MAX_ATTEMPTS) {
+            val wait = rateLimiter.remainingMs(RateBucket.SUBMIT_FORM)
+            if (wait > 0) delay(wait)
+            try {
+                val res = apiClient.post(Endpoints.SUBMIT_FORM, req)
+                applyFeedbackTransactions(res)
+                sessionManager.handleResponseMeta(res.toResponseMeta())
+                return
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (err: Throwable) {
+                val status = (err as? EncatchApiException)?.status
+                if (status == 429 && attempt < SUBMIT_MAX_ATTEMPTS) continue
+                if (status == 401 && signatureExpired) holdSubmit(params)
+                else logger.warn("submitForm API error: ${err.message}")
+                return
+            }
         }
     }
 
@@ -823,9 +877,11 @@ object Encatch {
 
     @Throws(Exception::class)
     suspend fun clearAll() {
-        if (::sessionManager.isInitialized) sessionManager.stopPingInterval()
+        if (::sessionManager.isInitialized) sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
         lastIdentifyKey = null
+        collapser.clear()
+        if (::rateLimiter.isInitialized) rateLimiter.clear()
 
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
@@ -871,7 +927,7 @@ object Encatch {
         if (isFullScreenState) return
 
         sessionIdState = storage.getOrCreateSessionId()
-        sessionManager.startPingInterval()
+        sessionManager.startPingIntervalNow()
 
         if (options?.skipImmediatePing != true) {
             scope.launch { runCatching { doPing() } }
@@ -898,7 +954,7 @@ object Encatch {
         if (isSessionStopped) return
         isSessionStopped = true
         isSessionPaused = false
-        sessionManager.stopPingInterval()
+        sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
@@ -913,6 +969,7 @@ object Encatch {
 
     private suspend fun resetNow() {
         lastIdentifyKey = null
+        collapser.clear()
         // the in-memory identity first, so nothing goes out with a half-cleared one
         val previous = userNameState
         userIdState = null
@@ -940,9 +997,11 @@ object Encatch {
 
         sessionIdState = storage.getOrCreateSessionId()
 
+        // a saved stopSession() is cleared too
         isSessionPaused = false
         isSessionStopped = false
-        sessionManager.stopPingInterval()
+        storage.clearSessionStopped()
+        sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
 
         EncatchInternalEmitter.emit(InternalEvent.UserIdentified(null, null))
@@ -998,7 +1057,20 @@ object Encatch {
     // Ping
     // ============================================================================
 
+    /** The ping loop's ping: none while stopSession() is in effect. */
+    private suspend fun backgroundPing() {
+        if (isSessionStopped) {
+            logger.debug("ping skipped: session stopped")
+            return
+        }
+        doPing()
+    }
+
     private suspend fun doPing() {
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) {
+            logger.debug("ping skipped: rate limited")
+            return
+        }
         if (signatureExpired) {
             logger.debug("ping skipped: secure signature expired")
             return
@@ -1122,6 +1194,47 @@ internal fun JsonObject.toShowFormResponse(): ShowFormResponse = ShowFormRespons
 
 /** Survey submits kept while the secure signature is expired (oldest dropped first). */
 private const val MAX_HELD_SUBMITS = 10
+
+/** submit-form attempts in all when the API answers 429. */
+private const val SUBMIT_MAX_ATTEMPTS = 3
+
+/** Identical trackEvent / trackScreen calls within this window are sent once. */
+internal const val COLLAPSE_WINDOW_MS = 1_000L
+
+/**
+ * Collapses identical calls (RN 1.4.4 item 4): the same event within [windowMs] of the last one
+ * sent, and the same screen as the last one tracked within [windowMs].
+ */
+internal class CallCollapser(
+    private val windowMs: Long = COLLAPSE_WINDOW_MS,
+    private val clock: () -> Long = { currentTimeMillis() },
+) {
+    private val lock = Mutex()
+    private val lastEventAt = mutableMapOf<String, Long>()
+    private var lastScreen: Pair<String, Long>? = null
+
+    suspend fun admitEvent(name: String): Boolean = lock.withLock {
+        val now = clock()
+        val last = lastEventAt[name]
+        if (last != null && now - last < windowMs) return@withLock false
+        lastEventAt[name] = now
+        if (lastEventAt.size > 200) lastEventAt.entries.removeAll { now - it.value >= windowMs }
+        true
+    }
+
+    suspend fun admitScreen(name: String): Boolean = lock.withLock {
+        val now = clock()
+        val last = lastScreen
+        if (last != null && last.first == name && now - last.second < windowMs) return@withLock false
+        lastScreen = name to now
+        true
+    }
+
+    suspend fun clear() = lock.withLock {
+        lastEventAt.clear()
+        lastScreen = null
+    }
+}
 
 /** JSON with object keys sorted, so equal values give equal strings (the identify dedupe key). */
 internal fun stableJsonKey(value: JsonElement): String {

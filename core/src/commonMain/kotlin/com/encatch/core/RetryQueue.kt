@@ -2,21 +2,42 @@ package com.encatch.core
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.coroutines.coroutineContext
+import kotlin.math.max
 
 /**
- * Offline retry queue for failed, idempotent API calls (identifyUser/trackEvent/trackScreen),
- * mirroring `retry-queue.ts`. Persists metadata only — the closure itself is not
- * reconstructable across process death, matching the RN SDK's own limitation.
+ * Retry queue for identifyUser / trackEvent / trackScreen, mirroring RN 1.4.4 `retry-queue.ts`
+ * (item 1):
+ *
+ * - One flush at a time: a flush while one runs waits for it and makes it go through the queue
+ *   once more, so a request is never sent twice while in flight or after it succeeded.
+ * - Requests go out one at a time, in the order queued.
+ * - A 4xx drops that item and the flush carries on with the next.
+ * - A 429 drops that item (never retried) and holds the rest while the tracking bucket is paused
+ *   (see [RateLimiter]); they go out once the pause ends.
+ * - 5xx and network failures (a request times out after 30 s) are retried with backoff (2 s, then
+ *   4 s): at most [MAX_RETRIES] attempts in all. A backed-off item waits without holding up the
+ *   items behind it.
+ *
+ * Labels are persisted for debugging only; queued calls are not replayed after a restart (the
+ * closure can't be rebuilt), as in the RN SDK.
  */
 internal class RetryQueue(
     private val scope: CoroutineScope,
     private val storage: EncatchStorage,
+    private val rateLimiter: RateLimiter? = null,
+    private val logger: EncatchLogger? = null,
+    private val clock: () -> Long = { currentTimeMillis() },
 ) {
     companion object {
         const val MAX_RETRIES = 3
@@ -39,110 +60,161 @@ internal class RetryQueue(
         val maxRetries: Int,
         val createdAt: Long,
         val label: String,
-        /** Called when the item is dropped without succeeding (a 4xx, or out of attempts). */
+        /** Not sent before this time (backoff after a failure). */
+        var nextAttemptAt: Long,
+        /** Called when the item is dropped without succeeding (a 4xx, a 429, out of attempts, removed). */
         val onDrop: (() -> Unit)? = null,
     )
 
     private val mutex = Mutex()
     private val queue = mutableListOf<QueuedRequest>()
-    // Items currently executing. `fn()` necessarily runs outside the mutex, so two overlapping
-    // flush() calls (enqueue schedules one, callers often schedule another) both see a
-    // not-yet-removed item and would run its request twice without this guard — observed live
-    // on iOS as every trackScreen/trackEvent landing on the API twice.
-    private val inFlightIds = mutableSetOf<String>()
     private var nextId = 0L
-    private val pendingRetryJobs = mutableMapOf<String, Job>()
+    /** The flush in progress, and whether a flush asked for during it wants one more pass. */
+    private var running: Job? = null
+    private var runAgain = false
+    /** Flushes when the earliest backed-off item is due. */
+    private var wakeJob: Job? = null
 
-    /** True for a status-based failure whose message embeds "status <code>" in the 4xx range. */
-    private fun isClientError(error: Throwable): Boolean {
-        val status = (error as? EncatchApiException)?.status ?: return false
-        return status in 400..499
+    init {
+        rateLimiter?.onPauseEnd { scope.launch { flush() } }
     }
 
     private fun backoffMs(retries: Int): Long = BASE_BACKOFF_MS * (1L shl retries)
 
-    private suspend fun persistQueue() {
+    private fun persistQueue() {
         val serializable = queue.map {
             SerializableQueueItem(it.id, it.retries, it.maxRetries, it.createdAt, it.label)
         }
         storage.setRetryQueueRaw(Json.encodeToString(serializable))
     }
 
-    fun enqueue(label: String, maxRetries: Int = MAX_RETRIES, onDrop: (() -> Unit)? = null, fn: suspend () -> Unit) {
-        scope.launch {
-            mutex.withLock {
-                val item = QueuedRequest(
-                    id = "${currentTimeMillis()}-${nextId++}",
-                    fn = fn,
-                    retries = 0,
-                    maxRetries = maxRetries,
-                    createdAt = currentTimeMillis(),
-                    label = label,
-                    onDrop = onDrop,
-                )
-                queue.add(item)
-                persistQueue()
+    private fun isPaused(): Boolean = rateLimiter?.isPaused(RateBucket.TRACKING) == true
+
+    /** Queues [fn] and starts a flush. */
+    suspend fun enqueue(label: String, maxRetries: Int = MAX_RETRIES, onDrop: (() -> Unit)? = null, fn: suspend () -> Unit) {
+        mutex.withLock {
+            val now = clock()
+            queue.add(QueuedRequest("$now-${nextId++}", fn, 0, maxRetries, now, label, now, onDrop))
+            persistQueue()
+        }
+        scope.launch { flush() }
+    }
+
+    /** Sends every queued request that is due, one at a time; joins the running flush if there is one. */
+    suspend fun flush() {
+        val job = mutex.withLock {
+            val current = running
+            if (current != null && current.isActive) {
+                runAgain = true
+                current
+            } else {
+                scope.launch { runLoop() }.also { running = it }
             }
-            flush()
+        }
+        job.join()
+    }
+
+    private suspend fun runLoop() {
+        val self = coroutineContext.job
+        try {
+            while (true) {
+                mutex.withLock { runAgain = false }
+                runOnce()
+                val again = mutex.withLock {
+                    if (runAgain) {
+                        true
+                    } else {
+                        if (running === self) running = null
+                        false
+                    }
+                }
+                if (!again) break
+            }
+        } finally {
+            withContext(NonCancellable) {
+                mutex.withLock { if (running === self) running = null }
+                scheduleWake()
+            }
         }
     }
 
-    suspend fun flush() {
+    /** Sends every due item, in order, once. */
+    private suspend fun runOnce() {
         val snapshot = mutex.withLock { queue.toList() }
         for (item in snapshot) {
-            attempt(item)
+            // paused after a 429: hold the rest until the pause ends (the limiter flushes then)
+            if (isPaused()) return
+            val due = mutex.withLock { queue.any { it === item } && item.nextAttemptAt <= clock() }
+            if (!due) continue
+            try {
+                item.fn()
+                mutex.withLock {
+                    queue.remove(item)
+                    persistQueue()
+                }
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (err: Throwable) {
+                val status = (err as? EncatchApiException)?.status
+                when {
+                    status == 429 -> {
+                        drop(item)
+                        logger?.warn("[Encatch] Retry queue: dropping \"${item.label}\" (rate limited, not retried)")
+                        return
+                    }
+                    status != null && status in 400..499 -> {
+                        drop(item)
+                        logger?.debug("Retry queue: dropping \"${item.label}\" (client error $status, no retry)")
+                    }
+                    else -> {
+                        item.retries += 1
+                        if (item.retries >= item.maxRetries) {
+                            drop(item)
+                            logger?.warn("[Encatch] Retry queue: dropping \"${item.label}\" after ${item.maxRetries} attempts")
+                        } else {
+                            mutex.withLock {
+                                item.nextAttemptAt = clock() + backoffMs(item.retries)
+                                persistQueue()
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    private suspend fun attempt(item: QueuedRequest) {
-        val shouldRun = mutex.withLock {
-            if (queue.none { it.id == item.id } || item.id in inFlightIds) {
-                false
-            } else {
-                inFlightIds.add(item.id)
-                true
-            }
+    private suspend fun drop(item: QueuedRequest) {
+        mutex.withLock {
+            queue.remove(item)
+            persistQueue()
         }
-        if (!shouldRun) return
-        try {
-            attemptLocked(item)
-        } finally {
-            mutex.withLock { inFlightIds.remove(item.id) }
+        runCatching { item.onDrop?.invoke() }
+    }
+
+    /** Arranges a flush for when the earliest backed-off item is due (while paused, the pause end flushes). */
+    private suspend fun scheduleWake() {
+        mutex.withLock {
+            wakeJob?.cancel()
+            wakeJob = null
+            if (queue.isEmpty() || isPaused()) return
+            val wait = max(0L, queue.minOf { it.nextAttemptAt } - clock())
+            wakeJob = scope.launch {
+                delay(wait)
+                flush()
+            }
         }
     }
 
-    private suspend fun attemptLocked(item: QueuedRequest) {
-        try {
-            item.fn()
-            mutex.withLock {
-                queue.removeAll { it.id == item.id }
-                persistQueue()
-            }
-        } catch (err: Throwable) {
-            if (isClientError(err)) {
-                mutex.withLock {
-                    queue.removeAll { it.id == item.id }
-                    persistQueue()
-                }
-                runCatching { item.onDrop?.invoke() }
-                return
-            }
-            item.retries += 1
-            if (item.retries >= item.maxRetries) {
-                mutex.withLock {
-                    queue.removeAll { it.id == item.id }
-                    persistQueue()
-                }
-                runCatching { item.onDrop?.invoke() }
-            } else {
-                mutex.withLock { persistQueue() }
-                val delayMs = backoffMs(item.retries)
-                pendingRetryJobs[item.id] = scope.launch {
-                    delay(delayMs)
-                    attempt(item)
-                }
-            }
+    /** Removes queued (not yet sent) items with this label; returns how many. */
+    suspend fun removeQueued(label: String): Int {
+        val removed = mutex.withLock {
+            val matching = queue.filter { it.label == label }
+            queue.removeAll(matching)
+            if (matching.isNotEmpty()) persistQueue()
+            matching
         }
+        removed.forEach { runCatching { it.onDrop?.invoke() } }
+        return removed.size
     }
 
     fun queueSize(): Int = queue.size
