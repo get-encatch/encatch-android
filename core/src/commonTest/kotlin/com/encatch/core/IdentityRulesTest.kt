@@ -103,10 +103,12 @@ class IdentityRulesTest {
         Encatch.identifyUser("first")
         Encatch.identifyUser("second")
         Encatch.identifyUser("third")
-        eventually { api.called("identify-user").size == 3 }
-        api.called("identify-user").forEach { assertEquals(it.str("userName"), it.header("X-User-Name")) }
         eventually { Encatch.userId == "id-third" }
         assertEquals("third", Encatch.userName)
+        // an earlier user's identify still queued is dropped on the switch; whatever went out kept its own name
+        val sent = api.called("identify-user")
+        assertEquals("third", sent.last().str("userName"))
+        sent.forEach { assertEquals(it.str("userName"), it.header("X-User-Name")) }
     }
 
     @Test
@@ -283,6 +285,77 @@ class IdentityRulesTest {
         Encatch.identifyUser("retry")
         eventually { api.called("identify-user").size == 2 }
         eventually { Encatch.userId == "user-1" }
+    }
+
+    @Test
+    fun a_queued_identify_of_a_reset_user_is_not_sent() = runTest {
+        api.reply = { endpoint, _ ->
+            if (endpoint == "track-event") MockApi.Reply(delayMs = 500) // holds the queue
+            else if (endpoint == "identify-user") MockApi.Reply(body = """{"userId":"user-1"}""")
+            else MockApi.Reply()
+        }
+        Encatch.trackEvent("slow")
+        eventually { api.called("track-event").size == 1 }
+        Encatch.identifyUser("gone") // queued behind the slow event
+        Encatch.resetUser()
+        settle(1_000)
+        assertTrue(api.called("identify-user").isEmpty())
+        assertNull(Encatch.userName)
+    }
+
+    @Test
+    fun re_init_with_another_key_forgets_the_last_identify_and_recent_events() = runTest {
+        identified("alice")
+        Encatch.trackEvent("same")
+        eventually { api.called("track-event").size == 1 }
+        Encatch.init("other-key")
+        Encatch.identifyUser("alice")
+        Encatch.trackEvent("same")
+        eventually { api.called("identify-user").size == 2 && api.called("track-event").size == 2 }
+        assertEquals("other-key", api.called("identify-user")[1].header("X-Api-Key"))
+        assertEquals("other-key", api.called("track-event")[1].header("X-Api-Key"))
+    }
+
+    @Test
+    fun a_late_401_for_an_older_signature_does_not_undo_a_fresh_secure_identify() = runTest {
+        identified("alice", secure)
+        api.reply = { endpoint, body ->
+            when {
+                endpoint == "track-event" && body["eventName"]?.jsonPrimitive?.content == "form:show" ->
+                    MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""", delayMs = 800)
+                endpoint == "identify-user" -> MockApi.Reply(body = """{"userId":"user-1"}""")
+                else -> MockApi.Reply()
+            }
+        }
+        // a survey event (not queued) carries sig-abc and is answered late
+        launch(Dispatchers.Default) { Encatch.trackFormEvent("form:show", "f-1") }
+        eventually { api.called("track-event").size == 1 }
+        assertEquals("sig-abc", api.called("track-event")[0].header("X-User-Signature"))
+        // a fresh secure identify succeeds while it is in flight
+        Encatch.identifyUser("alice", options = IdentifyOptions(secure = SecureOptions("sig-fresh", "1763600000000")))
+        eventually { api.called("identify-user").size == 2 }
+        settle(1_000) // the late 401 for sig-abc has arrived
+        Encatch.trackEvent("after")
+        eventually { api.called("track-event").size == 2 }
+        assertEquals("sig-fresh", api.called("track-event")[1].header("X-User-Signature"), "the fresh signature is kept")
+        assertTrue(api.settings.getStringOrNull("@encatch/user_signature_alice")!!.contains("sig-fresh"))
+    }
+
+    @Test
+    fun after_an_expiry_the_same_signed_identify_is_not_skipped_as_a_duplicate() = runTest {
+        identified("alice", secure)
+        api.reply = { endpoint, _ ->
+            when (endpoint) {
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "identify-user" -> MockApi.Reply(body = """{"userId":"user-1"}""")
+                else -> MockApi.Reply()
+            }
+        }
+        Encatch.trackEvent("expires")
+        eventually { api.called("track-event").size == 1 }
+        settle(300)
+        Encatch.identifyUser("alice", options = secure)
+        eventually { api.called("identify-user").size == 2 }
     }
 
     @Test

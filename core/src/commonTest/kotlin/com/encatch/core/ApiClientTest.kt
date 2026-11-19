@@ -175,7 +175,11 @@ class ApiClientTest {
             httpClient = createHttpClient(engine),
             baseUrlProvider = { "https://api.encatch.com" },
             authStateProvider = { AuthState("k", null, "alice", "user-1", "sig", null, null, "123") },
-            onSignatureExpired = { expired++ },
+            onSignatureExpired = { user, signature ->
+                assertEquals("alice", user)
+                assertEquals("sig", signature)
+                expired++
+            },
         )
         assertFailsWith<EncatchApiException> { api.post(Endpoints.TRACK_EVENT, buildJsonObject { }) }
         assertEquals(1, expired)

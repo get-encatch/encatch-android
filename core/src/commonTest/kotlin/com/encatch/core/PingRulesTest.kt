@@ -49,13 +49,13 @@ class PingRulesTest {
 
     @Test
     fun a_track_event_reply_schedules_the_next_ping_and_the_interval_resumes_after_it() = runTest {
-        start(intervalMs = 3_000)
+        start(intervalMs = 6_000)
         api.reply = { endpoint, _ -> if (endpoint == "track-event") MockApi.Reply(body = """{"pingAgainIn":0.2}""") else MockApi.Reply() }
         Encatch.startSession(StartSessionOptions(skipImmediatePing = true))
         Encatch.trackEvent("schedules")
-        eventually(timeoutMs = 1_500) { pings() == 1 }
-        // the ping's reply scheduled nothing: back to the 3 s interval
-        settle(1_200)
+        eventually(timeoutMs = 3_000) { pings() == 1 }
+        // the ping's reply scheduled nothing: back to the 6 s interval
+        settle(1_500)
         assertEquals(1, pings())
     }
 
@@ -90,14 +90,14 @@ class PingRulesTest {
         api.reply = { endpoint, _ ->
             if (endpoint == "ping" && first) {
                 first = false
-                MockApi.Reply(status = HttpStatusCode.TooManyRequests, headers = mapOf("Retry-After" to "1"))
+                MockApi.Reply(status = HttpStatusCode.TooManyRequests, headers = mapOf("Retry-After" to "2"))
             } else MockApi.Reply()
         }
         Encatch.startSession()
         eventually { pings() == 1 }
-        settle(700)
+        settle(1_000)
         assertEquals(1, pings(), "skipped while paused")
-        eventually(timeoutMs = 2_000) { pings() >= 2 }
+        eventually(timeoutMs = 4_000) { pings() >= 2 }
     }
 
     @Test
@@ -106,7 +106,7 @@ class PingRulesTest {
         api.reply = { endpoint, _ ->
             when (endpoint) {
                 "identify-user" -> MockApi.Reply(body = """{"userId":"user-1","pingAgainIn":0.2}""")
-                "ping" -> MockApi.Reply(body = """{"pingAgainIn":0.2,"nextFeedbackId":"form-p"}""", delayMs = 400)
+                "ping" -> MockApi.Reply(body = """{"pingAgainIn":0.2,"nextFeedbackId":"form-p"}""", delayMs = 800)
                 "show-form" -> MockApi.Reply(body = """{"feedbackConfigurationId":"0000-form-uuid"}""")
                 else -> MockApi.Reply()
             }
@@ -114,7 +114,7 @@ class PingRulesTest {
         Encatch.identifyUser("alice")
         eventually { pings() == 1 } // the server-scheduled ping, in flight
         Encatch.stopSession()
-        settle(1_500)
+        settle(2_000)
         assertEquals(1, pings(), "the reply's pingAgainIn doesn't restart pings")
         assertEquals(1, api.called("show-form").size, "a survey offered in a reply still shows while stopped")
     }

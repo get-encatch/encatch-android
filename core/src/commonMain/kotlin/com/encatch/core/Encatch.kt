@@ -167,6 +167,14 @@ object Encatch {
             pendingReinitJob = teardown
             teardown.join()
             rateLimiter.clear()
+            // nothing of the old key's identify/secure/collapse memory carries over to the new one
+            lastIdentifyKey = null
+            collapser.clear()
+            val dropped = secureLock.withLock {
+                signatureExpired = false
+                heldSubmits.size.also { heldSubmits.clear() }
+            }
+            if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: the SDK was re-initialized")
             isSessionPaused = false
             isSessionStopped = false
             isFormVisible = false
@@ -212,7 +220,7 @@ object Encatch {
                 resetUser()
             },
             logger = logger,
-            onSignatureExpired = { onSignatureExpired() },
+            onSignatureExpired = { user, signature -> onSignatureExpired(user, signature) },
             onRateLimited = { endpoint, retryAfterMs -> limiter.pauseFor(bucketOf(endpoint), retryAfterMs) },
         )
         retryQueue = RetryQueue(scope, storage, limiter, logger)
@@ -291,6 +299,8 @@ object Encatch {
         // pairs this name with another user's id; without one, requests go as a visitor until the
         // reply. The previous user's signature is not carried over.
         if (userName != userNameState) {
+            // a queued identify of the previous user is not sent any more
+            retryQueue.removeQueued("identifyUser")
             userIdState = null
             userNameState = userName
             userIdState = storage.getUserId(userName)
@@ -373,11 +383,21 @@ object Encatch {
         userSignatureTime = stored?.time
     }
 
-    /** The stored session-time signature expired (a 401): warn once and wait for a new identify. */
-    private suspend fun onSignatureExpired() {
+    /**
+     * The stored session-time signature expired (a 401 on a request that carried [signature] for
+     * [userName]): warn once and wait for a new identify. A late 401 for an older signature, or for
+     * a user no longer current, is ignored — it must not undo a fresh secure identify.
+     */
+    private suspend fun onSignatureExpired(userName: String, signature: String) {
         secureLock.withLock {
             if (signatureExpired) return
+            if (userName != userNameState || signature != userSignature) {
+                logger.debug("401 for an older signature or another user: ignored")
+                return
+            }
             signatureExpired = true
+            // the same signed identify, sent again, is not a duplicate any more
+            lastIdentifyKey = null
         }
         logger.warn(
             "[Encatch] Secure identify signature expired (401). Call identifyUser() with a fresh signature; " +
@@ -589,7 +609,10 @@ object Encatch {
         fromSchedule: Boolean = false,
     ) {
         if (rateLimiter.isPaused(RateBucket.SHOW_FORM)) {
-            if (fromSchedule) surveyGuard.withLock { pendingAutoShow = null }
+            if (fromSchedule) {
+                val self = currentCoroutineContext()[Job]
+                surveyGuard.withLock { if (pendingAutoShow === self) pendingAutoShow = null }
+            }
             logger.debug("showForm $formId skipped: rate limited")
             return
         }
@@ -968,6 +991,8 @@ object Encatch {
     }
 
     private suspend fun resetNow() {
+        // a queued identify of the user being reset is not sent any more
+        retryQueue.removeQueued("identifyUser")
         lastIdentifyKey = null
         collapser.clear()
         // the in-memory identity first, so nothing goes out with a half-cleared one

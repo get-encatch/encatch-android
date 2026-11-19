@@ -180,8 +180,12 @@ class EncatchApiClient internal constructor(
     private val onUserPendingRetryExhausted: suspend () -> Unit = {},
     private val logger: EncatchLogger = DefaultEncatchLogger { false },
     private val networkLogSink: (EncatchNetworkLogEntry) -> Unit = {},
-    /** A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16). */
-    private val onSignatureExpired: suspend () -> Unit = {},
+    /**
+     * A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item
+     * 16). Given the user name and signature that request carried, so a late 401 for an older
+     * signature can be told apart from one for the current signature.
+     */
+    private val onSignatureExpired: suspend (userName: String, signature: String) -> Unit = { _, _ -> },
     /** A 429: the endpoint and its Retry-After in ms (null when missing), to pause that bucket (RN 1.4.4 item 2). */
     private val onRateLimited: suspend (endpoint: String, retryAfterMs: Long?) -> Unit = { _, _ -> },
 ) {
@@ -292,10 +296,12 @@ class EncatchApiClient internal constructor(
             onUserPendingRetryExhausted()
         }
 
+        val sentSignature = authHeaders["X-User-Signature"]
+        val sentUser = authHeaders["X-User-Name"]
         if (response.status.value == 401 && identify == null &&
-            authHeaders["X-User-Signature"] != null && authHeaders["X-User-Session-Time"] != null
+            sentSignature != null && sentUser != null && authHeaders["X-User-Session-Time"] != null
         ) {
-            onSignatureExpired()
+            onSignatureExpired(sentUser, sentSignature)
         }
 
         if (response.status.value == 429) {
