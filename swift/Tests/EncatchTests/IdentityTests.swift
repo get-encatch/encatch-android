@@ -100,7 +100,8 @@ final class IdentityTests: XCTestCase {
             if call.endpoint == "identify-user" { reply.delayMs = 300 }
             return reply
         }
-        let sdk = try await makeTestSDK(server: server)
+        let defaults = makeTestDefaults()
+        let sdk = try await makeTestSDK(server: server, defaults: defaults)
         defer { sdk.stop() }
         try await sdk.identifyUser(userName: "alice")
         await waitFor { server.count("identify-user") == 1 }
@@ -108,6 +109,7 @@ final class IdentityTests: XCTestCase {
         await sleepMs(500)
         XCTAssertNil(sdk.userName)
         XCTAssertNil(sdk.userId, "the late reply must not bring alice back")
+        XCTAssertNil(defaults.string(forKey: "@encatch/user_id_alice"), "nor store her id")
         try await sdk.trackEvent("after-reset")
         await waitFor { server.count("track-event") == 1 }
         XCTAssertNil(server.calls("track-event")[0].header("X-User-Name"))
@@ -316,6 +318,42 @@ final class IdentityTests: XCTestCase {
         XCTAssertEqual(server.calls("submit-form")[0].header("X-User-Signature"), "sig-2")
         try await sdk.trackEvent("third")
         await waitFor { server.count("track-event") == 2 }
+    }
+
+    func testIdentifyingAnotherUserDropsHeldSubmitsAndEndsTheExpiry() async throws {
+        let server = FakeServer()
+        server.respond { call in
+            switch call.endpoint {
+            case "identify-user": return self.identifyReply("uid-\(call.string("userName") ?? "")")
+            default: return call.header("X-User-Signature") != nil ? .init(status: 401, body: "expired") : .init()
+            }
+        }
+        let logger = RecordingLogger()
+        let sdk = try await makeTestSDK(server: server, logger: logger)
+        defer { sdk.stop() }
+        try await identify(sdk, server, "alice", options: IdentifyOptions(secure: SecureOptions(signature: "sig-1", generatedDateTimeInUtc: "1763500000000")))
+        try await sdk.trackEvent("e")
+        await waitFor("expiry") { sdk.isSignatureExpired }
+        try await sdk.submitForm(submitRequest())
+        try await sdk.identifyUser(userName: "bob")
+        XCTAssertFalse(sdk.isSignatureExpired, "the expiry was alice's")
+        await waitFor { sdk.userId == "uid-bob" }
+        await sleepMs(150)
+        XCTAssertEqual(server.count("submit-form"), 0, "alice's held answers are not sent as bob's")
+        XCTAssertTrue(logger.warnings.contains { $0.contains("1 held survey submit(s) dropped") })
+    }
+
+    func testReinitializeDropsTheOldQueue() async throws {
+        let server = FakeServer()
+        server.respond { $0.endpoint == "track-event" ? .init(status: 503) : .init() }
+        let sdk = try await makeTestSDK(server: server) { $0.timings.retryBackoffBaseMs = 100 }
+        defer { sdk.stop() }
+        try await sdk.trackEvent("old")
+        await waitFor { server.count("track-event") == 1 } // now waiting out its backoff
+        server.respond { _ in .init() }
+        try await sdk.initialize(apiKey: "another-key-67890", config: EncatchConfig(apiBaseUrl: "https://api.test"))
+        await sleepMs(600)
+        XCTAssertEqual(server.count("track-event"), 1, "the old key's queued event is not sent with the new key")
     }
 
     func testA401WithoutASignatureTimeIsNotAnExpiry() async throws {

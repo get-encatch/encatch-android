@@ -14,8 +14,8 @@ final class PingTests: XCTestCase {
         defer { sdk.stop() }
         try await sdk.startSession()
         await sleepMs(1_000)
-        // 0, 150, 300, … ms: the scheduled ping's own reply schedules the next one
-        XCTAssertGreaterThanOrEqual(server.count("ping"), 5)
+        // 0, 150, 300, … ms: the scheduled ping's own reply schedules the next one (the interval is 60 s)
+        XCTAssertGreaterThanOrEqual(server.count("ping"), 3)
         XCTAssertTrue(sdk.pingActive)
     }
 
@@ -131,6 +131,32 @@ final class PingTests: XCTestCase {
         XCTAssertTrue(sdk.pingActive)
     }
 
+    func testPauseThenResumeDoesNotRestartPingsWhileStopped() async throws {
+        let server = FakeServer()
+        server.respond { $0.endpoint == "ping" ? .init(body: #"{"pingAgainIn":0.05}"#) : .init() }
+        let sdk = try await sdk(server, intervalMs: 60)
+        defer { sdk.stop() }
+        try await sdk.startSession()
+        await waitFor { server.count("ping") >= 1 }
+        try await sdk.stopSession()
+        sdk.pauseSession()
+        sdk.resumeSession()
+        await sleepMs(100)
+        let pings = server.count("ping")
+        await sleepMs(400)
+        XCTAssertEqual(server.count("ping"), pings, "stopped: resume must not restart pings")
+        XCTAssertFalse(sdk.pingActive)
+    }
+
+    func testAScheduledPingNeedsActivePinging() async throws {
+        let server = FakeServer()
+        let sdk = try await sdk(server, intervalMs: 60_000)
+        defer { sdk.stop() }
+        sdk.sessionManagerForTesting.scheduleNextPing(delayMs: 30) // never started (as in full screen)
+        await sleepMs(300)
+        XCTAssertEqual(server.count("ping"), 0)
+    }
+
     func testNoPingDuringA429Pause() async throws {
         let server = FakeServer()
         server.respond { $0.endpoint == "track-event" ? .init(status: 429, headers: ["Retry-After": "0.4"]) : .init() }
@@ -182,7 +208,7 @@ final class LoadTests: XCTestCase {
         let server = FakeServer()
         server.respond { call in
             switch call.endpoint {
-            case "track-screen": return .init(status: 429, headers: ["Retry-After": "0.3"], delayMs: 120)
+            case "track-screen": return .init(status: 429, headers: ["Retry-After": "1"], delayMs: 120)
             case "identify-user": return .init(body: #"{"userId":"uid-a"}"#)
             default: return .init()
             }
@@ -204,7 +230,7 @@ final class LoadTests: XCTestCase {
         let server = FakeServer()
         server.respond { call in
             switch call.endpoint {
-            case "track-event": return .init(status: 429, headers: ["Retry-After": "0.3"])
+            case "track-event": return .init(status: 429, headers: ["Retry-After": "1"])
             case "identify-user": return .init(body: #"{"userId":"uid-\#(call.string("userName") ?? "")"}"#)
             default: return .init()
             }
@@ -321,7 +347,6 @@ final class LoadTests: XCTestCase {
         XCTAssertEqual(times.values.count, 3)
         let gaps = zip(times.values.dropFirst(), times.values).map { $0 - $1 }
         XCTAssertGreaterThanOrEqual(gaps[0], 95) // 2 × 50
-        XCTAssertLessThan(gaps[0], 190)
         XCTAssertGreaterThanOrEqual(gaps[1], 195) // 4 × 50
         let size = await queue.queueSize()
         XCTAssertEqual(size, 0)

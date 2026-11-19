@@ -178,6 +178,8 @@ public final class Encatch: @unchecked Sendable {
             }
             pendingReinitTask = teardown
             await teardown.value
+            // the old queue's items must not go out later with the new key (nor stay held forever)
+            await retryQueue?.clear()
             isSessionPaused = false
             isSessionStopped = false
             // another key or environment: no identify, expiry or collapse memory carries over
@@ -239,7 +241,7 @@ public final class Encatch: @unchecked Sendable {
         self.sessionManager = SessionManager(
             pingIntervalMs: timings.pingIntervalMs,
             isFormVisible: { [self] in withSurveyLock { isFormVisible } },
-            onPing: { [self] in try? await doPing() }
+            onPing: { [self] in await backgroundPing() }
         )
         // A stopSession() from a previous run stays in effect until startSession() or a successful
         // identify (RN 1.4.4 item 19b).
@@ -322,11 +324,19 @@ public final class Encatch: @unchecked Sendable {
             await retryQueue.removeQueued(label: "identifyUser")
             let storedId = storage.getUserId(userName: userName)
             let stored = storage.getUserSignature(userName: userName)
-            withStateLock {
+            // the previous user's held submits and signature expiry don't carry over (as on reset)
+            let droppedSubmits: Int = withStateLock {
                 userNameState = userName
                 userIdState = storedId
                 userSignature = stored?.signature
                 userSignatureTime = stored?.time
+                signatureExpired = false
+                let dropped = heldSubmits.count
+                heldSubmits = []
+                return dropped
+            }
+            if droppedSubmits > 0 {
+                logger.warn("\(droppedSubmits) held survey submit(s) dropped: another user was identified")
             }
         }
         storage.setUserName(userName)
@@ -376,14 +386,15 @@ public final class Encatch: @unchecked Sendable {
     }
 
     private func applyIdentifyReply(_ res: JSONValue, userName: String, secure: SecureOptions?) async {
+        guard initialized else { return }
         var replyUserId: String?
         var replyFt: String?
         if case .object(let resObj) = res {
             if case .string(let value)? = resObj["userId"], !value.isEmpty { replyUserId = value }
             if case .string(let value)? = resObj["$feedbackTransactions"] { replyFt = value }
         }
-        // A reply for a user who is no longer current (reset or switched since): keep the id for
-        // that user, but don't apply it.
+        // A reply for a user who is no longer current (reset, switched or cleared since): ignored,
+        // its id not stored either.
         let current: Bool = withStateLock {
             guard userNameState == userName else { return false }
             if let replyUserId { userIdState = replyUserId }
@@ -393,11 +404,11 @@ public final class Encatch: @unchecked Sendable {
             userSignatureTime = secure?.signature != nil ? secure?.generatedDateTimeInUtc : nil
             return true
         }
-        if let replyUserId { storage.setUserId(userName: userName, userId: replyUserId) }
         guard current else {
             logger.debug("identify reply for \"\(userName)\" ignored: no longer the current user")
             return
         }
+        if let replyUserId { storage.setUserId(userName: userName, userId: replyUserId) }
         if let secure {
             storage.setUserSignature(userName: userName, value: .init(signature: secure.signature, time: secure.generatedDateTimeInUtc))
         } else {
@@ -466,6 +477,7 @@ public final class Encatch: @unchecked Sendable {
     /// A stopSession() is in effect (saved across restarts until startSession() or a successful identify).
     var sessionStopped: Bool { isSessionStopped }
     var pingActive: Bool { sessionManager?.isPingActive ?? false }
+    var sessionManagerForTesting: SessionManager { sessionManager }
 
     /// Keeps a submit until the next successful identify (in memory, at most 10, oldest dropped).
     private func holdSubmit(_ params: SubmitFormRequest) {
@@ -688,21 +700,25 @@ public final class Encatch: @unchecked Sendable {
     ) async {
         let expired = isSignatureExpired
         let rateLimited = rateLimiter.isPaused(.showForm)
-        let proceed: Bool = withSurveyLock {
+        // nil: go ahead; otherwise why the show is skipped
+        let skipReason: String? = withSurveyLock {
             // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
             if let token {
-                guard pendingAutoShowToken == token else { return false }
+                guard pendingAutoShowToken == token else { return "superseded by a newer automatic show" }
                 pendingAutoShow = nil
                 pendingAutoShowToken = nil
             }
-            if rateLimited { return false }
-            if triggerType == .automatic && (expired || loadingFormId != nil || isFormVisible) { return false }
-            if triggerType == .manual && (loadingFormId == formId || (isFormVisible && openFormIds.contains(formId))) { return false }
+            if rateLimited { return "rate limited" }
+            if triggerType == .automatic && expired { return "secure signature expired" }
+            if triggerType == .automatic && (loadingFormId != nil || isFormVisible) { return "a survey is loading or open (survey-open)" }
+            if triggerType == .manual && (loadingFormId == formId || (isFormVisible && openFormIds.contains(formId))) {
+                return "that survey is already loading or open"
+            }
             loadingFormId = formId
-            return true
+            return nil
         }
-        guard proceed else {
-            logger.debug("show-form \(formId) skipped: \(rateLimited ? "rate limited" : "a survey is loading or open (survey-open)")")
+        if let skipReason {
+            logger.debug("show-form \(formId) skipped: \(skipReason)")
             return
         }
         await showFormRequest(formId: formId, resetMode: resetMode, triggerType: triggerType, context: context)
@@ -1083,6 +1099,8 @@ public final class Encatch: @unchecked Sendable {
     public func resumeSession() {
         guard isSessionPaused else { return }
         isSessionPaused = false
+        // a stopSession() stays in effect until startSession() or a successful identify
+        guard !isSessionStopped else { return }
         sessionManager.startPingInterval()
     }
 
@@ -1201,6 +1219,16 @@ public final class Encatch: @unchecked Sendable {
     // ============================================================================
     // Ping
     // ============================================================================
+
+    /// The ping of the interval and of a server-scheduled ping: none while stopped or paused
+    /// (doPing itself skips it during a 429 pause or after signature expiry).
+    private func backgroundPing() async {
+        if isSessionStopped || isSessionPaused {
+            logger.debug("ping skipped: session \(isSessionStopped ? "stopped" : "paused")")
+            return
+        }
+        try? await doPing()
+    }
 
     private func doPing() async throws {
         if rateLimiter.isPaused(.tracking) {

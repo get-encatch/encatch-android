@@ -69,10 +69,12 @@ final class SessionManager: @unchecked Sendable {
         await ping?.value
     }
 
-    /// The server asked for the next ping in `delayMs` (pingAgainIn). Leaves "active" as it is.
+    /// The server asked for the next ping in `delayMs` (pingAgainIn). Nothing unless pinging is
+    /// active (stopped, paused, full screen); leaves "active" as it is.
     func scheduleNextPing(delayMs: Int64) {
         let token = UUID()
         let old: [Task<Void, Never>] = sync {
+            guard pingActive else { return [] }
             let old = takeTimers()
             timeoutToken = token
             timeoutTask = Task { [weak self] in
