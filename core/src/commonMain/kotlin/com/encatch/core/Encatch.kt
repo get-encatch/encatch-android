@@ -5,7 +5,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -66,8 +72,21 @@ object Encatch {
     // Feedback transactions
     private var feedbackTransactions: String? = null
 
-    // Form visibility (suppresses ping)
-    private var isFormVisible = false
+    // Form visibility (suppresses ping). Written from the UI's main thread and the SDK's own.
+    @Volatile private var isFormVisible = false
+
+    // One survey at a time (mirrors RN 1.4.4 `_scheduleAutoShow` / Flutter 1.2.0 `_handleSurveyInReply`):
+    // the automatic show waiting out its `onPageDelay`, the form whose show-form is in flight, and
+    // the form on screen. Guarded by [surveyGuard] so two replies can't both pass the check.
+    @Volatile private var pendingAutoShow: Job? = null
+    @Volatile private var loadingFormId: String? = null
+    /** The open survey, by both its names: the id asked for and the show-form reply's `feedbackConfigurationId`. */
+    @Volatile private var openFormIds: Set<String> = emptySet()
+    private val surveyGuard = Mutex()
+
+    // Test seams: an HTTP engine and a settings store other than the platform's (commonTest only).
+    internal var engineFactory: (() -> io.ktor.client.engine.HttpClientEngine)? = null
+    internal var settingsFactory: (() -> com.russhwolf.settings.Settings)? = null
 
     // Session control
     private var isSessionPaused = false
@@ -129,6 +148,9 @@ object Encatch {
             isSessionPaused = false
             isSessionStopped = false
             isFormVisible = false
+            cancelPendingAutoShow()
+            openFormIds = emptySet()
+            loadingFormId = null
         }
 
         apiKeyState = apiKey
@@ -140,9 +162,9 @@ object Encatch {
 
         logger.debug("Initializing SDK...")
 
-        storage = EncatchStorage()
+        storage = settingsFactory?.let { EncatchStorage(it()) } ?: EncatchStorage()
         apiClient = EncatchApiClient(
-            httpClient = createHttpClient(createDefaultEngine()),
+            httpClient = createHttpClient(engineFactory?.invoke() ?: createDefaultEngine()),
             baseUrlProvider = { apiBaseUrlState },
             authStateProvider = {
                 AuthState(
@@ -247,9 +269,7 @@ object Encatch {
                 sessionManager.scheduleNextPing((meta.pingAgainIn * 1000).toLong())
             }
 
-            res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.let {
-                showFormById(it, TriggerType.AUTOMATIC)
-            }
+            handleSurveyInReply(res)
         }
 
         scope.launch { retryQueue.flush() }
@@ -293,7 +313,7 @@ object Encatch {
             applyFeedbackTransactions(res)
             val meta = res.toResponseMeta()
             sessionManager.handleResponseMeta(meta)
-            res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.let { showFormById(it, TriggerType.AUTOMATIC) }
+            handleSurveyInReply(res)
         }
 
         scope.launch { retryQueue.flush() }
@@ -319,7 +339,7 @@ object Encatch {
             applyFeedbackTransactions(res)
             val meta = res.toResponseMeta()
             sessionManager.handleResponseMeta(meta)
-            res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.let { showFormById(it, TriggerType.AUTOMATIC) }
+            handleSurveyInReply(res)
         }
     }
 
@@ -339,14 +359,7 @@ object Encatch {
             applyFeedbackTransactions(res)
             val meta = res.toResponseMeta()
             sessionManager.handleResponseMeta(meta)
-            res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.let { showFormById(it, TriggerType.AUTOMATIC) }
-            res["nextFeedbackId"]?.jsonPrimitive?.contentOrNull?.let { nextId ->
-                val delayS = res["onPageDelay"]?.jsonPrimitive?.doubleOrNull ?: 0.0
-                scope.launch {
-                    delay((delayS * 1000).toLong())
-                    showFormById(nextId, TriggerType.AUTOMATIC, ResetMode.ALWAYS)
-                }
-            }
+            handleSurveyInReply(res)
         }
 
         scope.launch { retryQueue.flush() }
@@ -362,15 +375,76 @@ object Encatch {
         showFormInternal(formId, options?.reset ?: ResetMode.ALWAYS, TriggerType.MANUAL, options?.context)
     }
 
-    private suspend fun showFormById(
-        formConfigurationId: String,
-        triggerType: TriggerType,
-        reset: ResetMode = ResetMode.ALWAYS,
-    ) {
-        runCatching { showFormInternal(formConfigurationId, reset, triggerType, null) }
+    /**
+     * A survey the server offers in a reply — identify, ping, track-event, track-screen and survey
+     * events alike: `nextFeedbackId`, shown after `onPageDelay` seconds; without it, `formConfigurationId`
+     * (older servers; none send it today) is shown at once. Mirrors RN 1.4.4 `_handleSurveyInReply` and the
+     * web SDK's reply hook; before this only track-screen replies were read, so surveys launched by
+     * an event, on identify or in a ping never opened.
+     */
+    internal suspend fun handleSurveyInReply(res: JsonObject) {
+        val next = res["nextFeedbackId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
+        val legacy = res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() }
+        // as RN 1.4.4: the server's `nextFeedbackId` first; the legacy field (shown at once) only without it
+        val formId = next ?: legacy ?: return
+        val delayMs = if (next != null) ((res["onPageDelay"]?.jsonPrimitive?.doubleOrNull ?: 0.0) * 1000).toLong().coerceAtLeast(0L) else 0L
+        scheduleAutoShow(formId, delayMs)
+    }
+
+    /** One pending automatic show at a time; none while a survey is pending, loading or open. */
+    private suspend fun scheduleAutoShow(formId: String, delayMs: Long) {
+        surveyGuard.withLock {
+            if (pendingAutoShow?.isActive == true || loadingFormId != null || isFormVisible) {
+                logger.debug("survey $formId offered while another is pending or open: skipped (survey-open)")
+                return
+            }
+            pendingAutoShow = scope.launch {
+                if (delayMs > 0) delay(delayMs)
+                runCatching { showFormInternal(formId, ResetMode.ALWAYS, TriggerType.AUTOMATIC, null, fromSchedule = true) }
+            }
+        }
+    }
+
+    /** Cancels a survey waiting out its delay (stopSession, resetUser, clearAll). */
+    private fun cancelPendingAutoShow() {
+        pendingAutoShow?.cancel()
+        pendingAutoShow = null
     }
 
     private suspend fun showFormInternal(
+        formId: String,
+        resetMode: ResetMode,
+        triggerType: TriggerType,
+        context: Map<String, ContextValue>?,
+        fromSchedule: Boolean = false,
+    ) {
+        val proceed = surveyGuard.withLock {
+            // the scheduled show has started: it is now "loading", no longer "pending"
+            if (fromSchedule) pendingAutoShow = null
+            when {
+                // an automatic show never interrupts a survey that is loading or open
+                triggerType == TriggerType.AUTOMATIC && (loadingFormId != null || isFormVisible) -> false
+                // asking again for the survey already loading or open keeps the answers in progress
+                triggerType == TriggerType.MANUAL && (loadingFormId == formId || (isFormVisible && formId in openFormIds)) -> false
+                else -> {
+                    loadingFormId = formId
+                    true
+                }
+            }
+        }
+        if (!proceed) {
+            logger.debug("show-form $formId skipped: a survey is loading or open (survey-open)")
+            return
+        }
+        try {
+            showFormRequest(formId, resetMode, triggerType, context)
+        } finally {
+            // even when cancelled: a guard left "loading" would block every automatic survey after it
+            withContext(NonCancellable) { surveyGuard.withLock { if (loadingFormId == formId) loadingFormId = null } }
+        }
+    }
+
+    private suspend fun showFormRequest(
         formId: String,
         resetMode: ResetMode,
         triggerType: TriggerType,
@@ -440,7 +514,13 @@ object Encatch {
             )
 
             isFormVisible = true
-        }.onFailure { logger.warn("showForm API error: ${it.message}") }
+            openFormIds = setOfNotNull(formId, feedbackConfigurationId?.takeIf { it.isNotEmpty() })
+        }.onFailure {
+            if (it is CancellationException) throw it
+            // 404: "not eligible now" (the server has no "already shown") — expected, no retry
+            if (it is EncatchApiException && it.status == 404) logger.debug("show-form $formId: not eligible now (404)")
+            else logger.warn("showForm API error: ${it.message}")
+        }
     }
 
     @Throws(Exception::class)
@@ -450,6 +530,7 @@ object Encatch {
         pendingCtaScheduler?.cancel(formConfigurationId)
         EncatchInternalEmitter.emit(InternalEvent.DismissForm(formConfigurationId))
         isFormVisible = false
+        openFormIds = emptySet()
 
         scope.launch { trackFormEvent("form:dismissed", formConfigurationId) }
 
@@ -568,9 +649,12 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun clearAll() {
         if (::sessionManager.isInitialized) sessionManager.stopPingInterval()
+        cancelPendingAutoShow()
 
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
+        openFormIds = emptySet()
+        loadingFormId = null
 
         if (::storage.isInitialized) storage.clearAll()
 
@@ -636,6 +720,7 @@ object Encatch {
         isSessionStopped = true
         isSessionPaused = false
         sessionManager.stopPingInterval()
+        cancelPendingAutoShow()
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
         storage.setSessionStopped()
@@ -664,12 +749,25 @@ object Encatch {
         isSessionPaused = false
         isSessionStopped = false
         sessionManager.stopPingInterval()
+        cancelPendingAutoShow()
 
         EncatchInternalEmitter.emit(InternalEvent.UserIdentified(null, null))
     }
 
-    fun setFormVisible(visible: Boolean) {
+    fun setFormVisible(visible: Boolean) = setFormVisible(visible, null)
+
+    /**
+     * The UI says a survey opened or closed. [formId]: the survey it is about (the id it was shown
+     * by) — a close of a survey since replaced by another is ignored, so the one on screen stays
+     * "open" for the one-at-a-time guard.
+     */
+    fun setFormVisible(visible: Boolean, formId: String?) {
+        if (!visible && formId != null && openFormIds.isNotEmpty() && formId !in openFormIds) {
+            logger.debug("close of $formId ignored: another survey is open")
+            return
+        }
         isFormVisible = visible
+        if (!visible) openFormIds = emptySet()
     }
 
     /**
@@ -715,7 +813,7 @@ object Encatch {
         val res = apiClient.post(Endpoints.PING, req)
         applyFeedbackTransactions(res)
         sessionManager.handleResponseMeta(res.toResponseMeta())
-        res["formConfigurationId"]?.jsonPrimitive?.contentOrNull?.let { showFormById(it, TriggerType.AUTOMATIC) }
+        handleSurveyInReply(res)
     }
 
     private suspend fun applyFeedbackTransactions(res: JsonObject) {

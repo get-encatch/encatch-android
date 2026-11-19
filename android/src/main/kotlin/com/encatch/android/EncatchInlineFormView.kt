@@ -141,7 +141,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         context.applicationContext.unregisterComponentCallbacks(systemThemeCallbacks)
 
         if (bridge?.formPayload != null) {
-            Encatch.setFormVisible(false)
+            Encatch.setFormVisible(false, bridge?.formPayload?.formId ?: currentPayload?.formId)
         }
         clearForm()
     }
@@ -152,13 +152,13 @@ class EncatchInlineFormView @JvmOverloads constructor(
                 if (event.payload.presentation == "inline" && event.payload.inlineSlotId == slotId) {
                     loadForm(event.payload)
                 } else if (bridge?.formPayload != null) {
-                    Encatch.setFormVisible(false)
+                    Encatch.setFormVisible(false, bridge?.formPayload?.formId ?: currentPayload?.formId)
                     clearForm()
                 }
             }
             is InternalEvent.DismissForm -> {
                 if (bridge?.formPayload != null) {
-                    Encatch.setFormVisible(false)
+                    Encatch.setFormVisible(false, bridge?.formPayload?.formId ?: currentPayload?.formId)
                     clearForm()
                 }
             }
@@ -179,7 +179,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
             scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main),
             presentation = "inline",
             onClose = { _ ->
-                Encatch.setFormVisible(false)
+                Encatch.setFormVisible(false, bridge?.formPayload?.formId ?: currentPayload?.formId)
                 clearForm()
             },
             // form:resize heights arrive in CSS px (== dp) — convert to physical px before
@@ -203,7 +203,7 @@ class EncatchInlineFormView @JvmOverloads constructor(
         newWebView.bridge = newBridge
         newWebView.onUnrecoverableFailure = { reason ->
             android.util.Log.w("Encatch", "clearing inline form: $reason")
-            Encatch.setFormVisible(false)
+            Encatch.setFormVisible(false, bridge?.formPayload?.formId ?: currentPayload?.formId)
             clearForm()
         }
         newWebView.settings.setSupportZoom(false)

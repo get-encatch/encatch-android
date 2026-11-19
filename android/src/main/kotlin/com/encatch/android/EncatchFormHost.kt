@@ -80,7 +80,11 @@ object EncatchFormHost {
             mainHandler.post {
                 when (event) {
                     is InternalEvent.ShowForm -> {
-                        val activity = currentActivity ?: return@post
+                        // no activity to show it in: the survey is not open and must not hold the one-at-a-time guard
+                        val activity = currentActivity ?: run {
+                            Encatch.setFormVisible(false, event.payload.formId)
+                            return@post
+                        }
                         if (event.payload.presentation != "modal") return@post
                         currentDialog?.dismiss()
                         val dialog = EncatchFormDialog(activity)

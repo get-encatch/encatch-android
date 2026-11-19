@@ -202,9 +202,8 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         lastSystemScheme = resolveSystemColorScheme(isConfigurationDark(context.resources.configuration.uiMode))
         context.applicationContext.registerComponentCallbacks(systemThemeCallbacks)
 
-        setOnDismissListener {
-            Encatch.setFormVisible(false)
-        }
+        // no dismiss listener for visibility: it runs after the payload is gone, possibly after a
+        // replacing survey opened — dismiss() reports the close itself, with the form it was
     }
 
     fun present(payload: ShowFormPayload) {
@@ -481,7 +480,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     }
 
     private fun close(immediate: Boolean) {
-        Encatch.setFormVisible(false)
+        Encatch.setFormVisible(false, currentPayload?.formId)
         if (!isShowing) return
         if (immediate) {
             closeAnimator?.cancel()
@@ -492,6 +491,9 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     }
 
     override fun dismiss() {
+        // every way out — the back button and a cancel included, not only close() — tells core the
+        // survey is gone: otherwise it stays "open" and no automatic survey is shown again
+        Encatch.setFormVisible(false, currentPayload?.formId)
         super.dismiss()
         popupShell.removeCallbacks(readyWatchdog)
         bridge.setFormPayload(null)
