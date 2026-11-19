@@ -26,10 +26,9 @@ kotlin {
 This transitively brings in `com.encatch:kmp-sdk`'s `Encatch` API and, on Android,
 `com.encatch:android` (the modal survey host and the native views) — no separate dependency needed.
 
-If your app removed AndroidX App Startup's `InitializationProvider` from its manifest, nothing of
-Encatch's starts by itself: run `com.encatch.core.EncatchContextInitializer` and
-`com.encatch.android.EncatchFormHostInitializer` with `AppInitializer`, or call
-`com.encatch.android.EncatchFormHost.install(this)` in `Application.onCreate`.
+If your app removed AndroidX App Startup's `InitializationProvider` from its manifest, the modal host
+does not start by itself: call `com.encatch.android.EncatchFormHost.install(this)` in
+`Application.onCreate`.
 
 ## Usage
 

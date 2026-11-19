@@ -10,7 +10,6 @@ import android.os.Looper
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleInitializer
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.startup.Initializer
 import com.encatch.core.EncatchContextInitializer
@@ -41,12 +40,21 @@ object EncatchFormHost {
     val isInstalled: Boolean get() = installed.get()
 
     /**
-     * Installs the host. Idempotent and thread-safe: only the first call registers anything.
-     * Normally done for you at process start; call it only if you removed AndroidX App Startup's
+     * Installs the host. Idempotent and thread-safe: only the first call registers anything, and it
+     * does so on the main thread (posted there when called from another thread). Normally done for
+     * you at process start; call it only if you removed AndroidX App Startup's
      * `InitializationProvider` from your manifest.
      */
     fun install(application: Application) {
         if (!installed.compareAndSet(false, true)) return
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            installOnMain(application)
+        } else {
+            Handler(Looper.getMainLooper()).post { installOnMain(application) }
+        }
+    }
+
+    private fun installOnMain(application: Application) {
 
         application.registerActivityLifecycleCallbacks(
             object : Application.ActivityLifecycleCallbacks {
@@ -80,13 +88,18 @@ object EncatchFormHost {
             openExternal = { url -> RedirectBrowser(application).openExternal(url) },
         )
 
-        ProcessLifecycleOwner.get().lifecycle.addObserver(
-            object : DefaultLifecycleObserver {
-                override fun onStart(owner: LifecycleOwner) {
-                    Encatch.flushRetryQueue()
-                }
-            },
-        )
+        // Retry-queue flush on foreground. Best effort: ProcessLifecycleOwner is set up by its own
+        // App Startup initializer, which an app may have removed — the host must work without it.
+        // An observer added before that initializer runs still gets its events once it does.
+        runCatching {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(
+                object : DefaultLifecycleObserver {
+                    override fun onStart(owner: LifecycleOwner) {
+                        Encatch.flushRetryQueue()
+                    }
+                },
+            )
+        }
 
         // EncatchInternalEmitter.emit(...) runs on whichever thread triggered it — automatic
         // triggers (track-screen/track-event/identify auto-shows) emit from core's
@@ -99,12 +112,13 @@ object EncatchFormHost {
             mainHandler.post {
                 when (event) {
                     is InternalEvent.ShowForm -> {
+                        // inline shows belong to an inline slot, not this host
+                        if (event.payload.presentation != "modal") return@post
                         // no activity to show it in: the survey is not open and must not hold the one-at-a-time guard
                         val activity = currentActivity ?: run {
                             Encatch.setFormVisible(false, event.payload.formId)
                             return@post
                         }
-                        if (event.payload.presentation != "modal") return@post
                         currentDialog?.dismiss()
                         val dialog = EncatchFormDialog(activity)
                         currentDialog = dialog
@@ -170,8 +184,9 @@ class EncatchFormHostInitializer : Initializer<Unit> {
         (context.applicationContext as? Application)?.let { EncatchFormHost.install(it) }
     }
 
-    // ProcessLifecycleOwner must be initialised before install() observes it (it is
-    // initialised by its own startup Initializer, whose order relative to ours is otherwise undefined).
+    // Not ProcessLifecycleInitializer: depending on it throws ("cannot be initialized lazily")
+    // when an app removed its manifest entry or runs this initializer through AppInitializer.
+    // install() copes with ProcessLifecycleOwner starting after it.
     override fun dependencies(): List<Class<out Initializer<*>>> =
-        listOf(EncatchContextInitializer::class.java, ProcessLifecycleInitializer::class.java)
+        listOf(EncatchContextInitializer::class.java)
 }

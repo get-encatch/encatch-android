@@ -6,8 +6,9 @@ The real Encatch SDK for Kotlin Multiplatform apps — a full-parity `Encatch` o
 there's no bridge to write); iOS forwards through Kotlin/Native cinterop into
 [`Encatch` (the native Swift SDK)](../swift/README.md).
 
-This module has **no UI** — it's pure business logic (init, identify, track, show/dismiss forms,
-submit, session control, events). If you're building with Compose Multiplatform and want a
+This module has **no UI API** — its `commonMain` surface is business logic (init, identify, track,
+show/dismiss forms, submit, session control, events); the modal survey itself comes from the
+platform SDK it depends on. If you're building with Compose Multiplatform and want a
 ready-made inline-form composable too, use [`com.encatch:compose-sdk`](../compose-sdk/README.md)
 instead, which depends on this module and adds that.
 
@@ -33,6 +34,11 @@ Nothing to do on either platform:
   `com.encatch.android.EncatchFormHost.install(this)` can keep the call; it is a no-op when the
   host is installed. If your app removed App Startup's `InitializationProvider`, keep (or add)
   that call in `Application.onCreate`.
+
+  This means the Android variant brings the UI module with it: `com.encatch:android` and its
+  dependencies (AndroidX AppCompat, AndroidX Browser, the WebView survey dialog). If your app also
+  declares `com.encatch:android` itself, keep it at the same version as `com.encatch:kmp-sdk` —
+  don't pin a different one (Gradle would pick the higher, mixing SDK versions).
 - **iOS:** `Encatch.init(...)` installs the modal form host automatically the first time it's
   called.
 

@@ -4,14 +4,23 @@ import android.app.Activity
 import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
+import android.os.Looper
+import com.encatch.core.Encatch
 import com.encatch.core.EncatchInternalEmitter
+import com.encatch.core.InternalEvent
+import com.encatch.core.ResetMode
+import com.encatch.core.ShowFormPayload
+import com.encatch.core.ShowFormResponse
+import com.encatch.core.TriggerType
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -85,5 +94,52 @@ class EncatchFormHostTest {
         assertNull(currentActivity)
         EncatchFormHost.attach(controller.get())
         assertNull(currentActivity)
+    }
+
+    private fun isFormVisible(): Boolean {
+        val field = Encatch::class.java.getDeclaredField("isFormVisible").apply { isAccessible = true }
+        return field.get(Encatch) as Boolean
+    }
+
+    private fun showForm(presentation: String) {
+        EncatchInternalEmitter.emit(
+            InternalEvent.ShowForm(
+                ShowFormPayload(
+                    formId = "form-1",
+                    formConfig = ShowFormResponse(feedbackConfigurationId = "cfg-1"),
+                    resetMode = ResetMode.ALWAYS,
+                    triggerType = TriggerType.MANUAL,
+                    presentation = presentation,
+                ),
+            ),
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun modalShow_withNoScreen_isRecordedAsNotOpen() {
+        EncatchFormHost.install(application)
+        Encatch.setFormVisible(true)
+        showForm("modal")
+        assertFalse(isFormVisible())
+    }
+
+    @Test
+    fun inlineShow_withNoScreen_leavesVisibilityAlone() {
+        EncatchFormHost.install(application)
+        Encatch.setFormVisible(true)
+        showForm("inline")
+        assertTrue(isFormVisible())
+        Encatch.setFormVisible(false)
+    }
+
+    @Test
+    fun install_offTheMainThread_completesOnMain() {
+        val worker = Thread { EncatchFormHost.install(application) }
+        worker.start()
+        worker.join()
+        shadowOf(Looper.getMainLooper()).idle()
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        assertSame(activity, currentActivity)
     }
 }

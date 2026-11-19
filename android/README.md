@@ -19,8 +19,7 @@ AndroidX App Startup, before `Application.onCreate`.
 
 `EncatchFormHost.install(this)` in `Application.onCreate` still works and is a no-op once the host
 is installed — keep it if you have it. You need it only if your app removed App Startup's
-`InitializationProvider` from its manifest (then also run `com.encatch.core.EncatchContextInitializer`
-with `AppInitializer`).
+`InitializationProvider` from its manifest.
 
 ## Usage
 
