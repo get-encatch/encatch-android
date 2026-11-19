@@ -155,7 +155,8 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         webView.setBackgroundColor(Color.TRANSPARENT)
         // Overlay-tap close: overlayRoot only receives clicks that land outside popupShell —
         // the card is clickable itself so its taps never bubble up to the root.
-        overlayRoot.setOnClickListener { if (closeOnOverlayTap) close(immediate = false) }
+        // the user closing the survey: a dismissal before its final submit (the bridge decides)
+        overlayRoot.setOnClickListener { if (closeOnOverlayTap) bridge.requestUserClose() }
         popupShell.isClickable = true
         popupShell.clipToOutline = true
         popupShell.addView(webView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -256,7 +257,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
             setPadding(pad, pad, pad, pad)
             background = null
             visibility = android.view.View.GONE
-            setOnClickListener { close(immediate = false) }
+            setOnClickListener { bridge.requestUserClose() }
         }
         popupShell.addView(
             button,
@@ -480,14 +481,20 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     }
 
     private fun close(immediate: Boolean) {
-        Encatch.setFormVisible(false, currentPayload?.formId)
+        // a dialog already gone reports nothing: dismiss() did, and another survey may be open now
         if (!isShowing) return
+        Encatch.setFormVisible(false, currentPayload?.formId)
         if (immediate) {
             closeAnimator?.cancel()
             dismiss()
         } else {
             runExitAnimation { if (isShowing) dismiss() }
         }
+    }
+
+    /** The back button (and any cancel) is the user closing the survey, as its ✕ is. */
+    override fun cancel() {
+        bridge.requestUserClose()
     }
 
     override fun dismiss() {

@@ -1,7 +1,9 @@
 package com.encatch.core
 
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -36,6 +38,8 @@ class FormWebViewBridge(
     companion object {
         private const val REDIRECT_INTERNAL_AFTER_CLOSE_DELAY_MS = 400L
         private const val REDIRECT_AFTER_IMMEDIATE_CLOSE_DELAY_MS = 50L
+        /** How long a dismissal waits for the page to save a partial answer (web SDK: 500 ms). */
+        internal const val PARTIAL_BEFORE_DISMISS_WAIT_MS = 500L
     }
 
     var formPayload: ShowFormPayload? = null
@@ -45,10 +49,70 @@ class FormWebViewBridge(
     private val formAnsweredTracked = mutableSetOf<String>()
     private var pendingCompletionCtaCache: JsonObject? = null
 
+    // The open survey's session (RN 1.4.4 item 9, Flutter 1.2.0 FormSession): a close before the
+    // final submit is a dismissal; after it (the thank-you screen), after "remind me later" or a
+    // call-to-action it is not. One close per survey.
+    private var finalSubmitDone = false
+    private var closingForAnotherReason = false
+    private var closed = false
+    private var readyToDismiss: CompletableDeferred<Unit>? = null
+
     fun setFormPayload(payload: ShowFormPayload?) {
         formPayload = payload
         webViewReady = false
         pendingCompletionCtaCache = null
+        finalSubmitDone = false
+        closingForAnotherReason = false
+        closed = false
+        readyToDismiss = null
+    }
+
+    /**
+     * The survey's form id for the server: the page's when it sends one, else the UUID of the
+     * show-form reply, else the id it was shown by (RN 1.4.4 item 10: the page may send "").
+     */
+    private fun formIdOf(fromPage: String?): String? =
+        fromPage?.takeIf { it.isNotEmpty() }
+            ?: formPayload?.formConfig?.feedbackConfigurationId?.takeIf { it.isNotEmpty() }
+            ?: formPayload?.formId?.takeIf { it.isNotEmpty() }
+
+    /** A call-to-action closes the survey: never a dismissal. Only for the actions that do close it. */
+    private fun markClosedByCta() {
+        closingForAnotherReason = true
+        closed = true
+    }
+
+    /** The form's UUID, as dismiss-form needs it: the show-form reply's `feedbackConfigurationId`. */
+    private fun formUuid(): String? = formPayload?.formConfig?.feedbackConfigurationId?.takeIf { it.isNotEmpty() }
+
+    /**
+     * The user closes the survey — the page's ✕, a tap outside it, the back button. Before the final
+     * submit it is a dismissal: the page is asked to save a partial answer (`sdk:submitPartialBeforeDismiss`,
+     * at most [PARTIAL_BEFORE_DISMISS_WAIT_MS] for `form:readyToDismiss`), the survey closes and the
+     * dismissal is recorded. Otherwise the survey just closes.
+     */
+    fun requestUserClose() {
+        // already closing (or decided): close again, record nothing again
+        if (closed) {
+            onClose(false)
+            return
+        }
+        closed = true
+        val payload = formPayload
+        if (payload == null || finalSubmitDone || closingForAnotherReason) {
+            onClose(false)
+            return
+        }
+        val id = formUuid()
+        // a page that never loaded cannot save anything: no wait
+        val ready = CompletableDeferred<Unit>().also { readyToDismiss = it }
+        if (webViewReady) sendToWebView(SDKMessage(SDKMessageType.SUBMIT_PARTIAL_BEFORE_DISMISS)) else ready.complete(Unit)
+        scope.launch {
+            withTimeoutOrNull(PARTIAL_BEFORE_DISMISS_WAIT_MS) { ready.await() }
+            // still this survey on screen (a second close may have closed it, another may have opened)
+            if (formPayload === payload) onClose(false)
+            runCatching { Encatch.recordDismissal(id) }
+        }
     }
 
     fun handleFormReady() {
@@ -119,11 +183,14 @@ class FormWebViewBridge(
             FormMessageType.SUBMIT -> {
                 if (data == null) return
                 data["pendingCompletionCta"]?.let { pendingCompletionCtaCache = it as? JsonObject }
+                val isPartial = data["isPartialSubmit"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
+                // the final submit comes before the thank-you screen: a close after it is not a dismissal
+                if (!isPartial) finalSubmitDone = true
                 val submitReq = SubmitFormRequest(
                     triggerType = data["triggerType"]?.jsonPrimitive?.contentOrNull ?: "manual",
                     formDetails = FormDetails(
-                        formConfigurationId = data["feedbackConfigurationId"]?.jsonPrimitive?.contentOrNull ?: "",
-                        isPartialSubmit = data["isPartialSubmit"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false,
+                        formConfigurationId = formIdOf(data["feedbackConfigurationId"]?.jsonPrimitive?.contentOrNull) ?: "",
+                        isPartialSubmit = isPartial,
                         feedbackIdentifier = data["feedbackIdentifier"]?.jsonPrimitive?.contentOrNull,
                         responseLanguageCode = data["responseLanguageCode"]?.jsonPrimitive?.contentOrNull,
                         response = data["response"]?.let { runCatching { EncatchJson.decodeFromJsonElement(FormResponse.serializer(), it) }.getOrNull() },
@@ -139,10 +206,12 @@ class FormWebViewBridge(
             }
 
             FormMessageType.COMPLETE -> {
+                finalSubmitDone = true
+                closed = true
                 val completeFormId = parsed.formId?.takeIf { it.isNotEmpty() }
-                    ?: data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull ?: ""
+                    ?: formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull) ?: ""
                 Encatch.emitEvent(EventType.FORM_COMPLETE, EventPayload(formId = completeFormId, timestamp = 0L, data = data))
-                scope.launch { Encatch.trackFormEvent("form:complete", data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull) }
+                scope.launch { Encatch.trackFormEvent("form:complete", formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull)) }
                 formAnsweredTracked.remove(completeFormId)
 
                 val pending = parsePendingCompletionCta((data?.get("pendingCompletionCta") as? JsonObject) ?: pendingCompletionCtaCache)
@@ -155,21 +224,23 @@ class FormWebViewBridge(
             }
 
             FormMessageType.CLOSE -> {
-                Encatch.emitEvent(EventType.FORM_CLOSE, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
+                Encatch.emitEvent(EventType.FORM_CLOSE, EventPayload(formId = formIdOf(parsed.formId), timestamp = 0L, data = data))
                 formAnsweredTracked.remove(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull ?: parsed.formId ?: "")
-                onClose(false)
+                requestUserClose()
             }
+
+            FormMessageType.READY_TO_DISMISS -> readyToDismiss?.complete(Unit)
 
             FormMessageType.STARTED -> {
                 Encatch.emitEvent(EventType.FORM_STARTED, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
-                scope.launch { Encatch.trackFormEvent("form:started", data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull) }
+                scope.launch { Encatch.trackFormEvent("form:started", formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull)) }
             }
 
             FormMessageType.ANSWERED -> {
                 Encatch.emitEvent(EventType.FORM_ANSWERED, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
                 val key = data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull ?: parsed.formId ?: ""
                 if (key.isNotEmpty() && formAnsweredTracked.add(key)) {
-                    scope.launch { Encatch.trackFormEvent("form:answered", data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull) }
+                    scope.launch { Encatch.trackFormEvent("form:answered", formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull)) }
                 }
             }
 
@@ -179,7 +250,7 @@ class FormWebViewBridge(
 
             FormMessageType.SHOW -> {
                 Encatch.emitEvent(EventType.FORM_SHOW, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
-                scope.launch { Encatch.trackFormEvent("form:show", data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull) }
+                scope.launch { Encatch.trackFormEvent("form:show", formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull)) }
             }
 
             FormMessageType.REFINE_TEXT_REQUEST -> {
@@ -310,7 +381,12 @@ class FormWebViewBridge(
             }
 
             FormMessageType.REMIND_ME_LATER -> {
-                Encatch.emitEvent(EventType.FORM_REMIND_ME_LATER, EventPayload(formId = parsed.formId ?: "", timestamp = 0L, data = data))
+                // not a dismissal: the server re-offers the survey after its wait (RN 1.4.4 item 10b)
+                closingForAnotherReason = true
+                closed = true
+                val id = formIdOf(data?.get("feedbackConfigurationId")?.jsonPrimitive?.contentOrNull ?: parsed.formId)
+                Encatch.emitEvent(EventType.FORM_REMIND_ME_LATER, EventPayload(formId = id ?: "", timestamp = 0L, data = data))
+                scope.launch { runCatching { Encatch.trackFormEvent("form:remindmelater", id) } }
                 onClose(false)
             }
 
@@ -319,10 +395,12 @@ class FormWebViewBridge(
                 val url = data?.get("url")?.jsonPrimitive?.contentOrNull
                 when (action) {
                     "app_navigate" -> {
+                        markClosedByCta()
                         Encatch.emitEvent(EventType.FORM_CTA_TRIGGERED, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
                         onClose(false)
                     }
                     "redirect_internal" -> if (url != null) {
+                        markClosedByCta()
                         onClose(true)
                         scope.launch {
                             delay(REDIRECT_INTERNAL_AFTER_CLOSE_DELAY_MS)
@@ -331,6 +409,7 @@ class FormWebViewBridge(
                         }
                     }
                     "redirect_external" -> if (url != null) {
+                        markClosedByCta()
                         onClose(true)
                         scope.launch {
                             delay(REDIRECT_AFTER_IMMEDIATE_CLOSE_DELAY_MS)

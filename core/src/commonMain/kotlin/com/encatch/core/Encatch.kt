@@ -327,6 +327,11 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun trackFormEvent(eventName: String, feedbackConfigurationId: String?) {
         if (!initialized) return
+        // survey events are an identified user's: the server answers 403 to a visitor's (RN 1.4.4 item 8)
+        if (!hasIdentity) {
+            logger.debug("survey event $eventName skipped: visitor")
+            return
+        }
         val deviceInfo = buildDeviceInfo()
         val req = buildJsonObject {
             put("eventName", eventName)
@@ -521,6 +526,37 @@ object Encatch {
             if (it is EncatchApiException && it.status == 404) logger.debug("show-form $formId: not eligible now (404)")
             else logger.warn("showForm API error: ${it.message}")
         }
+    }
+
+    /** Both identity headers go out: a user name and the id the server gave it. */
+    internal val hasIdentity: Boolean get() = userNameState != null && userIdState != null
+
+    /**
+     * A survey the user closed before its final submit (the survey page's ✕, a tap outside it, the
+     * back button): the `form:dismissed` survey event (identified users) and `dismiss-form` with the
+     * form's UUID from the show-form reply — for visitors too, as the web SDK and Flutter 1.2.0 do,
+     * so a survey that stops on "Dismissed" is not offered again. The UI closes itself.
+     */
+    internal suspend fun recordDismissal(formConfigurationId: String?) {
+        if (!initialized) return
+        val id = formConfigurationId?.takeIf { it.isNotEmpty() }
+        scope.launch { runCatching { trackFormEvent("form:dismissed", id) } }
+        if (id != null) {
+            val req = buildJsonObject {
+                put("formConfigurationId", id)
+                put("\$deviceInfo", buildDeviceInfo().toJson())
+                feedbackTransactions?.let { put("\$feedbackTransactions", it) }
+            }
+            runCatching {
+                val res = apiClient.post(Endpoints.DISMISS_FORM, req)
+                applyFeedbackTransactions(res)
+                sessionManager.handleResponseMeta(res.toResponseMeta())
+            }.onFailure { if (it is CancellationException) throw it else logger.warn("dismissForm API error: ${it.message}") }
+        } else {
+            // dismiss-form needs the form's UUID (400 otherwise)
+            logger.warn("survey closed without a form id: no dismiss-form sent")
+        }
+        emitEvent(EventType.FORM_DISMISSED, EventPayload(formId = id ?: "", timestamp = currentTimeMillis()))
     }
 
     @Throws(Exception::class)
