@@ -461,12 +461,13 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     @objc private func loadingCloseTapped() {
-        close(immediate: false)
+        // the user closing the survey: a dismissal before its final submit (the bridge decides)
+        bridge.requestUserClose()
     }
 
     @objc private func overlayTapped() {
         guard closeOnOverlayTap else { return }
-        close(immediate: false)
+        bridge.requestUserClose()
     }
 
     /// The popup keeps its full-screen target size while the keyboard is up as long as it still
@@ -540,7 +541,9 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     private func close(immediate: Bool) {
-        Encatch.shared.setFormVisible(false)
+        // a controller already gone reports nothing: another survey may be open now
+        guard currentPayload != nil else { return }
+        Encatch.shared.setFormVisible(false, formId: currentPayload?.formId)
         if immediate {
             dismiss(animated: false)
         } else {
@@ -549,6 +552,8 @@ public final class EncatchFormViewController: UIViewController {
     }
 
     public override func dismiss(animated: Bool, completion: (() -> Void)? = nil) {
+        // every way out tells core the survey is gone (with its id: a replaced survey's late close is ignored)
+        if let payload = currentPayload { Encatch.shared.setFormVisible(false, formId: payload.formId) }
         bridge.setFormPayload(nil)
         currentPayload = nil
         backdropBlurAnimator?.stopAnimation(true)

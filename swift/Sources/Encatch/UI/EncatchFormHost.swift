@@ -27,7 +27,11 @@ public enum EncatchFormHost {
                     // silently drops a present() aimed at it. Wait for a stable presenter
                     // (bounded retries) instead of presenting into the transition.
                     func presentWhenStable(retriesLeft: Int = 10) {
-                        guard let presenter = UIApplication.topmostViewController() else { return }
+                        // nowhere to show it: the survey is not open and must not hold the one-at-a-time guard
+                        guard let presenter = UIApplication.topmostViewController() else {
+                            Encatch.shared.setFormVisible(false, formId: payload.formId)
+                            return
+                        }
                         let transitioning = presenter.isBeingDismissed
                             || presenter.presentedViewController != nil
                             || presenter.view.window == nil

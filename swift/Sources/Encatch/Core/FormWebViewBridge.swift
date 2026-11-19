@@ -26,6 +26,8 @@ private extension Dictionary where Key == String, Value == JSONValue {
 public final class FormWebViewBridge: @unchecked Sendable {
     private static let redirectInternalAfterCloseDelayMs: Int64 = 400
     private static let redirectAfterImmediateCloseDelayMs: Int64 = 50
+    /// How long a dismissal waits for the page to save a partial answer (web SDK: 500 ms).
+    static let partialBeforeDismissWaitMs: Int64 = 500
 
     private let logTag: String
     let presentation: String
@@ -48,6 +50,15 @@ public final class FormWebViewBridge: @unchecked Sendable {
     private var webViewReady = false
     private var formAnsweredTracked = Set<String>()
     private var pendingCompletionCtaCache: [String: JSONValue]?
+
+    // The open survey's session (RN 1.4.4 item 9, Flutter 1.2.0 FormSession, the Kotlin bridge): a
+    // close before the final submit is a dismissal; after it (the thank-you screen), after "remind me
+    // later" or a call-to-action that closes, it is not. One close per survey.
+    private var finalSubmitDone = false
+    private var closingForAnotherReason = false
+    private var closed = false
+    private var readyToDismiss: CheckedContinuation<Void, Never>?
+    private var readyToDismissArrived = false
 
     public init(
         logTag: String = "Encatch",
@@ -75,8 +86,84 @@ public final class FormWebViewBridge: @unchecked Sendable {
         lock.lock()
         _formPayload = payload
         lock.unlock()
+        // a dismissal still waiting for the page ends its wait now (it then records, without closing)
+        resumeReadyToDismiss()
         webViewReady = false
         pendingCompletionCtaCache = nil
+        finalSubmitDone = false
+        closingForAnotherReason = false
+        closed = false
+        readyToDismiss = nil
+        readyToDismissArrived = false
+    }
+
+    /// The survey's form id for the server: the page's when it sends one, else the UUID of the
+    /// show-form reply, else the id it was shown by (RN 1.4.4 item 10: the page may send "").
+    private func formIdOf(_ fromPage: String?) -> String? {
+        if let fromPage, !fromPage.isEmpty { return fromPage }
+        if let uuid = formUuid() { return uuid }
+        if let shownBy = formPayload?.formId, !shownBy.isEmpty { return shownBy }
+        return nil
+    }
+
+    /// The form's UUID, as dismiss-form needs it: the show-form reply's `feedbackConfigurationId`.
+    private func formUuid() -> String? {
+        guard let id = formPayload?.formConfig.feedbackConfigurationId, !id.isEmpty else { return nil }
+        return id
+    }
+
+    /// A call-to-action closes the survey: never a dismissal. Only for the actions that do close it.
+    private func markClosedByCta() {
+        closingForAnotherReason = true
+        closed = true
+    }
+
+    /// The user closes the survey — the page's ✕, a tap outside it. Before the final submit it is a
+    /// dismissal: the page is asked to save a partial answer (`sdk:submitPartialBeforeDismiss`, at most
+    /// 500 ms for `form:readyToDismiss`; no wait while it has not loaded), the survey closes and the
+    /// dismissal is recorded. Otherwise the survey just closes. Called on the main thread.
+    public func requestUserClose() {
+        if closed {
+            onClose(false)
+            return
+        }
+        closed = true
+        guard let payload = formPayload, !finalSubmitDone, !closingForAnotherReason else {
+            onClose(false)
+            return
+        }
+        let id = formUuid()
+        let waitForPage = webViewReady
+        if waitForPage { sendToWebView(SDKMessage(type: .submitPartialBeforeDismiss)) }
+        Task { @MainActor [weak self] in
+            if waitForPage { await self?.waitForReadyToDismiss() }
+            guard let self else { return }
+            // still this survey on screen (a second close may have closed it, another may have opened)
+            if self.formPayload?.formId == payload.formId && self.formPayload?.formConfig.feedbackConfigurationId == payload.formConfig.feedbackConfigurationId {
+                self.onClose(false)
+            }
+            await Encatch.shared.recordDismissal(id)
+        }
+    }
+
+    /// Waits for `form:readyToDismiss`, at most [partialBeforeDismissWaitMs].
+    @MainActor
+    private func waitForReadyToDismiss() async {
+        if readyToDismissArrived { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            readyToDismiss = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.partialBeforeDismissWaitMs) * 1_000_000)
+                self?.resumeReadyToDismiss()
+            }
+        }
+    }
+
+    private func resumeReadyToDismiss() {
+        readyToDismissArrived = true
+        let continuation = readyToDismiss
+        readyToDismiss = nil
+        continuation?.resume()
     }
 
     public func handleFormReady() {
@@ -140,13 +227,16 @@ public final class FormWebViewBridge: @unchecked Sendable {
                 pendingCompletionCtaCache = cta
             }
             let response: FormResponse? = data["response"]?.decode(as: FormResponse.self)
+            let isPartial = parseStrictBool(data.string("isPartialSubmit")) ?? false
+            // the final submit comes before the thank-you screen: a close after it is not a dismissal
+            if !isPartial { finalSubmitDone = true }
             let submitReq = SubmitFormRequest(
                 triggerType: data.string("triggerType") ?? "manual",
                 formDetails: FormDetails(
-                    formConfigurationId: data.string("feedbackConfigurationId") ?? "",
+                    formConfigurationId: formIdOf(data.string("feedbackConfigurationId")) ?? "",
                     feedbackIdentifier: data.string("feedbackIdentifier"),
                     responseLanguageCode: data.string("responseLanguageCode"),
-                    isPartialSubmit: parseStrictBool(data.string("isPartialSubmit")) ?? false,
+                    isPartialSubmit: isPartial,
                     // Rounded: the web form may report fractional seconds, but the backend field is i32.
                     completionTimeInSeconds: data.double("completionTimeInSeconds").map { Int($0.rounded()) },
                     response: response,
@@ -158,10 +248,13 @@ public final class FormWebViewBridge: @unchecked Sendable {
             Encatch.shared.emitEvent(.formSubmit, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
 
         case .complete:
+            finalSubmitDone = true
+            closed = true
             let completeFormId = (parsed.formId?.isEmpty == false ? parsed.formId : nil)
-                ?? data?.string("feedbackConfigurationId") ?? ""
+                ?? formIdOf(data?.string("feedbackConfigurationId")) ?? ""
             Encatch.shared.emitEvent(.formComplete, EventPayload(formId: completeFormId, timestamp: 0, data: data))
-            Task { await Encatch.shared.trackFormEvent("form:complete", data?.string("feedbackConfigurationId")) }
+            let completeId = formIdOf(data?.string("feedbackConfigurationId"))
+            Task { await Encatch.shared.trackFormEvent("form:complete", completeId) }
             formAnsweredTracked.remove(completeFormId)
 
             let pending = parsePendingCompletionCta(
@@ -175,20 +268,25 @@ public final class FormWebViewBridge: @unchecked Sendable {
             }
 
         case .close:
-            Encatch.shared.emitEvent(.formClose, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
+            Encatch.shared.emitEvent(.formClose, EventPayload(formId: formIdOf(parsed.formId), timestamp: 0, data: data))
             formAnsweredTracked.remove(data?.string("feedbackConfigurationId") ?? parsed.formId ?? "")
-            onClose(false)
+            requestUserClose()
+
+        case .readyToDismiss:
+            resumeReadyToDismiss()
 
         case .started:
             Encatch.shared.emitEvent(.formStarted, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
-            Task { await Encatch.shared.trackFormEvent("form:started", data?.string("feedbackConfigurationId")) }
+            let eventId = formIdOf(data?.string("feedbackConfigurationId"))
+            Task { await Encatch.shared.trackFormEvent("form:started", eventId) }
 
         case .answered:
             Encatch.shared.emitEvent(.formAnswered, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
             let key = data?.string("feedbackConfigurationId") ?? parsed.formId ?? ""
             if !key.isEmpty, !formAnsweredTracked.contains(key) {
                 formAnsweredTracked.insert(key)
-                Task { await Encatch.shared.trackFormEvent("form:answered", data?.string("feedbackConfigurationId")) }
+                let eventId = formIdOf(data?.string("feedbackConfigurationId"))
+            Task { await Encatch.shared.trackFormEvent("form:answered", eventId) }
             }
 
         case .sectionChange:
@@ -196,7 +294,8 @@ public final class FormWebViewBridge: @unchecked Sendable {
 
         case .show:
             Encatch.shared.emitEvent(.formShow, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
-            Task { await Encatch.shared.trackFormEvent("form:show", data?.string("feedbackConfigurationId")) }
+            let eventId = formIdOf(data?.string("feedbackConfigurationId"))
+            Task { await Encatch.shared.trackFormEvent("form:show", eventId) }
 
         case .refineTextRequest:
             guard let data else { return }
@@ -307,7 +406,12 @@ public final class FormWebViewBridge: @unchecked Sendable {
             }
 
         case .remindMeLater:
-            Encatch.shared.emitEvent(.formRemindMeLater, EventPayload(formId: parsed.formId ?? "", timestamp: 0, data: data))
+            // not a dismissal: the server re-offers the survey after its wait (RN 1.4.4 item 10b)
+            closingForAnotherReason = true
+            closed = true
+            let id = formIdOf(data?.string("feedbackConfigurationId") ?? parsed.formId)
+            Encatch.shared.emitEvent(.formRemindMeLater, EventPayload(formId: id ?? "", timestamp: 0, data: data))
+            Task { await Encatch.shared.trackFormEvent("form:remindmelater", id) }
             onClose(false)
 
         case .ctaTriggered:
@@ -315,10 +419,12 @@ public final class FormWebViewBridge: @unchecked Sendable {
             let url = data?.string("url")
             switch action {
             case "app_navigate":
+                markClosedByCta()
                 Encatch.shared.emitEvent(.formCtaTriggered, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
                 onClose(false)
             case "redirect_internal":
                 if let url {
+                    markClosedByCta()
                     onClose(true)
                     Task {
                         try? await Task.sleep(nanoseconds: UInt64(Self.redirectInternalAfterCloseDelayMs) * 1_000_000)
@@ -328,6 +434,7 @@ public final class FormWebViewBridge: @unchecked Sendable {
                 }
             case "redirect_external":
                 if let url {
+                    markClosedByCta()
                     onClose(true)
                     Task {
                         try? await Task.sleep(nanoseconds: UInt64(Self.redirectAfterImmediateCloseDelayMs) * 1_000_000)
@@ -339,7 +446,7 @@ public final class FormWebViewBridge: @unchecked Sendable {
                 break
             }
 
-        case .closeButton, .themeData, .readyToDismiss, nil:
+        case .closeButton, .themeData, nil:
             break
         }
     }

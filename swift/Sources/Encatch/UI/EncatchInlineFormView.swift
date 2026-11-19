@@ -74,7 +74,7 @@ public final class EncatchInlineFormView: UIView {
             slotId = nil
             unsubscribe?()
             unsubscribe = nil
-            if bridge?.formPayload != nil { Encatch.shared.setFormVisible(false) }
+            if bridge?.formPayload != nil { Encatch.shared.setFormVisible(false, formId: bridge?.formPayload?.formId) }
             clearForm()
         }
     }
@@ -87,12 +87,12 @@ public final class EncatchInlineFormView: UIView {
             if payload.presentation == "inline", payload.inlineSlotId == slotId {
                 loadForm(payload: payload)
             } else if bridge?.formPayload != nil {
-                Encatch.shared.setFormVisible(false)
+                Encatch.shared.setFormVisible(false, formId: bridge?.formPayload?.formId)
                 clearForm()
             }
         case .dismissForm:
             if bridge?.formPayload != nil {
-                Encatch.shared.setFormVisible(false)
+                Encatch.shared.setFormVisible(false, formId: bridge?.formPayload?.formId)
                 clearForm()
             }
         default:
@@ -101,8 +101,11 @@ public final class EncatchInlineFormView: UIView {
     }
 
     private func loadForm(payload: ShowFormPayload) {
+        // the survey this view shows: its closes report this id (a replaced survey's late close is ignored)
+        let shownFormId = payload.formId
         subviews.forEach { $0.removeFromSuperview() }
         webViewInstanceKey += 1
+        let shownInstanceKey = webViewInstanceKey
         contentHeight = 0
         overlayFrozenHeight = nil
         overlayActive = false
@@ -116,8 +119,12 @@ public final class EncatchInlineFormView: UIView {
             // the main thread — assumeIsolated states that for Swift 5.10, whose isolation
             // inference can't prove it (see EncatchFormViewController's twin comment).
             onClose: { [weak self] _ in
-                Encatch.shared.setFormVisible(false)
-                MainActor.assumeIsolated { self?.clearForm() }
+                MainActor.assumeIsolated {
+                    // a late close from a form this view has since replaced changes nothing
+                    guard let self, self.webViewInstanceKey == shownInstanceKey else { return }
+                    Encatch.shared.setFormVisible(false, formId: shownFormId)
+                    self.clearForm()
+                }
             },
             onHeightChange: { [weak self] height in MainActor.assumeIsolated { self?.applyHeight(CGFloat(height)) } },
             onForceFullHeight: { [weak self] force in MainActor.assumeIsolated { self?.applyForceFullHeight(force) } },
@@ -147,7 +154,7 @@ public final class EncatchInlineFormView: UIView {
         newWebView.bridge = newBridge
         newWebView.onUnrecoverableFailure = { [weak self] reason in
             NSLog("[Encatch] clearing inline form: \(reason)")
-            Encatch.shared.setFormVisible(false)
+            Encatch.shared.setFormVisible(false, formId: shownFormId)
             self?.clearForm()
         }
         newWebView.translatesAutoresizingMaskIntoConstraints = false

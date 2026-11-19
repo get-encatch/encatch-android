@@ -6,6 +6,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
@@ -424,8 +425,11 @@ object Encatch {
         fromSchedule: Boolean = false,
     ) {
         val proceed = surveyGuard.withLock {
-            // the scheduled show has started: it is now "loading", no longer "pending"
-            if (fromSchedule) pendingAutoShow = null
+            // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
+            if (fromSchedule) {
+                if (pendingAutoShow !== currentCoroutineContext()[Job]) return@withLock false
+                pendingAutoShow = null
+            }
             when {
                 // an automatic show never interrupts a survey that is loading or open
                 triggerType == TriggerType.AUTOMATIC && (loadingFormId != null || isFormVisible) -> false

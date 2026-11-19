@@ -61,6 +61,22 @@ public final class Encatch: @unchecked Sendable {
     // Form visibility (suppresses ping)
     private var isFormVisible = false
 
+    // One survey at a time (mirrors RN 1.4.4 `_scheduleAutoShow`, the Kotlin `Encatch`): the automatic
+    // show waiting out its `onPageDelay`, the form whose show-form is in flight, and the open survey
+    // by both its names. Read and written under [surveyLock].
+    private var pendingAutoShow: Task<Void, Never>?
+    /// Which scheduled show [pendingAutoShow] is: a cancelled older one must not clear a newer one's handle.
+    private var pendingAutoShowToken: UUID?
+    private var loadingFormId: String?
+    private var openFormIds: Set<String> = []
+    private let surveyLock = NSLock()
+
+    private func withSurveyLock<T>(_ body: () -> T) -> T {
+        surveyLock.lock()
+        defer { surveyLock.unlock() }
+        return body()
+    }
+
     // Session control
     private var isSessionPaused = false
     private var isSessionStopped = false
@@ -129,7 +145,12 @@ public final class Encatch: @unchecked Sendable {
             await teardown.value
             isSessionPaused = false
             isSessionStopped = false
-            isFormVisible = false
+            cancelPendingAutoShow()
+            withSurveyLock {
+                isFormVisible = false
+                openFormIds = []
+                loadingFormId = nil
+            }
         }
 
         apiKeyState = apiKey
@@ -256,9 +277,7 @@ public final class Encatch: @unchecked Sendable {
                 self.sessionManager.scheduleNextPing(delayMs: Int64(pingAgainIn * 1000))
             }
 
-            if case .object(let resObj) = res, case .string(let formConfigId)? = resObj["formConfigurationId"] {
-                await self.showFormById(formConfigId, triggerType: .automatic)
-            }
+            await self.handleSurveyInReply(res)
         }
 
         Task { await self.retryQueue.flush() }
@@ -299,9 +318,7 @@ public final class Encatch: @unchecked Sendable {
             await self.applyFeedbackTransactions(res)
             let meta = res.toResponseMeta()
             self.sessionManager.handleResponseMeta(meta)
-            if case .object(let resObj) = res, case .string(let formConfigId)? = resObj["formConfigurationId"] {
-                await self.showFormById(formConfigId, triggerType: .automatic)
-            }
+            await self.handleSurveyInReply(res)
         }
 
         Task { await self.retryQueue.flush() }
@@ -312,6 +329,11 @@ public final class Encatch: @unchecked Sendable {
     /// mirroring how the RN SDK's `useEncatchFormWebView` hook calls `Encatch._trackFormEvent`.
     public func trackFormEvent(_ eventName: String, _ feedbackConfigurationId: String?) async {
         guard initialized else { return }
+        // survey events are an identified user's: the server answers 403 to a visitor's (RN 1.4.4 item 8)
+        guard hasIdentity else {
+            logger.debug("survey event \(eventName) skipped: visitor")
+            return
+        }
         let deviceInfo = buildDeviceInfo()
         var req: [String: JSONValue] = ["eventName": .string(eventName), "$deviceInfo": deviceInfo.toJSONValue()]
         if let feedbackConfigurationId { req["feedbackConfigurationId"] = .string(feedbackConfigurationId) }
@@ -322,9 +344,7 @@ public final class Encatch: @unchecked Sendable {
             await applyFeedbackTransactions(res)
             let meta = res.toResponseMeta()
             sessionManager.handleResponseMeta(meta)
-            if case .object(let resObj) = res, case .string(let formConfigId)? = resObj["formConfigurationId"] {
-                await showFormById(formConfigId, triggerType: .automatic)
-            }
+            await handleSurveyInReply(res)
         } catch {
             // Best-effort; matches Kotlin's runCatching { }.
         }
@@ -344,20 +364,7 @@ public final class Encatch: @unchecked Sendable {
             await self.applyFeedbackTransactions(res)
             let meta = res.toResponseMeta()
             self.sessionManager.handleResponseMeta(meta)
-            guard case .object(let resObj) = res else { return }
-            if case .string(let formConfigId)? = resObj["formConfigurationId"] {
-                await self.showFormById(formConfigId, triggerType: .automatic)
-            }
-            if case .string(let nextId)? = resObj["nextFeedbackId"] {
-                // let, not var: Swift 5.10 rejects capturing a mutated var in the Task closure
-                // ("reference to captured var in concurrently-executing code").
-                let delaySeconds: Double
-                if case .number(let d)? = resObj["onPageDelay"] { delaySeconds = d } else { delaySeconds = 0.0 }
-                Task {
-                    try? await Task.sleep(nanoseconds: UInt64(max(0, delaySeconds * 1000)) * 1_000_000)
-                    await self.showFormById(nextId, triggerType: .automatic, reset: .always)
-                }
-            }
+            await self.handleSurveyInReply(res)
         }
 
         Task { await self.retryQueue.flush() }
@@ -372,11 +379,75 @@ public final class Encatch: @unchecked Sendable {
         await showFormInternal(formId: formId, resetMode: options?.reset ?? .always, triggerType: .manual, context: options?.context)
     }
 
-    private func showFormById(_ formConfigurationId: String, triggerType: TriggerType, reset: ResetMode = .always) async {
-        await showFormInternal(formId: formConfigurationId, resetMode: reset, triggerType: triggerType, context: nil)
+    /// A survey the server offers in a reply — identify, ping, track-event, track-screen and survey
+    /// events alike: `nextFeedbackId`, shown after `onPageDelay` seconds; without it,
+    /// `formConfigurationId` (older servers; none send it today) at once. Mirrors RN 1.4.4
+    /// `_handleSurveyInReply`; before this only track-screen replies were read (AN-001).
+    func handleSurveyInReply(_ res: JSONValue) async {
+        guard case .object(let resObj) = res else { return }
+        var next: String?
+        if case .string(let value)? = resObj["nextFeedbackId"], !value.isEmpty { next = value }
+        var legacy: String?
+        if case .string(let value)? = resObj["formConfigurationId"], !value.isEmpty { legacy = value }
+        guard let formId = next ?? legacy else { return }
+        var delayMs: Int64 = 0
+        if next != nil, case .number(let seconds)? = resObj["onPageDelay"] { delayMs = Int64(max(0, seconds * 1000)) }
+        scheduleAutoShow(formId: formId, delayMs: delayMs)
+    }
+
+    /// One pending automatic show at a time; none while a survey is pending, loading or open.
+    private func scheduleAutoShow(formId: String, delayMs: Int64) {
+        let scheduled: Bool = withSurveyLock {
+            if pendingAutoShow != nil || loadingFormId != nil || isFormVisible { return false }
+            let token = UUID()
+            pendingAutoShowToken = token
+            pendingAutoShow = Task { [weak self] in
+                if delayMs > 0 { try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000) }
+                guard let self, !Task.isCancelled else { return }
+                await self.showFormInternal(formId: formId, resetMode: .always, triggerType: .automatic, context: nil, scheduledBy: token)
+            }
+            return true
+        }
+        if !scheduled { logger.debug("survey \(formId) offered while another is pending or open: skipped (survey-open)") }
+    }
+
+    /// Cancels a survey waiting out its delay (stopSession, resetUser, clearAll, re-init).
+    private func cancelPendingAutoShow() {
+        withSurveyLock {
+            pendingAutoShow?.cancel()
+            pendingAutoShow = nil
+            pendingAutoShowToken = nil
+        }
     }
 
     private func showFormInternal(
+        formId: String,
+        resetMode: ResetMode,
+        triggerType: TriggerType,
+        context: [String: ContextValue]?,
+        scheduledBy token: UUID? = nil
+    ) async {
+        let proceed: Bool = withSurveyLock {
+            // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
+            if let token {
+                guard pendingAutoShowToken == token else { return false }
+                pendingAutoShow = nil
+                pendingAutoShowToken = nil
+            }
+            if triggerType == .automatic && (loadingFormId != nil || isFormVisible) { return false }
+            if triggerType == .manual && (loadingFormId == formId || (isFormVisible && openFormIds.contains(formId))) { return false }
+            loadingFormId = formId
+            return true
+        }
+        guard proceed else {
+            logger.debug("show-form \(formId) skipped: a survey is loading or open (survey-open)")
+            return
+        }
+        await showFormRequest(formId: formId, resetMode: resetMode, triggerType: triggerType, context: context)
+        withSurveyLock { if loadingFormId == formId { loadingFormId = nil } }
+    }
+
+    private func showFormRequest(
         formId: String,
         resetMode: ResetMode,
         triggerType: TriggerType,
@@ -437,6 +508,13 @@ public final class Encatch: @unchecked Sendable {
                 inlineSlotId = nil
             }
 
+            // open before the UI hears of it: the host runs inside emit, and may report at once that
+            // it could not show it (no window) — that report must find the survey already marked open
+            withSurveyLock {
+                isFormVisible = true
+                openFormIds = Set([formId, feedbackConfigurationId].compactMap { $0 }.filter { !$0.isEmpty })
+            }
+
             EncatchInternalEmitter.shared.emit(.showForm(ShowFormPayload(
                 formId: formId,
                 formConfig: resObj.toShowFormResponse(),
@@ -450,10 +528,42 @@ public final class Encatch: @unchecked Sendable {
                 inlineSlotId: inlineSlotId
             )))
 
-            isFormVisible = true
         } catch {
-            logger.warn("showForm API error: \((error as? EncatchApiException)?.message ?? "\(error)")")
+            // 404: "not eligible now" (the server has no "already shown") — expected, no retry
+            if let apiError = error as? EncatchApiException, apiError.status == 404 {
+                logger.debug("show-form \(formId): not eligible now (404)")
+            } else {
+                logger.warn("showForm API error: \((error as? EncatchApiException)?.message ?? "\(error)")")
+            }
         }
+    }
+
+    /// Both identity headers go out: a user name and the id the server gave it.
+    var hasIdentity: Bool { userNameState != nil && userIdState != nil }
+
+    /// A survey the user closed before its final submit (the page's ✕, a tap outside it): the
+    /// `form:dismissed` survey event (identified users) and `dismiss-form` with the form's UUID from
+    /// the show-form reply — for visitors too, as the web SDK and Flutter 1.2.0 do, so a survey that
+    /// stops on "Dismissed" is not offered again. The UI closes itself.
+    func recordDismissal(_ formConfigurationId: String?) async {
+        guard initialized else { return }
+        let id = (formConfigurationId?.isEmpty == false) ? formConfigurationId : nil
+        Task { await self.trackFormEvent("form:dismissed", id) }
+        if let id {
+            var req: [String: JSONValue] = ["formConfigurationId": .string(id), "$deviceInfo": buildDeviceInfo().toJSONValue()]
+            if let feedbackTransactions { req["$feedbackTransactions"] = .string(feedbackTransactions) }
+            do {
+                let res = try await apiClient.post(endpoint: Endpoints.dismissForm, body: .object(req))
+                await applyFeedbackTransactions(res)
+                sessionManager.handleResponseMeta(res.toResponseMeta())
+            } catch {
+                logger.warn("dismissForm API error: \((error as? EncatchApiException)?.message ?? "\(error)")")
+            }
+        } else {
+            // dismiss-form needs the form's UUID (400 otherwise)
+            logger.warn("survey closed without a form id: no dismiss-form sent")
+        }
+        emitEvent(.formDismissed, EventPayload(formId: id ?? "", timestamp: currentTimeMillis()))
     }
 
     public func dismissForm(_ formConfigurationId: String? = nil) async throws {
@@ -461,7 +571,10 @@ public final class Encatch: @unchecked Sendable {
 
         pendingCtaScheduler?.cancel(formId: formConfigurationId)
         EncatchInternalEmitter.shared.emit(.dismissForm(formConfigurationId: formConfigurationId))
-        isFormVisible = false
+        withSurveyLock {
+            isFormVisible = false
+            openFormIds = []
+        }
 
         Task { await self.trackFormEvent("form:dismissed", formConfigurationId) }
 
@@ -611,9 +724,14 @@ public final class Encatch: @unchecked Sendable {
 
     public func clearAll() async throws {
         sessionManager?.stopPingInterval()
+        cancelPendingAutoShow()
 
         EncatchInternalEmitter.shared.emit(.dismissForm(formConfigurationId: nil))
-        isFormVisible = false
+        withSurveyLock {
+            isFormVisible = false
+            openFormIds = []
+            loadingFormId = nil
+        }
 
         storage?.clearAll()
 
@@ -679,8 +797,12 @@ public final class Encatch: @unchecked Sendable {
         isSessionStopped = true
         isSessionPaused = false
         sessionManager?.stopPingInterval()
+        cancelPendingAutoShow()
         EncatchInternalEmitter.shared.emit(.dismissForm(formConfigurationId: nil))
-        isFormVisible = false
+        withSurveyLock {
+            isFormVisible = false
+            openFormIds = []
+        }
         storage?.setSessionStopped()
     }
 
@@ -706,12 +828,26 @@ public final class Encatch: @unchecked Sendable {
         isSessionPaused = false
         isSessionStopped = false
         sessionManager?.stopPingInterval()
+        cancelPendingAutoShow()
 
         EncatchInternalEmitter.shared.emit(.userIdentified(userName: nil, userId: nil))
     }
 
     public func setFormVisible(_ visible: Bool) {
-        isFormVisible = visible
+        setFormVisible(visible, formId: nil)
+    }
+
+    /// The UI says a survey opened or closed. `formId`: the survey it is about (the id it was shown
+    /// by) — a close of a survey since replaced by another is ignored, so the one on screen stays
+    /// "open" for the one-at-a-time guard.
+    public func setFormVisible(_ visible: Bool, formId: String?) {
+        let ignored: Bool = withSurveyLock {
+            if !visible, let formId, !openFormIds.isEmpty, !openFormIds.contains(formId) { return true }
+            isFormVisible = visible
+            if !visible { openFormIds = [] }
+            return false
+        }
+        if ignored { logger.debug("close of \(formId ?? "") ignored: another survey is open") }
     }
 
     /// Flushes the offline retry queue. The RN SDK does this automatically on `AppState` foreground;
@@ -755,9 +891,7 @@ public final class Encatch: @unchecked Sendable {
         let res = try await apiClient.post(endpoint: Endpoints.ping, body: .object(req))
         await applyFeedbackTransactions(res)
         sessionManager.handleResponseMeta(res.toResponseMeta())
-        if case .object(let resObj) = res, case .string(let formConfigId)? = resObj["formConfigurationId"] {
-            await showFormById(formConfigId, triggerType: .automatic)
-        }
+        await handleSurveyInReply(res)
     }
 
     private func applyFeedbackTransactions(_ res: JSONValue) async {
