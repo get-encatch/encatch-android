@@ -1,14 +1,25 @@
 import Foundation
 
 /// Offline retry queue for failed, idempotent API calls (identifyUser/trackEvent/trackScreen),
-/// mirroring `retry-queue.ts`. Persists metadata only — the closure itself is not
-/// reconstructable across process death, matching the RN SDK's own limitation.
+/// mirroring `retry-queue.ts` of RN 1.4.4 (item 1). Persists metadata only — the closure itself is
+/// not reconstructable across process death, matching the RN SDK's own limitation.
+///
+/// - One flush at a time: `flush()` during a flush joins it and makes it go through the queue once
+///   more, so a request is never sent twice while in flight or after it succeeded.
+/// - Requests go out one at a time, in the order they were queued.
+/// - A 4xx drops that item and the flush carries on with the next.
+/// - A 429 drops the item (never retried) and pauses the tracking bucket for Retry-After; items
+///   behind it are held, then sent once the pause ends.
+/// - 5xx and network failures: backoff 2 s, then 4 s — at most 3 attempts, then dropped. A
+///   backed-off item waits without holding up the items behind it.
 ///
 /// Ported as a Swift `actor` rather than a class guarded by a Kotlin `Mutex` — the idiomatic Swift
 /// equivalent for the same "all queue mutation is serialized" guarantee.
 actor RetryQueue {
     static let maxRetries = 3
     static let baseBackoffMs: Int64 = 1000
+    /// Everything in this queue (identify, track-event, track-screen) counts against this bucket.
+    static let bucket = RateLimitBucket.tracking
 
     private struct SerializableQueueItem: Codable {
         let id: String
@@ -25,6 +36,8 @@ actor RetryQueue {
         let maxRetries: Int
         let createdAt: Int64
         let label: String
+        /// Not sent before this time (monotonic ms; backoff after a failure).
+        var nextAttemptAtMs: Int64 = 0
         /// Called when the item is dropped without succeeding.
         let onDrop: (@Sendable () -> Void)?
 
@@ -55,10 +68,28 @@ actor RetryQueue {
     /// not-yet-removed item and would run its request twice without this guard — observed live
     /// as every trackScreen/trackEvent landing on the API twice.
     private var inFlightIds: Set<String> = []
+    /// The flush in progress, if any, and whether it must go through the queue once more.
+    private var running: Task<Void, Never>?
+    private var runAgain = false
+    /// Flushes when the earliest backed-off item is due.
+    private var wakeTask: Task<Void, Never>?
+    private let rateLimiter: RateLimiter?
+    private let backoffBaseMs: Int64
+    private let logger: EncatchLogger
 
-    init(storage: EncatchStorage) {
+    init(
+        storage: EncatchStorage,
+        rateLimiter: RateLimiter? = nil,
+        backoffBaseMs: Int64 = RetryQueue.baseBackoffMs,
+        logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false })
+    ) {
         self.storage = storage
+        self.rateLimiter = rateLimiter
+        self.backoffBaseMs = backoffBaseMs
+        self.logger = logger
     }
+
+    private var isPaused: Bool { rateLimiter?.isPaused(Self.bucket) ?? false }
 
     /// True for a status-based failure whose message embeds a 4xx status code.
     private func isClientError(_ error: Error) -> Bool {
@@ -67,7 +98,7 @@ actor RetryQueue {
     }
 
     private func backoffMs(_ retries: Int) -> Int64 {
-        Self.baseBackoffMs * Int64(1 << retries)
+        backoffBaseMs * Int64(1 << retries)
     }
 
     private func persistQueue() {
@@ -101,39 +132,81 @@ actor RetryQueue {
         Task { await flush() }
     }
 
+    /// Sends every queued request that is due, one at a time, in order. If a flush is already
+    /// running, this joins it and makes it go through the queue once more.
     func flush() async {
-        let snapshot = queue
-        for item in snapshot {
-            await attempt(item)
+        if let running {
+            runAgain = true
+            await running.value
+            return
+        }
+        let task = Task { await self.runLoop() }
+        running = task
+        await task.value
+    }
+
+    private func runLoop() async {
+        repeat {
+            runAgain = false
+            await runOnce()
+        } while runAgain
+        running = nil
+        scheduleWake()
+    }
+
+    private func runOnce() async {
+        for item in queue {
+            // paused after a 429: hold the rest until the pause ends (the pause end flushes)
+            if isPaused { return }
+            guard queue.contains(where: { $0.id == item.id }) else { continue }
+            if item.nextAttemptAtMs > monotonicNowMs() { continue }
+
+            inFlightIds.insert(item.id)
+            do {
+                try await item.fn()
+                inFlightIds.remove(item.id)
+                queue.removeAll { $0.id == item.id }
+                persistQueue()
+            } catch {
+                inFlightIds.remove(item.id)
+                let apiError = error as? EncatchApiException
+                if apiError?.status == 429 {
+                    drop(item)
+                    persistQueue()
+                    rateLimiter?.pauseFor(Self.bucket, retryAfterMs: apiError?.retryAfterMs)
+                    logger.debug("Retry queue: dropping \"\(item.label)\" (rate limited, not retried)")
+                    return
+                }
+                if isClientError(error) {
+                    drop(item)
+                    persistQueue()
+                    logger.debug("Retry queue: dropping \"\(item.label)\" (client error, no retry)")
+                    continue
+                }
+                item.retries += 1
+                if item.retries >= item.maxRetries {
+                    drop(item)
+                    logger.debug("Retry queue: dropping \"\(item.label)\" after \(item.maxRetries) attempts")
+                } else {
+                    item.nextAttemptAtMs = monotonicNowMs() + backoffMs(item.retries)
+                }
+                persistQueue()
+            }
         }
     }
 
-    private func attempt(_ item: QueuedRequest) async {
-        guard queue.contains(where: { $0.id == item.id }), !inFlightIds.contains(item.id) else { return }
-        inFlightIds.insert(item.id)
-        defer { inFlightIds.remove(item.id) }
-        do {
-            try await item.fn()
-            queue.removeAll { $0.id == item.id }
-            persistQueue()
-        } catch {
-            if isClientError(error) {
-                drop(item)
-                persistQueue()
-                return
-            }
-            item.retries += 1
-            if item.retries >= item.maxRetries {
-                drop(item)
-                persistQueue()
-            } else {
-                persistQueue()
-                let delayMs = backoffMs(item.retries)
-                Task {
-                    try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-                    await self.attempt(item)
-                }
-            }
+    /// Arranges a flush for when the earliest backed-off item becomes due.
+    private func scheduleWake() {
+        wakeTask?.cancel()
+        wakeTask = nil
+        // empty, or paused: the pause end flushes
+        guard !queue.isEmpty, !isPaused else { return }
+        let next = queue.map(\.nextAttemptAtMs).min() ?? 0
+        let delayMs = max(0, next - monotonicNowMs())
+        wakeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.flush()
         }
     }
 
@@ -155,6 +228,8 @@ actor RetryQueue {
     /// Forgets every queued item (clearAll): nothing more is sent.
     func clear() {
         queue.removeAll()
+        wakeTask?.cancel()
+        wakeTask = nil
         persistQueue()
     }
 

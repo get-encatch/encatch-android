@@ -6,11 +6,18 @@ public struct EncatchApiException: Error, Sendable, CustomStringConvertible {
     public let endpoint: String
     public let status: Int
     public let responseBody: String
+    /// From a 429's Retry-After header (seconds or an HTTP date), when present.
+    var retryAfterMs: Int64?
 
     public init(endpoint: String, status: Int, responseBody: String) {
         self.endpoint = endpoint
         self.status = status
         self.responseBody = responseBody
+    }
+
+    init(endpoint: String, status: Int, responseBody: String, retryAfterMs: Int64?) {
+        self.init(endpoint: endpoint, status: status, responseBody: responseBody)
+        self.retryAfterMs = retryAfterMs
     }
 
     public var message: String {
@@ -161,6 +168,36 @@ struct RequestOptions: Sendable {
 /// The HTTP exchange itself. Internal seam: the SDK uses `URLSession`; tests pass a fake.
 typealias HttpTransport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
+/// A request that took longer than the SDK's request timeout.
+struct RequestTimeoutError: Error, LocalizedError {
+    let ms: Int64
+    var errorDescription: String? { "request timed out after \(ms) ms" }
+}
+
+private struct TransportResult: @unchecked Sendable {
+    let data: Data
+    let response: URLResponse
+}
+
+/// Runs `transport` with a total-time cap (URLRequest.timeoutInterval is only an idle timer): a
+/// request that never answers would hold up the retry queue, which sends one request at a time.
+func sendWithTimeout(_ transport: @escaping HttpTransport, _ request: URLRequest, timeoutMs: Int64) async throws -> (Data, URLResponse) {
+    let result = try await withThrowingTaskGroup(of: TransportResult.self) { group in
+        group.addTask {
+            let (data, response) = try await transport(request)
+            return TransportResult(data: data, response: response)
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(max(0, timeoutMs)) * 1_000_000)
+            throw RequestTimeoutError(ms: timeoutMs)
+        }
+        defer { group.cancelAll() }
+        guard let first = try await group.next() else { throw RequestTimeoutError(ms: timeoutMs) }
+        return first
+    }
+    return (result.data, result.response)
+}
+
 /// `X-User-Name` / `X-User-Id` (+ the stored signature). The core API answers 401 to one without
 /// the other, so they go out both or neither: with no id for the name the request goes as a
 /// visitor. identify-user sends only its own name (RN 1.4.4 items 11, 12, 16).
@@ -228,7 +265,10 @@ final class EncatchApiClient: @unchecked Sendable {
     private let baseUrlProvider: @Sendable () -> String
     private let authStateProvider: @Sendable () -> AuthState
     private let onUserPendingRetryExhausted: @Sendable () async -> Void
-    private let onSignatureExpired: @Sendable () -> Void
+    /// (the expired signature, the user it was sent for)
+    private let onSignatureExpired: @Sendable (String, String?) -> Void
+    private let rateLimiter: RateLimiter?
+    private let requestTimeoutMs: Int64
     private let logger: EncatchLogger
     private let networkLogSink: @Sendable (EncatchNetworkLogEntry) -> Void
 
@@ -238,7 +278,9 @@ final class EncatchApiClient: @unchecked Sendable {
         baseUrlProvider: @escaping @Sendable () -> String,
         authStateProvider: @escaping @Sendable () -> AuthState,
         onUserPendingRetryExhausted: @escaping @Sendable () async -> Void = {},
-        onSignatureExpired: @escaping @Sendable () -> Void = {},
+        onSignatureExpired: @escaping @Sendable (String, String?) -> Void = { _, _ in },
+        rateLimiter: RateLimiter? = nil,
+        requestTimeoutMs: Int64 = 30_000,
         logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false }),
         networkLogSink: @escaping @Sendable (EncatchNetworkLogEntry) -> Void = { _ in }
     ) {
@@ -248,6 +290,8 @@ final class EncatchApiClient: @unchecked Sendable {
         self.authStateProvider = authStateProvider
         self.onUserPendingRetryExhausted = onUserPendingRetryExhausted
         self.onSignatureExpired = onSignatureExpired
+        self.rateLimiter = rateLimiter
+        self.requestTimeoutMs = requestTimeoutMs
         self.logger = logger
         self.networkLogSink = networkLogSink
     }
@@ -293,6 +337,7 @@ final class EncatchApiClient: @unchecked Sendable {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = TimeInterval(requestTimeoutMs) / 1000
         for (key, value) in authHeaders { request.setValue(value, forHTTPHeaderField: key) }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
@@ -322,7 +367,7 @@ final class EncatchApiClient: @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await transport(request)
+            (data, response) = try await sendWithTimeout(transport, request, timeoutMs: requestTimeoutMs)
         } catch {
             emitLog(status: 0, responseBody: "", error: error.localizedDescription)
             let apiError = EncatchApiException(endpoint: endpoint, status: 0, responseBody: error.localizedDescription)
@@ -344,13 +389,16 @@ final class EncatchApiClient: @unchecked Sendable {
 
         // A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16).
         if statusCode == 401, options.identifyUserName == nil,
-           authHeaders["X-User-Signature"] != nil, authHeaders["X-User-Session-Time"] != nil {
-            onSignatureExpired()
+           let sentSignature = authHeaders["X-User-Signature"], authHeaders["X-User-Session-Time"] != nil {
+            onSignatureExpired(sentSignature, authHeaders["X-User-Name"])
         }
 
         let isSuccess = (200...299).contains(statusCode)
         guard isSuccess, let parsed else {
-            let error = EncatchApiException(endpoint: endpoint, status: statusCode, responseBody: responseText)
+            let retryAfter = parseRetryAfterMs((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After"))
+            let error = EncatchApiException(endpoint: endpoint, status: statusCode, responseBody: responseText, retryAfterMs: retryAfter)
+            // a 429 pauses that bucket for Retry-After (RN 1.4.4 item 2)
+            if statusCode == 429 { rateLimiter?.pauseFor(RateLimitBucket.of(endpoint: endpoint), retryAfterMs: retryAfter) }
             logger.warn(error.message)
             throw error
         }

@@ -332,6 +332,105 @@ final class IdentityTests: XCTestCase {
         XCTAssertFalse(sdk.isSignatureExpired)
     }
 
+    func testALate401ForAnOlderSignatureDoesNotUndoAFreshSecureIdentify() async throws {
+        let server = FakeServer()
+        server.respond { call in
+            switch call.endpoint {
+            case "identify-user": return self.identifyReply("uid-a")
+            case "submit-form" where call.header("X-User-Signature") == "sig-1":
+                return .init(status: 401, body: "expired", delayMs: 300) // answers after sig-2 is in place
+            default: return .init()
+            }
+        }
+        let defaults = makeTestDefaults()
+        let sdk = try await makeTestSDK(server: server, defaults: defaults)
+        defer { sdk.stop() }
+        try await identify(sdk, server, "alice", options: IdentifyOptions(secure: SecureOptions(signature: "sig-1", generatedDateTimeInUtc: "1763500000000")))
+        let submit = Task { try await sdk.submitForm(submitRequest()) }
+        await waitFor { server.count("submit-form") == 1 }
+        try await sdk.identifyUser(userName: "alice", options: IdentifyOptions(secure: SecureOptions(signature: "sig-2", generatedDateTimeInUtc: "1763600000000")))
+        await waitFor("sig-2 stored") { defaults.string(forKey: "@encatch/user_signature_alice")?.contains("sig-2") == true }
+        try await submit.value
+        await sleepMs(100)
+        XCTAssertFalse(sdk.isSignatureExpired, "the 401 was for sig-1, not the current sig-2")
+        XCTAssertTrue(defaults.string(forKey: "@encatch/user_signature_alice")?.contains("sig-2") == true)
+        try await sdk.trackEvent("e")
+        await waitFor { server.count("track-event") == 1 }
+        XCTAssertEqual(server.calls("track-event")[0].header("X-User-Signature"), "sig-2")
+    }
+
+    func testAfterAnExpiryTheSameSignedIdentifyIsSentAgain() async throws {
+        let server = FakeServer()
+        server.respond { call in
+            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: "expired")
+        }
+        let sdk = try await makeTestSDK(server: server)
+        defer { sdk.stop() }
+        let options = IdentifyOptions(secure: SecureOptions(signature: "sig-1", generatedDateTimeInUtc: "1763500000000"))
+        try await identify(sdk, server, "alice", options: options)
+        try await sdk.trackEvent("e")
+        await waitFor("expiry") { sdk.isSignatureExpired }
+        try await sdk.identifyUser(userName: "alice", options: options)
+        await waitFor("the same signed identify re-sent") { server.count("identify-user") == 2 }
+    }
+
+    func testReinitializeForgetsIdentifyExpiryAndCollapseMemory() async throws {
+        let server = FakeServer()
+        server.respond { call in
+            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: "expired")
+        }
+        let sdk = try await makeTestSDK(server: server)
+        defer { sdk.stop() }
+        let options = IdentifyOptions(secure: SecureOptions(signature: "sig-1", generatedDateTimeInUtc: "1763500000000"))
+        let traits = UserTraits(set: ["plan": .string("pro")])
+        try await identify(sdk, server, "alice", options: options, traits: traits)
+        try await sdk.trackEvent("e")
+        await waitFor("expiry") { sdk.isSignatureExpired }
+        try await sdk.submitForm(submitRequest()) // held
+
+        server.respond { $0.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init() }
+        try await sdk.initialize(apiKey: "another-key-67890", config: EncatchConfig(apiBaseUrl: "https://api.test"))
+        XCTAssertFalse(sdk.isSignatureExpired)
+        try await sdk.trackEvent("e") // not collapsed against the event before re-init
+        await waitFor { server.count("track-event") == 2 }
+        XCTAssertEqual(server.calls("track-event")[1].header("X-Api-Key"), "another-key-67890")
+        try await sdk.identifyUser(userName: "alice", traits: traits, options: options)
+        await waitFor("same identify sent after re-init") { server.count("identify-user") == 2 }
+        await sleepMs(150)
+        XCTAssertEqual(server.count("submit-form"), 0, "submits held under the old key are not sent with the new one")
+    }
+
+    func testAQueuedIdentifyOfThePreviousUserIsDroppedOnResetAndOnASwitch() async throws {
+        let server = FakeServer()
+        server.respond { call in
+            switch call.endpoint {
+            case "track-screen": return .init(delayMs: 200) // keeps the queue busy
+            case "identify-user": return self.identifyReply("uid-\(call.string("userName") ?? "")")
+            default: return .init()
+            }
+        }
+        let sdk = try await makeTestSDK(server: server)
+        defer { sdk.stop() }
+        // a switch: alice's queued identify never goes out after bob's
+        try await sdk.trackScreen("Home")
+        await waitFor { server.count("track-screen") == 1 }
+        try await sdk.identifyUser(userName: "alice")
+        try await sdk.identifyUser(userName: "bob")
+        await waitFor { server.count("identify-user") == 1 }
+        await sleepMs(150)
+        XCTAssertEqual(server.calls("identify-user").map { $0.string("userName") }, ["bob"])
+        await waitFor { sdk.userId == "uid-bob" }
+
+        // a reset: carol's queued identify is dropped
+        try await sdk.trackScreen("Cart")
+        await waitFor { server.count("track-screen") == 2 }
+        try await sdk.identifyUser(userName: "carol")
+        try await sdk.resetUser()
+        await sleepMs(400)
+        XCTAssertEqual(server.count("identify-user"), 1)
+        XCTAssertNil(sdk.userName)
+    }
+
     // MARK: masking
 
     func testSignatureIsMaskedInDebugAndNetworkLogs() async throws {

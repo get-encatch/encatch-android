@@ -46,10 +46,12 @@ final class FakeServer: @unchecked Sendable {
 
     func count(_ endpoint: String) -> Int { calls(endpoint).count }
 
+    /// Records the call, then asks the responder (outside the lock: it may read `count`).
     private func record(_ call: Call) -> Reply {
         lock.lock()
-        defer { lock.unlock() }
         recorded.append(call)
+        let responder = self.responder
+        lock.unlock()
         return responder(call)
     }
 
