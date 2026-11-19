@@ -25,14 +25,25 @@ actor RetryQueue {
         let maxRetries: Int
         let createdAt: Int64
         let label: String
+        /// Called when the item is dropped without succeeding.
+        let onDrop: (@Sendable () -> Void)?
 
-        init(id: String, fn: @escaping () async throws -> Void, retries: Int, maxRetries: Int, createdAt: Int64, label: String) {
+        init(
+            id: String,
+            fn: @escaping () async throws -> Void,
+            retries: Int,
+            maxRetries: Int,
+            createdAt: Int64,
+            label: String,
+            onDrop: (@Sendable () -> Void)?
+        ) {
             self.id = id
             self.fn = fn
             self.retries = retries
             self.maxRetries = maxRetries
             self.createdAt = createdAt
             self.label = label
+            self.onDrop = onDrop
         }
     }
 
@@ -69,14 +80,20 @@ actor RetryQueue {
         storage.setRetryQueueRaw(json)
     }
 
-    func enqueue(label: String, maxRetries: Int = RetryQueue.maxRetries, fn: @escaping () async throws -> Void) {
+    func enqueue(
+        label: String,
+        maxRetries: Int = RetryQueue.maxRetries,
+        onDrop: (@Sendable () -> Void)? = nil,
+        fn: @escaping () async throws -> Void
+    ) {
         let item = QueuedRequest(
             id: "\(currentTimeMillis())-\(nextId)",
             fn: fn,
             retries: 0,
             maxRetries: maxRetries,
             createdAt: currentTimeMillis(),
-            label: label
+            label: label,
+            onDrop: onDrop
         )
         nextId += 1
         queue.append(item)
@@ -101,13 +118,13 @@ actor RetryQueue {
             persistQueue()
         } catch {
             if isClientError(error) {
-                queue.removeAll { $0.id == item.id }
+                drop(item)
                 persistQueue()
                 return
             }
             item.retries += 1
             if item.retries >= item.maxRetries {
-                queue.removeAll { $0.id == item.id }
+                drop(item)
                 persistQueue()
             } else {
                 persistQueue()
@@ -118,6 +135,27 @@ actor RetryQueue {
                 }
             }
         }
+    }
+
+    /// Removes an item that did not succeed and tells its owner.
+    private func drop(_ item: QueuedRequest) {
+        queue.removeAll { $0.id == item.id }
+        item.onDrop?()
+    }
+
+    /// Removes queued (not in flight) items with this label; returns how many were removed.
+    @discardableResult
+    func removeQueued(label: String) -> Int {
+        let matching = queue.filter { $0.label == label && !inFlightIds.contains($0.id) }
+        for item in matching { drop(item) }
+        if !matching.isEmpty { persistQueue() }
+        return matching.count
+    }
+
+    /// Forgets every queued item (clearAll): nothing more is sent.
+    func clear() {
+        queue.removeAll()
+        persistQueue()
     }
 
     func queueSize() -> Int {

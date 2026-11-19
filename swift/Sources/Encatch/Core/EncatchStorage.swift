@@ -8,6 +8,7 @@ public final class EncatchStorage: @unchecked Sendable {
     private static let keyDeviceId = "@encatch/device_id"
     private static let keyUserName = "@encatch/user_name"
     private static let keyUserIdPrefix = "@encatch/user_id_"
+    private static let keyUserSignaturePrefix = "@encatch/user_signature_"
     private static let keyFtPrefix = "@encatch/ft_"
     private static let keyPreferences = "@encatch/preferences"
     private static let keySessionStopped = "@encatch/session_stopped"
@@ -71,6 +72,27 @@ public final class EncatchStorage: @unchecked Sendable {
 
     public func clearUserId(userName: String) {
         defaults.removeObject(forKey: Self.keyUserIdPrefix + userName)
+    }
+
+    /// The signature of a user's last successful secure identify, and its time (session-time keys).
+    struct StoredSignature: Codable, Equatable, Sendable {
+        let signature: String
+        let time: String?
+    }
+
+    func getUserSignature(userName: String) -> StoredSignature? {
+        guard let raw = defaults.string(forKey: Self.keyUserSignaturePrefix + userName),
+              let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(StoredSignature.self, from: data)
+    }
+
+    func setUserSignature(userName: String, value: StoredSignature) {
+        guard let data = try? JSONEncoder().encode(value), let json = String(data: data, encoding: .utf8) else { return }
+        defaults.set(json, forKey: Self.keyUserSignaturePrefix + userName)
+    }
+
+    func clearUserSignature(userName: String) {
+        defaults.removeObject(forKey: Self.keyUserSignaturePrefix + userName)
     }
 
     private func ftKey(_ identityKey: String) -> String { Self.keyFtPrefix + identityKey }
@@ -154,7 +176,8 @@ public final class EncatchStorage: @unchecked Sendable {
         defaults.removeObject(forKey: Self.keySessionStopped)
         defaults.removeObject(forKey: Self.keyRetryQueue)
         for key in defaults.dictionaryRepresentation().keys
-        where key.hasPrefix(Self.keyUserIdPrefix) || key.hasPrefix(Self.keyFtPrefix) {
+        where key.hasPrefix(Self.keyUserIdPrefix) || key.hasPrefix(Self.keyFtPrefix)
+            || key.hasPrefix(Self.keyUserSignaturePrefix) {
             defaults.removeObject(forKey: key)
         }
         lock.lock()

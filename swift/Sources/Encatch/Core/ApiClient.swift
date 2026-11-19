@@ -95,8 +95,10 @@ extension JSONValue {
         if case .bool(let value)? = object["pingOnNextPageVisit"] { pingOnNextPageVisit = value }
         var feedbackTransactions: String?
         if case .string(let value)? = object["$feedbackTransactions"] { feedbackTransactions = value }
+        // the core API sends camelCase; snake_case is kept for older servers (RN 1.4.4 item 14)
         var userPendingRetryExhausted = false
-        if case .bool(let value)? = object["user_pending_retry_exhausted"] { userPendingRetryExhausted = value }
+        if case .bool(true)? = object["userPendingRetryExhausted"] { userPendingRetryExhausted = true }
+        if case .bool(true)? = object["user_pending_retry_exhausted"] { userPendingRetryExhausted = true }
         return ResponseMeta(
             pingAgainIn: pingAgainIn,
             pingOnNextPageVisit: pingOnNextPageVisit,
@@ -106,15 +108,90 @@ extension JSONValue {
     }
 }
 
-/// Snapshot of auth-relevant SDK state, used to build request headers per call.
+/// Snapshot of auth-relevant SDK state, used to build request headers per call. Taken in one
+/// piece (under the SDK's state lock), so a name is never paired with another user's id.
 struct AuthState {
     let apiKey: String?
     let sessionId: String?
     let userName: String?
     let userId: String?
+    /// The signature of the user's last successful secure identify, and its time (session-time keys).
     let userSignature: String?
+    let userSignatureTime: String?
     let deviceId: String?
     let appPackageName: String?
+
+    init(
+        apiKey: String?,
+        sessionId: String?,
+        userName: String?,
+        userId: String?,
+        userSignature: String? = nil,
+        userSignatureTime: String? = nil,
+        deviceId: String?,
+        appPackageName: String?
+    ) {
+        self.apiKey = apiKey
+        self.sessionId = sessionId
+        self.userName = userName
+        self.userId = userId
+        self.userSignature = userSignature
+        self.userSignatureTime = userSignatureTime
+        self.deviceId = deviceId
+        self.appPackageName = appPackageName
+    }
+}
+
+/// Per-request options of `EncatchApiClient.post`.
+struct RequestOptions: Sendable {
+    /// identify-user only: that call's own user name, sent as `X-User-Name`. An identify never
+    /// sends `X-User-Id` nor the stored signature — the core API reads the identity from the body.
+    var identifyUserName: String?
+    /// Secure identify: the call's signature and `generatedDateTimeInUtc` (epoch ms, as given).
+    var signature: String?
+    var signatureTime: String?
+
+    init(identifyUserName: String? = nil, signature: String? = nil, signatureTime: String? = nil) {
+        self.identifyUserName = identifyUserName
+        self.signature = signature
+        self.signatureTime = signatureTime
+    }
+}
+
+/// The HTTP exchange itself. Internal seam: the SDK uses `URLSession`; tests pass a fake.
+typealias HttpTransport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
+/// `X-User-Name` / `X-User-Id` (+ the stored signature). The core API answers 401 to one without
+/// the other, so they go out both or neither: with no id for the name the request goes as a
+/// visitor. identify-user sends only its own name (RN 1.4.4 items 11, 12, 16).
+func identityHeaders(_ auth: AuthState, identifyUserName: String?) -> [String: String] {
+    if let identifyUserName { return ["X-User-Name": identifyUserName] }
+    guard let name = auth.userName, let id = auth.userId else { return [:] }
+    var headers = ["X-User-Name": name, "X-User-Id": id]
+    // after a successful secure identify, its signature (and time) go on every request of that user
+    if let signature = auth.userSignature {
+        headers["X-User-Signature"] = signature
+        if let time = auth.userSignatureTime {
+            headers["X-User-Session-Time"] = time
+            headers["X-User-Signature-Time"] = time
+        }
+    }
+    return headers
+}
+
+/// Headers as written to the debug log / network log: the API key and the signature masked.
+func maskedHeadersForLog(_ headers: [String: String], apiKeySuffix: Bool) -> [String: String] {
+    var result = headers
+    if let apiKey = result["X-Api-Key"] { result["X-Api-Key"] = apiKeySuffix ? "•••\(apiKey.suffix(5))" : "***" }
+    if result["X-User-Signature"] != nil { result["X-User-Signature"] = "***" }
+    return result
+}
+
+/// A request body as written to the logs: a secure identify's `userSignature` masked.
+func maskedBodyForLog(_ body: JSONValue) -> JSONValue {
+    guard case .object(var object) = body, object["userSignature"] != nil else { return body }
+    object["userSignature"] = .string("***")
+    return .object(object)
 }
 
 /// Reports upload progress via `URLSessionTaskDelegate`, since Foundation's async `upload(for:from:)`
@@ -147,57 +224,72 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
 /// `encatch.ts`, plus the SSE (`streamQnaWithAi`) and multipart (`uploadFile`) calls.
 final class EncatchApiClient: @unchecked Sendable {
     private let session: URLSession
+    private let transport: HttpTransport
     private let baseUrlProvider: @Sendable () -> String
     private let authStateProvider: @Sendable () -> AuthState
     private let onUserPendingRetryExhausted: @Sendable () async -> Void
+    private let onSignatureExpired: @Sendable () -> Void
     private let logger: EncatchLogger
     private let networkLogSink: @Sendable (EncatchNetworkLogEntry) -> Void
 
     init(
         session: URLSession = .shared,
+        transport: HttpTransport? = nil,
         baseUrlProvider: @escaping @Sendable () -> String,
         authStateProvider: @escaping @Sendable () -> AuthState,
         onUserPendingRetryExhausted: @escaping @Sendable () async -> Void = {},
+        onSignatureExpired: @escaping @Sendable () -> Void = {},
         logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false }),
         networkLogSink: @escaping @Sendable (EncatchNetworkLogEntry) -> Void = { _ in }
     ) {
         self.session = session
+        self.transport = transport ?? { request in try await session.data(for: request) }
         self.baseUrlProvider = baseUrlProvider
         self.authStateProvider = authStateProvider
         self.onUserPendingRetryExhausted = onUserPendingRetryExhausted
+        self.onSignatureExpired = onSignatureExpired
         self.logger = logger
         self.networkLogSink = networkLogSink
     }
 
-    private func buildAuthHeaders(signatureTime: String? = nil) throws -> [String: String] {
+    private func buildAuthHeaders(_ options: RequestOptions = RequestOptions()) throws -> [String: String] {
         let auth = authStateProvider()
         guard let apiKey = auth.apiKey else { throw EncatchNotInitializedException() }
         var headers: [String: String] = ["X-Api-Key": apiKey]
         if let value = auth.sessionId { headers["X-Session-Id"] = value }
-        if let value = auth.userName { headers["X-User-Name"] = value }
-        if let value = auth.userId { headers["X-User-Id"] = value }
-        if let value = auth.userSignature { headers["X-User-Signature"] = value }
+        headers.merge(identityHeaders(auth, identifyUserName: options.identifyUserName)) { _, new in new }
         if let value = auth.deviceId { headers["X-Device-Id"] = value }
-        if let signatureTime { headers["X-User-Signature-Time"] = signatureTime }
+        // Secure identify: the gateway reads X-User-Signature and, for keys with a session time,
+        // X-User-Session-Time (the exact string signed with the user name); X-User-Signature-Time
+        // is kept for compatibility (RN 1.4.4 item 15).
+        if let signature = options.signature { headers["X-User-Signature"] = signature }
+        if let time = options.signatureTime {
+            headers["X-User-Session-Time"] = time
+            headers["X-User-Signature-Time"] = time
+        }
         if let value = auth.appPackageName { headers["Referer"] = value }
         return headers
     }
 
     private func redactedHeadersForLog(_ headers: [String: String]) -> String {
-        headers.map { key, value in "\(key): \(key == "X-Api-Key" ? "***" : value)" }.joined(separator: "\n")
+        maskedHeadersForLog(headers, apiKeySuffix: false)
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: "\n")
     }
 
     /// POSTs `body` to `endpoint`, returns the parsed JSON response.
-    func post(endpoint: String, body: JSONValue, signatureTime: String? = nil) async throws -> JSONValue {
+    func post(endpoint: String, body: JSONValue, options: RequestOptions = RequestOptions()) async throws -> JSONValue {
         let urlString = "\(baseUrlProvider())/\(endpoint)"
         guard let url = URL(string: urlString) else {
             throw EncatchApiException(endpoint: endpoint, status: 0, responseBody: "Invalid URL: \(urlString)")
         }
-        let authHeaders = try buildAuthHeaders(signatureTime: signatureTime)
+        let authHeaders = try buildAuthHeaders(options)
+        let bodyForLog = maskedBodyForLog(body).toJSONString()
 
         logger.debug("POST \(endpoint) -> \(urlString)")
         logger.debug("Request headers:\n\(redactedHeadersForLog(authHeaders))")
-        logger.debug("Request body:\n\(body.toJSONString())")
+        logger.debug("Request body:\n\(bodyForLog)")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -209,10 +301,8 @@ final class EncatchApiClient: @unchecked Sendable {
         var logHeaders = authHeaders
         logHeaders["Content-Type"] = "application/json"
         // Even in debugMode, never expose the full API key — keep just the last 5 characters
-        // so entries can be matched to a key without being usable as one.
-        if let apiKey = logHeaders["X-Api-Key"] {
-            logHeaders["X-Api-Key"] = "•••\(apiKey.suffix(5))"
-        }
+        // so entries can be matched to a key without being usable as one. The signature is masked.
+        logHeaders = maskedHeadersForLog(logHeaders, apiKeySuffix: true)
         func emitLog(status: Int, responseBody: String, error: String?, responseHeaders: [String: String] = [:]) {
             networkLogSink(EncatchNetworkLogEntry(
                 timestamp: startedAt,
@@ -220,7 +310,7 @@ final class EncatchApiClient: @unchecked Sendable {
                 endpoint: endpoint,
                 url: urlString,
                 requestHeaders: logHeaders,
-                requestBody: body.toJSONString(),
+                requestBody: bodyForLog,
                 status: status,
                 responseBody: responseBody,
                 durationMs: Int(Date().timeIntervalSince(startedAt) * 1000),
@@ -232,7 +322,7 @@ final class EncatchApiClient: @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await transport(request)
         } catch {
             emitLog(status: 0, responseBody: "", error: error.localizedDescription)
             let apiError = EncatchApiException(endpoint: endpoint, status: 0, responseBody: error.localizedDescription)
@@ -250,6 +340,12 @@ final class EncatchApiClient: @unchecked Sendable {
 
         if let parsed, parsed.toResponseMeta().userPendingRetryExhausted {
             await onUserPendingRetryExhausted()
+        }
+
+        // A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16).
+        if statusCode == 401, options.identifyUserName == nil,
+           authHeaders["X-User-Signature"] != nil, authHeaders["X-User-Session-Time"] != nil {
+            onSignatureExpired()
         }
 
         let isSuccess = (200...299).contains(statusCode)
@@ -310,9 +406,7 @@ final class EncatchApiClient: @unchecked Sendable {
         let startedAt = Date()
         var logHeaders = authHeaders
         logHeaders["Content-Type"] = "multipart/form-data"
-        if let apiKey = logHeaders["X-Api-Key"] {
-            logHeaders["X-Api-Key"] = "•••\(apiKey.suffix(5))"
-        }
+        logHeaders = maskedHeadersForLog(logHeaders, apiKeySuffix: true)
         let logBody = "<multipart> file=\(fileName), \(formatByteSize(fileBytes.count)), " +
             "\(mimeType ?? "application/octet-stream"); formId=\(feedbackConfigurationId), questionId=\(questionId)"
         func emitLog(status: Int, responseBody: String, error: String?, responseHeaders: [String: String] = [:]) {
