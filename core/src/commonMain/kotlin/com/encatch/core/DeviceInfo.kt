@@ -1,6 +1,6 @@
 package com.encatch.core
 
-internal const val SDK_VERSION = "0.1.1"
+internal const val SDK_VERSION = "0.2.0-beta.1"
 internal expect val SDK_PLATFORM: String
 
 /** Platform-sourced device facts, assembled into [ApiDeviceInfo] by [Encatch]. */

@@ -4,6 +4,58 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 `:compose-sdk` on Maven Central, and the `Encatch` Swift Package). Tester-app and tooling
 changes are not listed.
 
+## 0.2.0-beta.1
+
+The native SDKs now behave as the web SDK, React Native 1.4.4 and Flutter 1.2.0 do: same server
+contract, same survey and identity rules. Kotlin (`core`, used by `android`, `kmp-sdk` and
+`compose-sdk` on Android) and Swift (iOS, and KMP/Compose on iOS) alike.
+
+### Fixed
+
+- **Surveys launched by an event, on identify or in a ping never opened.** The server offers a
+  survey as `nextFeedbackId` (+ `onPageDelay`) in replies to identify-user, ping, track-event and
+  track-screen; only track-screen replies were read. Every reply is read now, one survey at a time:
+  an automatic survey is skipped while another is waiting, loading or open; asking again for the
+  open survey keeps the answers in progress; "not eligible now" (404) is logged at debug only.
+- **Closing a survey told the server nothing.** Closing it before the final submit (its ✕, a tap
+  outside it, the back button) is now a dismissal: `dismiss-form` with the form's UUID — for
+  visitors too, so a survey that stops on "Dismissed" is not offered again — and `form:dismissed`
+  for an identified user. Closing it on the thank-you screen, after "remind me later" or a
+  call-to-action is not. The survey page is first asked to save a partial answer (up to 500 ms).
+- **"Remind me later" was not sent.** It now sends `form:remindmelater` with the form's id
+  (identified users), so the survey can come back after its wait. It is not a dismissal.
+- **Compose on Android: a modal survey never appeared** unless an inline form had been composed
+  first. The form host now installs itself at app start (AndroidX App Startup) for every Android
+  package; `EncatchFormHost.install(...)` is no longer needed and harmless if kept.
+- **Survey events from visitors** (403 from the server) are no longer sent; survey events and
+  dismissals no longer go out with an empty form id.
+- **Half-identified users got 401 on everything.** `X-User-Name` and `X-User-Id` go out together
+  or not at all; identify-user sends its own name and never a stored `X-User-Id`; reset and
+  identify run one after the other, and a late reply for a user who is no longer current is
+  ignored; `userPendingRetryExhausted` (the server's spelling) resets the user.
+- **Secure identify:** the signature goes in the `X-User-Signature` header with
+  `X-User-Session-Time` / `X-User-Signature-Time`, then on every request of that user (persisted
+  per user). An expired signature (401) pauses background calls and holds survey submits until the
+  next identify. The signature is masked in logs.
+- **Ping:** the server's `pingAgainIn` is honoured from every reply; `stopSession()` holds (also
+  across a restart, until `startSession()` or an identify); no ping while a survey is open.
+- **Request bursts:** a 429 pauses that group of calls for `Retry-After` (60 s by default, at most
+  5 minutes) instead of retrying; survey submits wait and retry up to 3 times; one retry-queue
+  flush at a time, a 4xx drops only that item; identical identify calls, and identical events or
+  screens within 1 s, are sent once.
+- **`$sdkVersion`** now reports this version.
+
+### Changed
+
+- `kmp-sdk` on Android now brings `com.encatch:android` (the survey UI), and `compose-sdk` exposes
+  it as an API dependency. Keep `com.encatch:android` at the same version if you also declare it.
+
+### Known
+
+- A partly answered survey closed with its ✕ keeps no partial answer yet: the survey page
+  (`/s/react-native-sdk-form`) does not answer the SDK's save request. Same on React Native and
+  Flutter; fixed with the survey page.
+
 ## 0.1.1
 
 ### Fixed
