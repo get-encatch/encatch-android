@@ -493,4 +493,16 @@ final class FormWebViewBridgeTests: XCTestCase {
         bridge.handleMessage(#"{"type":"form:layout","data":{"fullHeight":"true"}}"#)
         XCTAssertEqual(received, [true, false, true])
     }
+
+    /// form:submit carries isPartialSubmit as a JSON BOOL (apps/shareable: isPartialSubmit:
+    /// data.isPartialSubmit ?? false) — read as a string, every partial save went out as a final submit.
+    func testIsPartialSubmitReadsAJsonBooleanAndTheOldString() {
+        XCTAssertEqual(strictBool(.bool(true)), true)
+        XCTAssertEqual(strictBool(.bool(false)), false)
+        XCTAssertEqual(strictBool(.string("true")), true)
+        XCTAssertEqual(strictBool(.string("false")), false)
+        XCTAssertNil(strictBool(.string("yes")))
+        XCTAssertNil(strictBool(.number(1)))
+        XCTAssertNil(strictBool(nil))
+    }
 }

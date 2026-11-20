@@ -12,6 +12,10 @@ contract, same survey and identity rules. Kotlin (`core`, used by `android`, `km
 
 ### Fixed
 
+- **iOS: partial saves went out as final submits.** The survey page sends `isPartialSubmit` as a
+  JSON boolean; the Swift SDK read it as text, so every partial save (on the timer and on close) was sent
+  to submit-form as a final submit, and a later ✕ was not counted as a dismissal. Native iOS, and KMP and
+  Compose on iOS (Android was not affected).
 - **Surveys launched by an event, on identify or in a ping never opened.** The server offers a
   survey as `nextFeedbackId` (+ `onPageDelay`) in replies to identify-user, ping, track-event and
   track-screen; only track-screen replies were read. Every reply is read now, one survey at a time:

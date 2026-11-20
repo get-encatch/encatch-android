@@ -227,7 +227,9 @@ public final class FormWebViewBridge: @unchecked Sendable {
                 pendingCompletionCtaCache = cta
             }
             let response: FormResponse? = data["response"]?.decode(as: FormResponse.self)
-            let isPartial = parseStrictBool(data.string("isPartialSubmit")) ?? false
+            // a JSON boolean from the survey page (a string "true"/"false" from older pages); read as a
+            // string only, a partial save was sent as a final submit (and counted as the final submit here)
+            let isPartial = strictBool(data["isPartialSubmit"]) ?? false
             // the final submit comes before the thank-you screen: a close after it is not a dismissal
             if !isPartial { finalSubmitDone = true }
             let submitReq = SubmitFormRequest(
@@ -462,10 +464,12 @@ public final class FormWebViewBridge: @unchecked Sendable {
     }
 }
 
-private func parseStrictBool(_ value: String?) -> Bool? {
+/// A boolean from the survey page: a JSON boolean, or the string "true"/"false"; anything else is no answer.
+func strictBool(_ value: JSONValue?) -> Bool? {
     switch value {
-    case "true": return true
-    case "false": return false
+    case .bool(let flag): return flag
+    case .string("true"): return true
+    case .string("false"): return false
     default: return nil
     }
 }
