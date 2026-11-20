@@ -60,6 +60,9 @@ import kotlin.math.roundToInt
  * position/size/corners/background/overlay resolved from the form's `appearanceProperties`,
  * height capped at `maxDialogHeightPercentInApp` (default 80%) of the screen, IME-aware,
  * dismissible via the bridge's onClose.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
  */
 class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Theme_Translucent_NoTitleBar) {
 

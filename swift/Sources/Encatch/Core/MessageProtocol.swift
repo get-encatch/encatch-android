@@ -1,6 +1,9 @@
 import Foundation
 
 /// Messages emitted by the hosted form page (WebView) to the native SDK.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public enum FormMessageType: String, Sendable, CaseIterable {
     case ready
     case submit
@@ -52,6 +55,9 @@ public enum FormMessageType: String, Sendable, CaseIterable {
 }
 
 /// Envelope for a message received from the WebView, parsed via `JSONDecoder`.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public struct FormMessage: Codable, Sendable {
     public var type: String
     public var formId: String?
@@ -67,6 +73,9 @@ public struct FormMessage: Codable, Sendable {
 }
 
 /// Messages sent from the native SDK to the hosted form page (WebView), via evaluateJavaScript.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public enum SDKMessageType: String, Sendable {
     case formConfig
     case theme
@@ -100,6 +109,9 @@ public enum SDKMessageType: String, Sendable {
 }
 
 /// Envelope for a message sent to the WebView; `dataJson` is a pre-serialized JSON object string, or nil.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public struct SDKMessage: Sendable {
     public var type: SDKMessageType
     public var dataJson: String?

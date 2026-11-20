@@ -24,6 +24,9 @@ import com.encatch.core.buildSdkMessageInjectionScript
  * Wraps [android.webkit.WebView] to host the Encatch form page, mirroring `EncatchWebView.tsx`'s
  * WebView configuration: JS bridge via `postMessage`, same-origin camera/mic auto-grant, and
  * navigation restricted to the loaded form's origin+path.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
  */
 @SuppressLint("SetJavaScriptEnabled")
 class EncatchWebView(context: Context) : WebView(context) {

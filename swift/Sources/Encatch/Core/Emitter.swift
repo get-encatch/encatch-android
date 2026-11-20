@@ -56,6 +56,9 @@ public final class Emitter<T>: @unchecked Sendable {
 }
 
 /// Internal event bridging `Encatch` to the UI layer's WebView/inline form UI.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public enum InternalEvent: Sendable {
     case showForm(ShowFormPayload)
     case dismissForm(formConfigurationId: String?)
@@ -63,6 +66,8 @@ public enum InternalEvent: Sendable {
     case userIdentified(userName: String?, userId: String?)
 }
 
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public struct ShowFormPayload: Sendable {
     public var formId: String
     public var formConfig: ShowFormResponse
@@ -102,6 +107,9 @@ public struct ShowFormPayload: Sendable {
 }
 
 /// Shared internal emitter singleton, mirrors the RN SDK's exported `_internalEmitter`.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public enum EncatchInternalEmitter {
     public static let shared = Emitter<InternalEvent>()
 }

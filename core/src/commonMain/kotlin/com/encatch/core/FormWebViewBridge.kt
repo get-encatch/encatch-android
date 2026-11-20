@@ -22,6 +22,9 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * `useEncatchFormWebView.ts`. UI-agnostic — driven by any WebView host (`:android`'s
  * `EncatchWebView`, `:compose`'s WebView content) via [onHeightChange]/[onForceFullHeight]/
  * [onReady]/[onClose]/[sendToWebView].
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
  */
 class FormWebViewBridge(
     private val scope: CoroutineScope,

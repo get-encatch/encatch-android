@@ -66,6 +66,14 @@ contract, same survey and identity rules. Kotlin (`core`, used by `android`, `km
   it as an API dependency. Keep `com.encatch:android` at the same version if you also declare it.
 - `com.encatch:android` depends on `androidx.startup` and adds an `InitializationProvider` entry to
   the manifest. An app that removed that provider calls `EncatchFormHost.install(application)`.
+- **Not public API:** `InternalEvent`, `ShowFormPayload`, `EncatchInternalEmitter`,
+  `FormWebViewBridge` and the WebView messages (`SDKMessage`, `SDKMessageType`, `FormMessage`,
+  `FormMessageType`), Kotlin and Swift; `EncatchFormDialog` and `EncatchWebView` (Android);
+  `EncatchFormViewController` (iOS). They are visible only because the SDK uses them internally,
+  and they may change in any release, including minor ones; don't use them in app code. Still
+  public API: `EncatchFormHost` (`install`, and on Android `attach` / `isInstalled`),
+  `EncatchInlineFormView`, and the `ShowFormInterceptorPayload` (with its `formConfig:
+  ShowFormResponse`) passed to `onBeforeShowForm`.
 
 ### Known
 

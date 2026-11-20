@@ -3,7 +3,12 @@ package com.encatch.core
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
-/** Messages emitted by the hosted form page (WebView) to the native SDK. */
+/**
+ * Messages emitted by the hosted form page (WebView) to the native SDK.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 enum class FormMessageType(val wireValue: String) {
     READY("form:ready"),
     SUBMIT("form:submit"),
@@ -30,7 +35,12 @@ enum class FormMessageType(val wireValue: String) {
     }
 }
 
-/** Envelope for a message received from the WebView, parsed via [kotlinx.serialization]. */
+/**
+ * Envelope for a message received from the WebView, parsed via [kotlinx.serialization].
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 @Serializable
 data class FormMessage(
     val type: String,
@@ -40,7 +50,12 @@ data class FormMessage(
     val messageType: FormMessageType? get() = FormMessageType.fromWire(type)
 }
 
-/** Messages sent from the native SDK to the hosted form page (WebView), via evaluateJavascript. */
+/**
+ * Messages sent from the native SDK to the hosted form page (WebView), via evaluateJavascript.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 enum class SDKMessageType(val wireValue: String) {
     FORM_CONFIG("sdk:formConfig"),
     THEME("sdk:theme"),
@@ -56,7 +71,13 @@ enum class SDKMessageType(val wireValue: String) {
     QNA_WITH_AI_DONE("sdk:qnaWithAiDone"),
 }
 
-/** Envelope for a message sent to the WebView; [dataJson] is a pre-serialized JSON object string, or null. */
+/**
+ * Envelope for a message sent to the WebView; [dataJson] is a pre-serialized JSON object string,
+ * or null.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 data class SDKMessage(
     val type: SDKMessageType,
     val dataJson: String? = null,

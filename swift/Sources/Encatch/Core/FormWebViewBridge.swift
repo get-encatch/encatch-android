@@ -23,6 +23,9 @@ private extension Dictionary where Key == String, Value == JSONValue {
 /// Handles the `form:*`/`sdk:*` WebView postMessage bridge, mirroring
 /// `useEncatchFormWebView.ts`. UI-agnostic — driven by any WebView host (`EncatchWebView`) via
 /// `onHeightChange`/`onForceFullHeight`/`onReady`/`onClose`/`sendToWebView`.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public final class FormWebViewBridge: @unchecked Sendable {
     private static let redirectInternalAfterCloseDelayMs: Int64 = 400
     private static let redirectAfterImmediateCloseDelayMs: Int64 = 50

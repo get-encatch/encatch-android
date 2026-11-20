@@ -6,6 +6,9 @@ import UIKit
 /// height capped at `maxDialogHeightPercentInApp` (default 80%) of the screen, dismissible via
 /// the bridge's `onClose`. Live light/dark-mode reactivity comes for free from
 /// `traitCollectionDidChange` — no manual system-appearance observer needed, unlike Android.
+///
+/// **Not public API.** Used only inside the SDK; it may change in any release, including
+/// minor ones.
 public final class EncatchFormViewController: UIViewController {
 
     private let webView = EncatchWebView()

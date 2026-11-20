@@ -27,7 +27,12 @@ open class Emitter<T> {
     }
 }
 
-/** Internal event bridging [Encatch] to the `:android` module's WebView/inline form UI. */
+/**
+ * Internal event bridging [Encatch] to the `:android` module's WebView/inline form UI.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 sealed class InternalEvent {
     data class ShowForm(val payload: ShowFormPayload) : InternalEvent()
     data class DismissForm(val formConfigurationId: String? = null) : InternalEvent()
@@ -35,6 +40,10 @@ sealed class InternalEvent {
     data class UserIdentified(val userName: String?, val userId: String?) : InternalEvent()
 }
 
+/**
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 data class ShowFormPayload(
     val formId: String,
     val formConfig: ShowFormResponse,
@@ -49,5 +58,10 @@ data class ShowFormPayload(
     val inlineSlotId: String? = null,
 )
 
-/** Shared internal emitter singleton, mirrors the RN SDK's exported `_internalEmitter`. */
+/**
+ * Shared internal emitter singleton, mirrors the RN SDK's exported `_internalEmitter`.
+ *
+ * **Not public API.** Used between Encatch's own modules; it may change in any release,
+ * including minor ones.
+ */
 object EncatchInternalEmitter : Emitter<InternalEvent>()
