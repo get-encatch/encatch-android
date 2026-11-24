@@ -12,7 +12,7 @@ Modeled on [`encatch-android-tester`](../encatch-android-tester/README.md)/
 iOS) so one build works for any tester or environment.
 
 Depends on `:compose-sdk`/`:android` as internal Gradle modules (external apps use the published
-Maven Central artifacts instead — see [`compose-sdk/README.md`](../../compose-sdk/README.md)).
+artifacts from `packages.encatch.com` instead — see [`compose-sdk/README.md`](../../compose-sdk/README.md)).
 
 ## Run in an emulator (Android)
 

@@ -1,7 +1,8 @@
 # Changelog
 
 SDK-facing changes to the published packages (`com.encatch:core` / `:android` / `:kmp-sdk` /
-`:compose-sdk` on Maven Central, and the `Encatch` Swift Package). Tester-app and tooling
+`:compose-sdk`, from Encatch's Maven repository at `packages.encatch.com`, and the `Encatch` Swift
+Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
 ## 0.2.0-beta.1
@@ -61,6 +62,9 @@ contract, same survey and identity rules. Kotlin (`core`, used by `android`, `km
 
 ### Changed
 
+- **The Kotlin packages are published to Encatch's Maven repository, `https://packages.encatch.com/maven`,
+  instead of Maven Central.** Add the repository (see each package's README) before updating past
+  0.1.1, or Gradle reports "Could not find com.encatch:…". 0.1.0 and 0.1.1 stay on Maven Central too.
 - `kmp-sdk` on Android now brings `com.encatch:android` (the survey UI, with its file-chooser
   activity and FileProvider), so modal surveys show with no extra dependency; `compose-sdk` exposes
   it as an API dependency. Keep `com.encatch:android` at the same version if you also declare it.

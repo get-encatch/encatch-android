@@ -9,10 +9,10 @@ thin bridge libraries for customers building with Compose Multiplatform or Kotli
 
 | Package | Platform | Install | What it is |
 |---|---|---|---|
-| [`com.encatch:android`](android/README.md) | Android (native Views) | Maven Central | The real Android SDK. |
+| [`com.encatch:android`](android/README.md) | Android (native Views) | [packages.encatch.com](https://packages.encatch.com/) | The real Android SDK. |
 | [`Encatch` (Swift Package)](swift/README.md) | iOS (native Swift/UIKit) | SPM via [get-encatch/encatch-swift](https://github.com/get-encatch/encatch-swift) | The real iOS SDK. Zero Kotlin dependency. |
-| [`com.encatch:kmp-sdk`](kmp-sdk/README.md) | KMP (Android + iOS) | Maven Central | Thin bridge onto the two native SDKs above — full API, no UI. |
-| [`com.encatch:compose-sdk`](compose-sdk/README.md) | Compose Multiplatform (Android + iOS) | Maven Central | `:kmp-sdk` + a ready-made inline-form composable. |
+| [`com.encatch:kmp-sdk`](kmp-sdk/README.md) | KMP (Android + iOS) | [packages.encatch.com](https://packages.encatch.com/) | Thin bridge onto the two native SDKs above — full API, no UI. |
+| [`com.encatch:compose-sdk`](compose-sdk/README.md) | Compose Multiplatform (Android + iOS) | [packages.encatch.com](https://packages.encatch.com/) | `:kmp-sdk` + a ready-made inline-form composable. |
 
 `com.encatch:core` is the platform-agnostic Kotlin business logic backing `:android` and
 `:kmp-sdk` on Android — most apps don't depend on it directly (see [`core/README.md`](core/README.md)).
@@ -24,7 +24,9 @@ thin bridge libraries for customers building with Compose Multiplatform or Kotli
 - **Kotlin Multiplatform app, no Compose UI** → `com.encatch:kmp-sdk`.
 - **Compose Multiplatform app (Android + iOS from one UI)** → `com.encatch:compose-sdk`.
 
-Each package's README has full installation and usage instructions.
+Each package's README has full installation and usage instructions. The Kotlin packages are
+published to Encatch's Maven repository, `https://packages.encatch.com/maven`, which each README's
+installation section adds (versions 0.1.0 and 0.1.1 are also on Maven Central).
 
 ## Why two native SDKs instead of one shared core?
 
