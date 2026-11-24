@@ -13,7 +13,7 @@ standalone, installable Android app in its own right — plus a runtime **Setup*
 build works for any tester or environment, no rebuild required.
 
 Depends on `:kmp-sdk`/`:android` as internal Gradle modules (external apps use the published
-Maven Central artifacts instead — see [`kmp-sdk/README.md`](../../kmp-sdk/README.md)).
+artifacts from `packages.encatch.com` instead — see [`kmp-sdk/README.md`](../../kmp-sdk/README.md)).
 
 ## Run in an emulator (Android)
 

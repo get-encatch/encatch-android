@@ -53,7 +53,7 @@ dependencies {
 }
 
 mavenPublishing {
-    publishToMavenCentral()
+    // Published to Encatch's Maven repository (the root build file's encatchPackages repository).
     signAllPublications()
     coordinates(artifactId = "android")
     pom {

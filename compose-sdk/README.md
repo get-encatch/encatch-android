@@ -13,6 +13,37 @@ yourself.
 
 ## Installation
 
+Encatch's libraries come from Encatch's own Maven repository. Add it once, in your
+`settings.gradle.kts` (or wherever your project declares its repositories, such as the root
+`build.gradle.kts`):
+
+```kotlin
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "Encatch"
+                    url = uri("https://packages.encatch.com/maven")
+                }
+            }
+            filter {
+                includeGroupAndSubgroups("com.encatch")
+            }
+        }
+    }
+}
+```
+
+`exclusiveContent` takes `com.encatch` libraries only from that repository and uses it for nothing
+else (`includeGroupAndSubgroups` needs Gradle 8.1 or later; older: `includeGroupByRegex("com\\.encatch(\\..+)?")`).
+Every version is listed, with its setup lines and checksums, at https://packages.encatch.com/.
+Versions 0.1.0 and 0.1.1 are also on Maven Central.
+
+Then add the dependency:
+
 ```kotlin
 kotlin {
     sourceSets {

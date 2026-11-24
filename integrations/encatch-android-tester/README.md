@@ -6,8 +6,7 @@ harness), this app has a runtime **Setup** screen so one APK works for any teste
 no rebuild required.
 
 Depends on `:android`/`:core` as internal Gradle modules (external apps use the published
-Maven Central artifacts instead — see [`android/README.md`](../../android/README.md)).
-consumer's dependency line looks like once they are).
+artifacts from `packages.encatch.com` instead — see [`android/README.md`](../../android/README.md)).
 
 ## Run in an emulator
 
