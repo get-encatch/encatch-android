@@ -157,7 +157,7 @@ tasks.configureEach {
 }
 
 mavenPublishing {
-    publishToMavenCentral()
+    // Published to Encatch's Maven repository (the root build file's encatchPackages repository).
     signAllPublications()
     pom {
         name.set("Encatch Compose SDK")

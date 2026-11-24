@@ -1,8 +1,17 @@
 # Changelog
 
 SDK-facing changes to the published packages (`com.encatch:core` / `:android` / `:kmp-sdk` /
-`:compose-sdk` on Maven Central, and the `Encatch` Swift Package). Tester-app and tooling
+`:compose-sdk`, from Encatch's Maven repository at `packages.encatch.com`, and the `Encatch` Swift
+Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
+
+## Unreleased
+
+### Changed
+
+- **The Kotlin packages are published to Encatch's Maven repository, `https://packages.encatch.com/maven`,
+  instead of Maven Central.** Add the repository (see each package's README) before updating past
+  0.1.1, or Gradle reports "Could not find com.encatch:…". 0.1.0 and 0.1.1 stay on Maven Central too.
 
 ## 0.1.1
 
