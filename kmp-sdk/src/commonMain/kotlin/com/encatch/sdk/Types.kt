@@ -84,6 +84,13 @@ data class EncatchConfig(
     val debugMode: Boolean = false,
     val appVersion: String? = null,
     /**
+     * Keep the identified user after an app restart (the default). When false, the user (name, user
+     * id, secure signature, survey history) lives in memory for the current app run only: the next
+     * launch starts as a visitor until the app identifies again, and user data an earlier run saved
+     * is deleted at init. The device id, a saved `stopSession()` and preferences are still saved.
+     */
+    val persistUserAcrossRestarts: Boolean = true,
+    /**
      * Called before any form is shown (manual or automatic). Return `false` to block the SDK form
      * from opening — the host app can then show its own UI using [ShowFormInterceptorPayload].
      * Free to await anything (a coroutine, user input, a network check) before answering: on iOS

@@ -4,6 +4,11 @@ import Foundation
 /// namespaced under `@encatch/`. Backed by `UserDefaults` — this matches the Kotlin source's use
 /// of `Settings`/SharedPreferences, which is also non-secure storage, so `UserDefaults` is the
 /// correct parity choice (not Keychain).
+///
+/// The user's data (user name, user ids, secure signatures, survey history) goes to `UserDefaults`
+/// by default, so it survives a restart; with `persistUserAcrossRestarts` off it goes to a
+/// `MemoryUserStore` for the current app run only (RN 1.5.0 item 4). Everything else (device id, a
+/// saved stopSession(), preferences, the retry queue's labels) is always saved.
 public final class EncatchStorage: @unchecked Sendable {
     private static let keyDeviceId = "@encatch/device_id"
     private static let keyUserName = "@encatch/user_name"
@@ -15,13 +20,33 @@ public final class EncatchStorage: @unchecked Sendable {
     private static let keyRetryQueue = "@encatch/retry_queue"
 
     private let defaults: UserDefaults
+    /// The user's data for this app run when `persistUserAcrossRestarts` is off; nil: `defaults`.
+    private let userMemory: MemoryUserStore?
     private let lock = NSLock()
 
     // Session ID is in-memory only — reset when the app process ends.
     private var inMemorySessionId: String?
 
-    public init(defaults: UserDefaults = .standard) {
+    public convenience init(defaults: UserDefaults = .standard) {
+        self.init(defaults: defaults, userMemory: nil)
+    }
+
+    init(defaults: UserDefaults, userMemory: MemoryUserStore?) {
         self.defaults = defaults
+        self.userMemory = userMemory
+    }
+
+    private func userString(_ key: String) -> String? {
+        if let userMemory { return userMemory.get(key) }
+        return defaults.string(forKey: key)
+    }
+
+    private func setUserString(_ value: String, forKey key: String) {
+        if let userMemory { userMemory.set(value, forKey: key) } else { defaults.set(value, forKey: key) }
+    }
+
+    private func removeUserString(forKey key: String) {
+        if let userMemory { userMemory.remove(key) } else { defaults.removeObject(forKey: key) }
     }
 
     public func getOrCreateDeviceId() -> String {
@@ -51,27 +76,27 @@ public final class EncatchStorage: @unchecked Sendable {
     }
 
     public func getUserName() -> String? {
-        defaults.string(forKey: Self.keyUserName)
+        userString(Self.keyUserName)
     }
 
     public func setUserName(_ name: String) {
-        defaults.set(name, forKey: Self.keyUserName)
+        setUserString(name, forKey: Self.keyUserName)
     }
 
     public func clearUserName() {
-        defaults.removeObject(forKey: Self.keyUserName)
+        removeUserString(forKey: Self.keyUserName)
     }
 
     public func getUserId(userName: String) -> String? {
-        defaults.string(forKey: Self.keyUserIdPrefix + userName)
+        userString(Self.keyUserIdPrefix + userName)
     }
 
     public func setUserId(userName: String, userId: String) {
-        defaults.set(userId, forKey: Self.keyUserIdPrefix + userName)
+        setUserString(userId, forKey: Self.keyUserIdPrefix + userName)
     }
 
     public func clearUserId(userName: String) {
-        defaults.removeObject(forKey: Self.keyUserIdPrefix + userName)
+        removeUserString(forKey: Self.keyUserIdPrefix + userName)
     }
 
     /// The signature of a user's last successful secure identify, and its time (session-time keys).
@@ -81,32 +106,32 @@ public final class EncatchStorage: @unchecked Sendable {
     }
 
     func getUserSignature(userName: String) -> StoredSignature? {
-        guard let raw = defaults.string(forKey: Self.keyUserSignaturePrefix + userName),
+        guard let raw = userString(Self.keyUserSignaturePrefix + userName),
               let data = raw.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(StoredSignature.self, from: data)
     }
 
     func setUserSignature(userName: String, value: StoredSignature) {
         guard let data = try? JSONEncoder().encode(value), let json = String(data: data, encoding: .utf8) else { return }
-        defaults.set(json, forKey: Self.keyUserSignaturePrefix + userName)
+        setUserString(json, forKey: Self.keyUserSignaturePrefix + userName)
     }
 
     func clearUserSignature(userName: String) {
-        defaults.removeObject(forKey: Self.keyUserSignaturePrefix + userName)
+        removeUserString(forKey: Self.keyUserSignaturePrefix + userName)
     }
 
     private func ftKey(_ identityKey: String) -> String { Self.keyFtPrefix + identityKey }
 
     public func getFeedbackTransactions(identityKey: String) -> String? {
-        defaults.string(forKey: ftKey(identityKey))
+        userString(ftKey(identityKey))
     }
 
     public func setFeedbackTransactions(identityKey: String, value: String) {
-        defaults.set(value, forKey: ftKey(identityKey))
+        setUserString(value, forKey: ftKey(identityKey))
     }
 
     public func clearFeedbackTransactions(identityKey: String) {
-        defaults.removeObject(forKey: ftKey(identityKey))
+        removeUserString(forKey: ftKey(identityKey))
     }
 
     public struct Preferences: Sendable {
@@ -168,20 +193,57 @@ public final class EncatchStorage: @unchecked Sendable {
         defaults.removeObject(forKey: Self.keyRetryQueue)
     }
 
-    /// Wipes every `@encatch/`-namespaced key — used by `Encatch.clearAll`.
-    public func clearAll() {
-        defaults.removeObject(forKey: Self.keyDeviceId)
+    /// Deletes the user's data saved on the device (user name, user ids, signatures, survey
+    /// history): with `persistUserAcrossRestarts` off, what an earlier run saved is not kept.
+    func deleteSavedUserData() {
         defaults.removeObject(forKey: Self.keyUserName)
-        defaults.removeObject(forKey: Self.keyPreferences)
-        defaults.removeObject(forKey: Self.keySessionStopped)
-        defaults.removeObject(forKey: Self.keyRetryQueue)
         for key in defaults.dictionaryRepresentation().keys
         where key.hasPrefix(Self.keyUserIdPrefix) || key.hasPrefix(Self.keyFtPrefix)
             || key.hasPrefix(Self.keyUserSignaturePrefix) {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    /// Wipes every `@encatch/`-namespaced key — used by `Encatch.clearAll`.
+    public func clearAll() {
+        defaults.removeObject(forKey: Self.keyDeviceId)
+        defaults.removeObject(forKey: Self.keyPreferences)
+        defaults.removeObject(forKey: Self.keySessionStopped)
+        defaults.removeObject(forKey: Self.keyRetryQueue)
+        deleteSavedUserData()
+        userMemory?.clear()
         lock.lock()
         inMemorySessionId = nil
+        lock.unlock()
+    }
+}
+
+/// Holds the user's data for the current app run when `persistUserAcrossRestarts` is off.
+final class MemoryUserStore: @unchecked Sendable {
+    private var values: [String: String] = [:]
+    private let lock = NSLock()
+
+    func get(_ key: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[key]
+    }
+
+    func set(_ value: String, forKey key: String) {
+        lock.lock()
+        values[key] = value
+        lock.unlock()
+    }
+
+    func remove(_ key: String) {
+        lock.lock()
+        values[key] = nil
+        lock.unlock()
+    }
+
+    func clear() {
+        lock.lock()
+        values = [:]
         lock.unlock()
     }
 }

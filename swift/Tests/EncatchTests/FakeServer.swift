@@ -113,6 +113,7 @@ func makeTestSDK(
     defaults: UserDefaults = makeTestDefaults(),
     logger: RecordingLogger = RecordingLogger(),
     debugMode: Bool = false,
+    persistUserAcrossRestarts: Bool = true,
     configure: (Encatch) -> Void = { _ in }
 ) async throws -> Encatch {
     let sdk = Encatch()
@@ -120,7 +121,7 @@ func makeTestSDK(
     sdk.storageDefaultsForTesting = defaults
     sdk.loggerForTesting = logger
     configure(sdk)
-    try await sdk.initialize(apiKey: "test-api-key-12345", config: EncatchConfig(apiBaseUrl: "https://api.test", debugMode: debugMode))
+    try await sdk.initialize(apiKey: "test-api-key-12345", config: EncatchConfig(apiBaseUrl: "https://api.test", debugMode: debugMode, persistUserAcrossRestarts: persistUserAcrossRestarts))
     return sdk
 }
 

@@ -56,6 +56,12 @@ public final class Encatch: @unchecked Sendable {
     /// The stored session-time signature expired (a 401): until the next successful identify,
     /// background calls are skipped and survey submits are held (RN 1.4.4 item 16).
     private var signatureExpired = false
+    /// A confirmed identity (RN 1.5.0 item 2): the user was restored at init with their id, or their
+    /// identify succeeded. Kept through a user switch until the new user's identify succeeds;
+    /// cleared by resetUser() (also the server's "retries exhausted" reset) and clearAll().
+    private var confirmedIdentity = false
+    /// The user's data for this app run when `persistUserAcrossRestarts` is off; kept across a re-init.
+    private let memoryUserStore = MemoryUserStore()
     private var heldSubmits: [SubmitFormRequest] = []
     static let maxHeldSubmits = 10
     /// The last identify sent or in flight (dedupe); cleared when it is dropped, on reset, clearAll.
@@ -207,7 +213,16 @@ public final class Encatch: @unchecked Sendable {
 
         logger.debug("Initializing SDK...")
 
-        let storage = storageDefaultsForTesting.map { EncatchStorage(defaults: $0) } ?? EncatchStorage()
+        let defaults = storageDefaultsForTesting ?? .standard
+        let storage: EncatchStorage
+        if config?.persistUserAcrossRestarts ?? true {
+            memoryUserStore.clear()
+            storage = EncatchStorage(defaults: defaults)
+        } else {
+            // nothing about the user is kept on the device, including what an earlier run saved
+            storage = EncatchStorage(defaults: defaults, userMemory: memoryUserStore)
+            storage.deleteSavedUserData()
+        }
         self.storage = storage
         let rateLimiter = RateLimiter(defaultPauseMs: timings.defaultPauseMs, maxPauseMs: timings.maxPauseMs, logger: logger)
         self.rateLimiter = rateLimiter
@@ -268,9 +283,17 @@ public final class Encatch: @unchecked Sendable {
                 userIdState = storedId
                 userSignature = stored?.signature
                 userSignatureTime = stored?.time
+                confirmedIdentity = storedId != nil
             }
             feedbackTransactions = storage.getFeedbackTransactions(identityKey: storedName)
         } else {
+            withStateLock {
+                userNameState = nil
+                userIdState = nil
+                userSignature = nil
+                userSignatureTime = nil
+                confirmedIdentity = false
+            }
             feedbackTransactions = storage.getFeedbackTransactions(identityKey: "anonymous")
         }
 
@@ -398,6 +421,8 @@ public final class Encatch: @unchecked Sendable {
         let current: Bool = withStateLock {
             guard userNameState == userName else { return false }
             if let replyUserId { userIdState = replyUserId }
+            // the identify succeeded: this user is now the confirmed identity
+            if userIdState != nil { confirmedIdentity = true }
             // After a successful secure identify its signature (and time) go on every request of this
             // user; an identify without `secure` clears them.
             userSignature = secure?.signature
@@ -1040,6 +1065,7 @@ public final class Encatch: @unchecked Sendable {
         initialized = false
         apiKeyState = nil
         withStateLock {
+            confirmedIdentity = false
             userNameState = nil
             userIdState = nil
             userSignature = nil
@@ -1131,6 +1157,7 @@ public final class Encatch: @unchecked Sendable {
         let (previous, droppedSubmits): (String?, Int) = withStateLock {
             let previous = userNameState
             let dropped = heldSubmits.count
+            confirmedIdentity = false
             userNameState = nil
             userIdState = nil
             userSignature = nil
@@ -1293,6 +1320,20 @@ public final class Encatch: @unchecked Sendable {
     public var sessionId: String? { sessionIdState }
     public var userName: String? { withStateLock { userNameState } }
     public var userId: String? { withStateLock { userIdState } }
+
+    /// Whether the SDK has a confirmed identity (RN 1.5.0 item 2): `true` once an identify
+    /// succeeded, or at launch when a user saved by an earlier run is restored with their user id.
+    ///
+    /// - `false` before `init`, for a visitor, and while a first identify is pending or after it failed.
+    /// - Switching from one user to another keeps describing the previous user until the new user's
+    ///   identify succeeds (requests already go out as a visitor during the switch).
+    /// - `false` after `resetUser()` (also the server's "retries exhausted" reset) and `clearAll()`;
+    ///   `stopSession()` and an expired secure signature leave it unchanged.
+    /// - With `EncatchConfig.persistUserAcrossRestarts` off it is `false` at every launch until the
+    ///   app identifies.
+    public func isIdentified() -> Bool {
+        initialized && withStateLock { confirmedIdentity }
+    }
     public var debugMode: Bool { debugModeState }
 }
 

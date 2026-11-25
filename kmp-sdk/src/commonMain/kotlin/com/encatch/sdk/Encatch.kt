@@ -178,4 +178,11 @@ expect object Encatch {
     val userName: String?
     val userId: String?
     val debugMode: Boolean
+
+    /**
+     * Whether the SDK has a confirmed identity: `true` once an identify succeeded, or at launch when a
+     * user saved by an earlier run is restored with their user id. A user switch keeps describing the
+     * previous user until the new user's identify succeeds; `resetUser()` and `clearAll()` end it.
+     */
+    fun isIdentified(): Boolean
 }

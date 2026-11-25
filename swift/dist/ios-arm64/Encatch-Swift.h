@@ -422,6 +422,8 @@ SWIFT_CLASS_PROPERTY(@property (nonatomic, class, readonly, strong) EncatchBridg
 @property (nonatomic, readonly, copy) NSString * _Nullable sessionId;
 @property (nonatomic, readonly, copy) NSString * _Nullable userName;
 @property (nonatomic, readonly, copy) NSString * _Nullable userId;
+/// <code>Encatch.isIdentified()</code>: whether the SDK has a confirmed identity.
+@property (nonatomic, readonly) BOOL isIdentified;
 @property (nonatomic, readonly) BOOL debugMode;
 /// Installs the app-wide modal form host (<code>EncatchFormHost.install()</code>). <code>EncatchFormHost</code> is a
 /// caseless <code>enum</code> namespace, which Swift can’t expose to Objective-C directly (only
@@ -441,6 +443,8 @@ SWIFT_CLASS_NAMED("EncatchBridgeConfig")
 @property (nonatomic) BOOL debugMode;
 @property (nonatomic) BOOL isFullScreen;
 @property (nonatomic, copy) NSString * _Nullable appVersion;
+/// <code>EncatchConfig.persistUserAcrossRestarts</code>: false keeps the user in memory for this app run only.
+@property (nonatomic) BOOL persistUserAcrossRestarts;
 /// One of “light” / “dark” / “system” (case-insensitive). Any other value (including nil)
 /// resolves to <code>.system</code>.
 @property (nonatomic, copy) NSString * _Nullable theme;
@@ -594,6 +598,8 @@ SWIFT_CLASS_NAMED("EncatchBridgeUserTraits")
 /// height capped at <code>maxDialogHeightPercentInApp</code> (default 80%) of the screen, dismissible via
 /// the bridge’s <code>onClose</code>. Live light/dark-mode reactivity comes for free from
 /// <code>traitCollectionDidChange</code> — no manual system-appearance observer needed, unlike Android.
+/// <em>Not public API.</em> Used only inside the SDK; it may change in any release, including
+/// minor ones.
 SWIFT_CLASS("_TtC7Encatch25EncatchFormViewController")
 @interface EncatchFormViewController : UIViewController
 - (void)viewDidLoad;

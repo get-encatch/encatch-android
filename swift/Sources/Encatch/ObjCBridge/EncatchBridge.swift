@@ -122,6 +122,8 @@ public final class EncatchBridgeConfig: NSObject {
     @objc public var debugMode: Bool = false
     @objc public var isFullScreen: Bool = false
     @objc public var appVersion: String?
+    /// `EncatchConfig.persistUserAcrossRestarts`: false keeps the user in memory for this app run only.
+    @objc public var persistUserAcrossRestarts: Bool = true
     /// One of "light" / "dark" / "system" (case-insensitive). Any other value (including nil)
     /// resolves to `.system`.
     @objc public var theme: String?
@@ -141,6 +143,7 @@ public final class EncatchBridgeConfig: NSObject {
             isFullScreen: isFullScreen,
             debugMode: debugMode,
             appVersion: appVersion,
+            persistUserAcrossRestarts: persistUserAcrossRestarts,
             onBeforeShowForm: interceptor.map { handler in
                 // The literal's contextual type comes from map's generic parameter, so
                 // @Sendable isn't inferred — without the annotation the conversion to
@@ -792,6 +795,8 @@ public final class EncatchBridge: NSObject {
     @objc public var sessionId: String? { Encatch.shared.sessionId }
     @objc public var userName: String? { Encatch.shared.userName }
     @objc public var userId: String? { Encatch.shared.userId }
+    /// `Encatch.isIdentified()`: whether the SDK has a confirmed identity.
+    @objc public var isIdentified: Bool { Encatch.shared.isIdentified() }
     @objc public var debugMode: Bool { Encatch.shared.debugMode }
 
     #if canImport(UIKit)

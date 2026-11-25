@@ -210,6 +210,7 @@ actual object Encatch {
     actual val sessionId: String? get() = com.encatch.core.Encatch.sessionId
     actual val userName: String? get() = com.encatch.core.Encatch.userName
     actual val userId: String? get() = com.encatch.core.Encatch.userId
+    actual fun isIdentified(): Boolean = com.encatch.core.Encatch.isIdentified()
     actual val debugMode: Boolean get() = com.encatch.core.Encatch.debugMode
 }
 
@@ -266,6 +267,7 @@ private fun EncatchConfig.toCore(): com.encatch.core.EncatchConfig {
         isFullScreen = isFullScreen,
         debugMode = debugMode,
         appVersion = appVersion,
+        persistUserAcrossRestarts = persistUserAcrossRestarts,
         onBeforeShowForm = onBeforeShowForm?.let { interceptor ->
             { payload: com.encatch.core.ShowFormInterceptorPayload -> interceptor(payload.toSdk()) }
         },

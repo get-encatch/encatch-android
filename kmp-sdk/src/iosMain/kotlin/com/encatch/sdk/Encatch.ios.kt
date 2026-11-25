@@ -365,6 +365,7 @@ actual object Encatch {
     actual val sessionId: String? get() = EncatchBridge.shared().sessionId()
     actual val userName: String? get() = EncatchBridge.shared().userName()
     actual val userId: String? get() = EncatchBridge.shared().userId()
+    actual fun isIdentified(): Boolean = EncatchBridge.shared().isIdentified()
     actual val debugMode: Boolean get() = EncatchBridge.shared().debugMode()
 }
 
@@ -437,6 +438,7 @@ private fun EncatchConfig.toBridge(): EncatchBridgeConfig = EncatchBridgeConfig(
     setDebugMode(debugMode)
     setIsFullScreen(isFullScreen)
     setAppVersion(appVersion)
+    setPersistUserAcrossRestarts(persistUserAcrossRestarts)
     setTheme(theme.wireValue)
     val interceptor = onBeforeShowForm
     if (interceptor != null) {

@@ -21,6 +21,12 @@ public struct EncatchConfig: Sendable {
     public var debugMode: Bool
     /// Override app version (default: auto-detected from the host app's bundle).
     public var appVersion: String?
+    /// Keep the identified user after an app restart (the default). When false, the user (name,
+    /// user id, secure signature, survey history) lives in memory for the current app run only: the
+    /// next launch starts as a visitor until the app identifies again, and user data an earlier run
+    /// saved is deleted at `init`. The device id, a saved `stopSession()` and the locale and country
+    /// preferences are still saved.
+    public var persistUserAcrossRestarts: Bool
     public var onBeforeShowForm: BeforeShowFormInterceptor?
 
     public init(
@@ -30,6 +36,7 @@ public struct EncatchConfig: Sendable {
         isFullScreen: Bool = false,
         debugMode: Bool = false,
         appVersion: String? = nil,
+        persistUserAcrossRestarts: Bool = true,
         onBeforeShowForm: BeforeShowFormInterceptor? = nil
     ) {
         self.apiBaseUrl = apiBaseUrl
@@ -38,6 +45,7 @@ public struct EncatchConfig: Sendable {
         self.isFullScreen = isFullScreen
         self.debugMode = debugMode
         self.appVersion = appVersion
+        self.persistUserAcrossRestarts = persistUserAcrossRestarts
         self.onBeforeShowForm = onBeforeShowForm
     }
 }
