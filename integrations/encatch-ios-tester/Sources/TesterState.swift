@@ -21,6 +21,9 @@ final class TesterState: ObservableObject {
     /// — plain SwiftUI `ScrollView`s don't grow their scroll range to compensate for the keyboard,
     /// so without this, fields near the bottom of a form are unreachable while the keyboard is up.
     @Published var keyboardHeight: CGFloat = 0
+    /// `Encatch.shared.isIdentified()` for the readout on Login and Home, read every half second
+    /// (it changes when an identify reply arrives).
+    @Published var identified = false
 
     let prefs = TesterPrefs()
     let usersStore = TestUsersStore()
@@ -67,6 +70,13 @@ final class TesterState: ObservableObject {
         if prefs.isSetupComplete, let apiKey = prefs.apiKey {
             Task { await initializeSdk(apiKey: apiKey, environment: prefs.environment, interceptorFormId: prefs.interceptorFormId) }
         }
+        Task { @MainActor [weak self] in
+            while let self {
+                let value = Encatch.shared.isIdentified()
+                if self.identified != value { self.identified = value }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
     }
 
     private func stringValue(_ value: JSONValue?) -> String? {
@@ -94,7 +104,8 @@ final class TesterState: ObservableObject {
         }
     }
 
-    func saveSetupAndInit(environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) {
+    func saveSetupAndInit(environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String, persistUser: Bool) {
+        prefs.persistUser = persistUser
         prefs.environment = environment
         prefs.apiKey = apiKey
         prefs.formId = formId
@@ -115,6 +126,7 @@ final class TesterState: ObservableObject {
             apiBaseUrl: environment.apiBaseUrl,
             webHost: environment.webHost,
             debugMode: true,
+            persistUserAcrossRestarts: prefs.persistUser,
             // Unconditionally blocks the configured interceptor form id and queues it for the
             // InterceptorCarousel — demonstrates fully replacing the SDK's modal with a
             // custom-rendered native form.
@@ -136,6 +148,9 @@ final class TesterState: ObservableObject {
         } catch {
             print("Encatch.initialize failed: \(error)")
         }
+        // the login screen may have appeared before the SDK was ready: track it now
+        let onLogin = await MainActor.run { if case .login = self.screen { return true } else { return false } }
+        if onLogin { trackScreen("Login") }
     }
 
     private func formTitle(from formConfig: ShowFormResponse) -> String? {

@@ -27,8 +27,27 @@ import io.ktor.http.HttpStatusCode
  * object body; most endpoints don't need specific fields (see `EncatchApiClient.post`'s handling
  * in `ApiClient.kt`), only `show-form`'s response needs `feedbackConfigurationId` since that
  * flows into `ShowFormResponse`/`ShowFormPayload`.
+ *
+ * For end-to-end checks (integrations/e2e) it also records every API call with its identity
+ * headers: `GET /__mock/requests` returns them as JSON, `POST /__mock/reset` clears them.
+ * identify-user answers with a user id derived from the name (`uid-<userName>`), as the real
+ * server gives each user one.
  */
 private const val DEFAULT_PORT = 8089
+
+/** One recorded API call: the endpoint and the headers the identity and session checks need. */
+private data class Recorded(val endpoint: String, val headers: Map<String, String?>, val atMs: Long)
+
+private val recorded = java.util.concurrent.CopyOnWriteArrayList<Recorded>()
+private val recordedHeaders = listOf("X-Session-Id", "X-User-Name", "X-User-Id", "X-User-Signature", "X-Device-Id")
+
+private fun io.ktor.server.application.ApplicationCall.record() {
+    val endpoint = request.local.uri.substringBefore('?').substringAfterLast('/')
+    recorded += Recorded(endpoint, recordedHeaders.associateWith { request.headers[it] }, System.currentTimeMillis())
+}
+
+private fun jsonString(value: String?): String =
+    if (value == null) "null" else kotlinx.serialization.json.JsonPrimitive(value).toString()
 
 fun main(args: Array<String>) {
     val port = args.firstOrNull()?.toIntOrNull() ?: DEFAULT_PORT
@@ -47,21 +66,45 @@ fun main(args: Array<String>) {
                 call.respondText(formHtml, ContentType.Text.Html, HttpStatusCode.OK)
             }
 
+            get("/__mock/requests") {
+                val items = recorded.joinToString(",") { r ->
+                    val headers = r.headers.entries.joinToString(",") { "${jsonString(it.key)}:${jsonString(it.value)}" }
+                    """{"endpoint":${jsonString(r.endpoint)},"atMs":${r.atMs},"headers":{$headers}}"""
+                }
+                call.respondJson("[$items]")
+            }
+            post("/__mock/reset") {
+                recorded.clear()
+                call.respondOk()
+            }
+
             post("/engage-product/encatch/api/v2/encatch/show-form") {
+                call.record()
                 call.receiveText()
                 call.respondJson("""{"feedbackConfigurationId":"mock-config-1","appearanceProperties":{}}""")
             }
-            post("/engage-product/encatch/api/v2/encatch/identify-user") { call.respondOk() }
-            post("/engage-product/encatch/api/v2/encatch/track-event") { call.respondOk() }
-            post("/engage-product/encatch/api/v2/encatch/track-screen") { call.respondOk() }
-            post("/engage-product/encatch/api/v2/encatch/dismiss-form") { call.respondOk() }
-            post("/engage-product/encatch/api/v2/encatch/ping") { call.respondOk() }
-            post("/engage-product/encatch/api/v2/encatch/submit-form") { call.respondOk() }
+            post("/engage-product/encatch/api/v2/encatch/identify-user") {
+                call.record()
+                val body = call.receiveText()
+                val name = runCatching {
+                    kotlinx.serialization.json.Json.parseToJsonElement(body)
+                        .let { it as kotlinx.serialization.json.JsonObject }["userName"]
+                        ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+                }.getOrNull()
+                call.respondJson(if (name != null) """{"userId":${jsonString("uid-$name")}}""" else "{}")
+            }
+            post("/engage-product/encatch/api/v2/encatch/track-event") { call.record(); call.respondOk() }
+            post("/engage-product/encatch/api/v2/encatch/track-screen") { call.record(); call.respondOk() }
+            post("/engage-product/encatch/api/v2/encatch/dismiss-form") { call.record(); call.respondOk() }
+            post("/engage-product/encatch/api/v2/encatch/ping") { call.record(); call.respondOk() }
+            post("/engage-product/encatch/api/v2/encatch/submit-form") { call.record(); call.respondOk() }
             post("/engage-product/encatch/api/v2/encatch/refine-text") {
+                call.record()
                 call.receiveText()
                 call.respondJson("""{"refinedText":"mock refined text"}""")
             }
             post("/engage-product/encatch/api/v2/encatch/upload") {
+                call.record()
                 call.receiveText()
                 call.respondJson("""{"fileUrl":"http://localhost:$port/mock-uploaded-file"}""")
             }

@@ -6,13 +6,15 @@ extension String {
 
 /// Environment presets for the Setup screen — a pure tester-app convenience, not an SDK concept.
 enum TesterEnvironment: String, CaseIterable {
-    case dev, uat, prod
+    /// `mock`: this repo's mock-server (`./gradlew :mock-server:run`) on the Mac running the Simulator.
+    case dev, uat, prod, mock
 
     var label: String {
         switch self {
         case .dev: return "Dev"
         case .uat: return "UAT"
         case .prod: return "Prod"
+        case .mock: return "Mock"
         }
     }
 
@@ -21,6 +23,7 @@ enum TesterEnvironment: String, CaseIterable {
         case .dev: return "https://api.dev.encatch.com"
         case .uat: return "https://api.uat.encatch.com"
         case .prod: return "https://api.encatch.com"
+        case .mock: return "http://127.0.0.1:8089"
         }
     }
 
@@ -29,6 +32,7 @@ enum TesterEnvironment: String, CaseIterable {
         case .dev: return "https://form.dev.encatch.com"
         case .uat: return "https://form-uat.encatch.com"
         case .prod: return "https://form.encatch.com"
+        case .mock: return "http://127.0.0.1:8089"
         }
     }
 }
@@ -45,6 +49,7 @@ final class TesterPrefs {
         static let interceptorFormId = "encatch_tester_interceptor_form_id"
         static let environment = "encatch_tester_environment"
         static let userName = "encatch_tester_user_name"
+        static let persistUser = "encatch_tester_persist_user"
     }
 
     var apiKey: String? {
@@ -80,6 +85,12 @@ final class TesterPrefs {
     var userName: String? {
         get { defaults.string(forKey: Keys.userName) }
         set { defaults.set(newValue, forKey: Keys.userName) }
+    }
+
+    /// `EncatchConfig.persistUserAcrossRestarts` (Setup's "Keep the user after an app restart").
+    var persistUser: Bool {
+        get { defaults.object(forKey: Keys.persistUser) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.persistUser) }
     }
 
     var isSetupComplete: Bool {

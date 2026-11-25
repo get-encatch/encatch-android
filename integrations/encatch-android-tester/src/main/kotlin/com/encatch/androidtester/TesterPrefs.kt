@@ -9,6 +9,8 @@ enum class TesterEnvironment(val label: String, val apiBaseUrl: String, val webH
     DEV("Dev", "https://api.dev.encatch.com", "https://form.dev.encatch.com"),
     UAT("UAT", "https://api.uat.encatch.com", "https://form-uat.encatch.com"),
     PROD("Prod", "https://api.encatch.com", "https://form.encatch.com"),
+    /** This repo's mock-server (`./gradlew :mock-server:run`) on the host, as the emulator reaches it. */
+    MOCK("Mock", "http://10.0.2.2:8089", "http://10.0.2.2:8089"),
     ;
 
     companion object {
@@ -53,6 +55,11 @@ class TesterPrefs(context: Context) {
         get() = prefs.getString(KEY_USER_NAME, null)
         set(value) = prefs.edit().putString(KEY_USER_NAME, value).apply()
 
+    /** `EncatchConfig.persistUserAcrossRestarts` (Setup's "Keep the user after an app restart"). */
+    var persistUser: Boolean
+        get() = prefs.getBoolean(KEY_PERSIST_USER, true)
+        set(value) = prefs.edit().putBoolean(KEY_PERSIST_USER, value).apply()
+
     val isSetupComplete: Boolean
         get() = !apiKey.isNullOrBlank() && !formId.isNullOrBlank()
 
@@ -68,6 +75,7 @@ class TesterPrefs(context: Context) {
         const val KEY_INTERCEPTOR_FORM_ID = "interceptor_form_id"
         const val KEY_ENVIRONMENT = "environment"
         const val KEY_USER_NAME = "user_name"
+        const val KEY_PERSIST_USER = "persist_user"
     }
 }
 

@@ -43,12 +43,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.encatch.android.EncatchInlineFormView
 import com.encatch.core.Encatch
+
+/** What the SDK says about the identity (`Encatch.isIdentified()`), shown on Login and Home. */
+@Composable
+private fun IdentifiedLine(identified: Boolean) {
+    Text(
+        "Encatch.isIdentified(): ${if (identified) "yes" else "no"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
 
 /** Centered hero used on Setup/Login/EditProfile: brand mark, bold title, secondary caption. */
 @Composable
@@ -74,7 +88,8 @@ private fun HeroHeader(title: String, caption: String, avatar: (@Composable () -
 @Composable
 fun SetupScreen(
     initialEnvironment: TesterEnvironment,
-    onContinue: (environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String) -> Unit,
+    initialPersistUser: Boolean,
+    onContinue: (environment: TesterEnvironment, apiKey: String, formId: String, interceptorFormId: String, persistUser: Boolean) -> Unit,
 ) {
     var environment by remember { mutableStateOf(initialEnvironment) }
     // Prefilled (still editable) from the developer-local dev-tester-defaults.properties
@@ -82,6 +97,7 @@ fun SetupScreen(
     var apiKey by remember { mutableStateOf(BuildConfig.DEV_DEFAULT_API_KEY) }
     var formId by remember { mutableStateOf(BuildConfig.DEV_DEFAULT_FORM_ID) }
     var interceptorFormId by remember { mutableStateOf("") }
+    var persistUser by remember { mutableStateOf(initialPersistUser) }
 
     Column(
         Modifier.padding(horizontal = 20.dp).verticalScroll(rememberScrollState()).imePadding(),
@@ -137,9 +153,29 @@ fun SetupScreen(
             }
         }
 
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionHeader("SDK options")
+            TesterCard {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.toggleable(value = persistUser, role = Role.Switch, onValueChange = { persistUser = it }),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Keep the user after an app restart", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "EncatchConfig.persistUserAcrossRestarts. Off: the user lives in memory for this app run only.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = persistUser, onCheckedChange = null)
+                }
+            }
+        }
+
         PrimaryPillButton(
             text = "Save & continue",
-            onClick = { onContinue(environment, apiKey.trim(), formId.trim(), interceptorFormId.trim()) },
+            onClick = { onContinue(environment, apiKey.trim(), formId.trim(), interceptorFormId.trim(), persistUser) },
             enabled = apiKey.isNotBlank() && formId.isNotBlank(),
         )
         Spacer(Modifier.height(12.dp))
@@ -153,6 +189,7 @@ fun LoginScreen(
     onSaveNewUser: (TestUser) -> Unit,
     onEditProfile: (String) -> Unit,
     selectedUsername: String?,
+    identified: Boolean,
     onIdentify: () -> Unit,
     onChangeSetup: () -> Unit,
 ) {
@@ -169,6 +206,7 @@ fun LoginScreen(
             title = "Log in",
             caption = "Mock login — calls Encatch.identifyUser(username). Saved users are local to this tester, independent of the SDK.",
         )
+        IdentifiedLine(identified)
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader("Saved users")
@@ -301,6 +339,7 @@ fun EditProfileScreen(
 @Composable
 fun HomeScreen(
     userName: String?,
+    identified: Boolean,
     lastEvent: String,
     interceptorFormId: String?,
     onShowModalForm: () -> Unit,
@@ -317,6 +356,7 @@ fun HomeScreen(
         Modifier.padding(horizontal = 20.dp, vertical = 16.dp).verticalScroll(rememberScrollState()).imePadding(),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        IdentifiedLine(identified)
         if (!userName.isNullOrBlank()) {
             TesterCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {

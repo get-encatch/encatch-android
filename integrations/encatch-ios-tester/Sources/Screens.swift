@@ -7,10 +7,12 @@ struct SetupView: View {
     @State private var apiKey = DevDefaults.apiKey
     @State private var formId = DevDefaults.formId
     @State private var interceptorFormId = ""
+    @State private var persistUser: Bool
 
     init(state: TesterState) {
         self.state = state
         _environment = State(initialValue: state.prefs.environment)
+        _persistUser = State(initialValue: state.prefs.persistUser)
     }
 
     var body: some View {
@@ -74,12 +76,31 @@ struct SetupView: View {
                     .card()
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    SectionHeader(title: "SDK options", icon: "gearshape.fill")
+                    // the whole row toggles, not only the switch
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Keep the user after an app restart").font(.subheadline.weight(.semibold))
+                            Text("EncatchConfig.persistUserAcrossRestarts. Off: the user lives in memory for this app run only.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Toggle("Keep the user after an app restart", isOn: $persistUser).labelsHidden()
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { persistUser.toggle() }
+                    .card()
+                }
+
                 Button("Save & continue") {
                     state.saveSetupAndInit(
                         environment: environment,
                         apiKey: apiKey.trimmed,
                         formId: formId.trimmed,
-                        interceptorFormId: interceptorFormId.trimmed
+                        interceptorFormId: interceptorFormId.trimmed,
+                        persistUser: persistUser
                     )
                 }
                 .buttonStyle(PrimaryButtonStyle())
@@ -110,6 +131,7 @@ struct LoginView: View {
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 8)
+                    IdentifiedLine(identified: state.identified)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.top, 24)
@@ -215,6 +237,18 @@ struct LoginView: View {
             .avoidsKeyboard(state.keyboardHeight)
         }
         .screenBackground()
+        .onAppear { state.trackScreen("Login") }
+    }
+}
+
+/// What the SDK says about the identity (`Encatch.shared.isIdentified()`), shown on Login and Home.
+struct IdentifiedLine: View {
+    let identified: Bool
+
+    var body: some View {
+        Text("Encatch.isIdentified(): \(identified ? "yes" : "no")")
+            .font(.caption)
+            .foregroundColor(.secondary)
     }
 }
 
@@ -378,6 +412,7 @@ struct HomeTabView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                IdentifiedLine(identified: state.identified)
                 if let userName = state.prefs.userName {
                     HStack(spacing: 12) {
                         InitialsAvatar(name: userName, size: 44)

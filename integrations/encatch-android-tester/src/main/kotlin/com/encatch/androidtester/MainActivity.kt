@@ -46,6 +46,7 @@ import com.encatch.core.EventType
 import com.encatch.core.Theme
 import com.encatch.core.UserTraits
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -104,6 +105,8 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
         )
     }
     var lastEvent by remember { mutableStateOf("No events yet") }
+    var sdkReady by remember { mutableStateOf(Encatch.isInitialized) }
+    var identified by remember { mutableStateOf(false) }
     var selectedUsername by remember { mutableStateOf(prefs.userName) }
     var savedUsers by remember { mutableStateOf(usersStore.list()) }
     var currentTheme by remember { mutableStateOf(Theme.SYSTEM) }
@@ -120,6 +123,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                 apiBaseUrl = prefs.apiBaseUrl ?: prefs.environment.apiBaseUrl,
                 webHost = prefs.webHost ?: prefs.environment.webHost,
                 debugMode = true,
+                persistUserAcrossRestarts = prefs.persistUser,
                 // Unconditionally blocks the configured interceptor form id and queues it for
                 // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with
                 // a custom-rendered native form.
@@ -145,6 +149,22 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
     // skips the Setup screen, so init must happen here instead of Setup's onContinue.
     LaunchedEffect(Unit) {
         if (prefs.isSetupComplete && !Encatch.isInitialized) initializeSdk()
+        sdkReady = Encatch.isInitialized
+    }
+
+    // Encatch.isIdentified() for the readout on Login and Home: it changes when an identify reply
+    // arrives, so it is read again every half second.
+    LaunchedEffect(Unit) {
+        while (true) {
+            identified = Encatch.isIdentified()
+            delay(500)
+        }
+    }
+
+    // The login screen is tracked like Home is (a host app tracks the screens it shows), once the
+    // SDK is initialized.
+    LaunchedEffect(screen, sdkReady) {
+        if (sdkReady && screen == Screen.Login) Encatch.trackScreen("Login")
     }
 
     // Registered once for the process lifetime, same as a real host app would at startup.
@@ -187,15 +207,18 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
         when (val current = screen) {
             Screen.Setup -> SetupScreen(
                 initialEnvironment = prefs.environment,
-                onContinue = { environment, apiKey, formId, interceptorFormId ->
+                initialPersistUser = prefs.persistUser,
+                onContinue = { environment, apiKey, formId, interceptorFormId, persistUser ->
                     prefs.environment = environment
                     prefs.apiKey = apiKey
                     prefs.formId = formId
                     prefs.apiBaseUrl = environment.apiBaseUrl
                     prefs.webHost = environment.webHost
                     prefs.interceptorFormId = interceptorFormId.ifBlank { null }
+                    prefs.persistUser = persistUser
                     scope.launch {
                         initializeSdk()
+                        sdkReady = true
                         screen = Screen.Login
                     }
                 },
@@ -204,6 +227,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
             Screen.Login -> LoginScreen(
                 savedUsers = savedUsers,
                 selectedUsername = selectedUsername,
+                identified = identified,
                 onSelectUser = { user -> selectedUsername = user.username },
                 onSaveNewUser = { user ->
                     usersStore.add(user)
@@ -317,6 +341,7 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                     when (tab) {
                         TesterTab.HOME -> HomeScreen(
                             userName = prefs.userName,
+                            identified = identified,
                             lastEvent = lastEvent,
                             interceptorFormId = prefs.interceptorFormId,
                             onShowModalForm = { scope.launch { Encatch.showForm(prefs.formId.orEmpty()) } },
