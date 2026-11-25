@@ -23,5 +23,13 @@ data class EncatchConfig(
     val debugMode: Boolean = false,
     /** Override app version (default: auto-detected from the host app's PackageInfo). */
     val appVersion: String? = null,
+    /**
+     * Keep the identified user after an app restart (the default). When false, the user (name, user
+     * id, secure signature, survey history) lives in memory for the current app run only: the next
+     * launch starts as a visitor until the app identifies again, and user data an earlier run saved is
+     * deleted at [Encatch.init]. The device id, a saved `stopSession()` and the locale and country
+     * preferences are still saved.
+     */
+    val persistUserAcrossRestarts: Boolean = true,
     val onBeforeShowForm: BeforeShowFormInterceptor? = null,
 )

@@ -65,6 +65,10 @@ object Encatch {
      * screens, ping and automatic surveys are skipped and survey submits are held (RN 1.4.4 item 16).
      */
     @Volatile private var signatureExpired = false
+    // A confirmed identity (RN 1.5.0 item 2): the user was restored at init with their id, or their
+    // identify succeeded. Kept through a user switch until the new user's identify succeeds; cleared
+    // by resetUser() (also the server's "retries exhausted" reset) and clearAll().
+    @Volatile private var confirmedIdentity = false
     private val heldSubmits = mutableListOf<SubmitFormRequest>()
     private val secureLock = Mutex()
     /** identifyUser and resetUser run one after the other (RN 1.4.4 item 13). */
@@ -120,6 +124,8 @@ object Encatch {
     private var pendingResponses: MutableMap<String, JsonElement> = mutableMapOf()
 
     private lateinit var storage: EncatchStorage
+    // The user's data for this app run when persistUserAcrossRestarts is off; kept across a re-init.
+    private val memoryUserStore = MemoryUserStore()
     private lateinit var apiClient: EncatchApiClient
     private lateinit var retryQueue: RetryQueue
     private lateinit var sessionManager: SessionManager
@@ -195,7 +201,15 @@ object Encatch {
 
         logger.debug("Initializing SDK...")
 
-        storage = settingsFactory?.let { EncatchStorage(it()) } ?: EncatchStorage()
+        val settings = settingsFactory?.invoke() ?: createEncatchSettings()
+        val persistUser = config?.persistUserAcrossRestarts ?: true
+        storage = if (persistUser) {
+            memoryUserStore.clear()
+            EncatchStorage(settings)
+        } else {
+            // nothing about the user is kept on the device, including what an earlier run saved
+            EncatchStorage(settings, userStore = memoryUserStore).also { it.deleteSavedUserData() }
+        }
         val limiter = RateLimiter(scope, warn = { logger.warn(it) })
         rateLimiter = limiter
         apiClient = EncatchApiClient(
@@ -255,8 +269,13 @@ object Encatch {
             loadStoredSignature(storedName)
             feedbackTransactions = storage.getFeedbackTransactions(storedName)
         } else {
+            userNameState = null
+            userIdState = null
+            userSignature = null
+            userSignatureTime = null
             feedbackTransactions = storage.getFeedbackTransactions("anonymous")
         }
+        confirmedIdentity = userNameState != null && userIdState != null
 
         initialized = true
 
@@ -356,6 +375,8 @@ object Encatch {
                 userIdState = it
                 storage.setUserId(userName, it)
             }
+            // the identify succeeded: this user is now the confirmed identity
+            if (userIdState != null) confirmedIdentity = true
             // Secure identify: from now on the signature (and its time) go on every request of this
             // user and survive a restart; an identify without `secure` clears them.
             if (secure != null) {
@@ -924,6 +945,7 @@ object Encatch {
         if (::storage.isInitialized) storage.clearAll()
 
         initialized = false
+        confirmedIdentity = false
         apiKeyState = null
         userNameState = null
         userIdState = null
@@ -1009,6 +1031,7 @@ object Encatch {
         collapser.clear()
         // the in-memory identity first, so nothing goes out with a half-cleared one
         val previous = userNameState
+        confirmedIdentity = false
         userIdState = null
         userNameState = null
         userSignature = null
@@ -1175,6 +1198,25 @@ object Encatch {
     val deviceId: String? get() = deviceIdState
     val sessionId: String? get() = sessionIdState
     val userName: String? get() = userNameState
+
+    /**
+     * Whether the SDK has a confirmed identity (RN 1.5.0 item 2): `true` once an identify succeeded,
+     * or at launch when a user saved by an earlier run is restored with their user id. Synchronous.
+     *
+     * - `false` before [init], for a visitor, and while a first identify is pending or after it failed.
+     * - Switching from one user to another keeps describing the previous user until the new user's
+     *   identify succeeds (requests already go out as a visitor during the switch).
+     * - `false` after [resetUser] (also the server's "retries exhausted" reset) and [clearAll];
+     *   [stopSession] and an expired secure signature leave it unchanged.
+     * - With `EncatchConfig.persistUserAcrossRestarts = false` it is `false` at every launch until the
+     *   app identifies.
+     */
+    fun isIdentified(): Boolean = initialized && confirmedIdentity
+
+    /** Tests only: what a new app run starts without (the in-memory user store), for a "restart". */
+    internal fun forgetAppRunForTest() {
+        memoryUserStore.clear()
+    }
     val userId: String? get() = userIdState
     val debugMode: Boolean get() = debugModeState
 }

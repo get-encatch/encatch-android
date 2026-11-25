@@ -2,15 +2,23 @@ package com.encatch.core
 
 import com.russhwolf.settings.Settings
 import com.russhwolf.settings.set
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
  * Key-value persistence layer, mirroring `storage.ts` from the RN SDK. All keys are
  * namespaced under `@encatch/`. Backed by [Settings] (SharedPreferences on Android).
+ *
+ * The user's data (user name, user ids, secure signatures, survey history) goes through [userStore]:
+ * with `persistUserAcrossRestarts` (the default) it is [settings], so it survives a restart; without
+ * it, an in-memory store that lasts for the current app run only (RN 1.5.0 item 4). Everything else
+ * (device id, a saved stopSession(), preferences, the retry queue's labels) is always saved.
  */
 class EncatchStorage internal constructor(
     private val settings: Settings = createEncatchSettings(),
+    private val userStore: Settings = settings,
 ) {
     companion object {
         private const val KEY_DEVICE_ID = "@encatch/device_id"
@@ -45,25 +53,25 @@ class EncatchStorage internal constructor(
         inMemorySessionId = null
     }
 
-    fun getUserName(): String? = runCatching { settings.getStringOrNull(KEY_USER_NAME) }.getOrNull()
+    fun getUserName(): String? = runCatching { userStore.getStringOrNull(KEY_USER_NAME) }.getOrNull()
 
     fun setUserName(name: String) {
-        runCatching { settings[KEY_USER_NAME] = name }
+        runCatching { userStore[KEY_USER_NAME] = name }
     }
 
     fun clearUserName() {
-        runCatching { settings.remove(KEY_USER_NAME) }
+        runCatching { userStore.remove(KEY_USER_NAME) }
     }
 
     fun getUserId(userName: String): String? =
-        runCatching { settings.getStringOrNull(KEY_USER_ID_PREFIX + userName) }.getOrNull()
+        runCatching { userStore.getStringOrNull(KEY_USER_ID_PREFIX + userName) }.getOrNull()
 
     fun setUserId(userName: String, userId: String) {
-        runCatching { settings[KEY_USER_ID_PREFIX + userName] = userId }
+        runCatching { userStore[KEY_USER_ID_PREFIX + userName] = userId }
     }
 
     fun clearUserId(userName: String) {
-        runCatching { settings.remove(KEY_USER_ID_PREFIX + userName) }
+        runCatching { userStore.remove(KEY_USER_ID_PREFIX + userName) }
     }
 
     /**
@@ -71,7 +79,7 @@ class EncatchStorage internal constructor(
      * on every request of that user, so it survives a restart (RN 1.4.4 item 16, `storage.ts`).
      */
     internal fun getUserSignature(userName: String): StoredSignature? {
-        val raw = runCatching { settings.getStringOrNull(KEY_USER_SIGNATURE_PREFIX + userName) }.getOrNull() ?: return null
+        val raw = runCatching { userStore.getStringOrNull(KEY_USER_SIGNATURE_PREFIX + userName) }.getOrNull() ?: return null
         return runCatching {
             val map = Json.decodeFromString<Map<String, String?>>(raw)
             map["signature"]?.let { StoredSignature(it, map["time"]) }
@@ -80,24 +88,24 @@ class EncatchStorage internal constructor(
 
     internal fun setUserSignature(userName: String, value: StoredSignature) {
         val map = mapOf("signature" to value.signature, "time" to value.time)
-        runCatching { settings[KEY_USER_SIGNATURE_PREFIX + userName] = Json.encodeToString(map) }
+        runCatching { userStore[KEY_USER_SIGNATURE_PREFIX + userName] = Json.encodeToString(map) }
     }
 
     internal fun clearUserSignature(userName: String) {
-        runCatching { settings.remove(KEY_USER_SIGNATURE_PREFIX + userName) }
+        runCatching { userStore.remove(KEY_USER_SIGNATURE_PREFIX + userName) }
     }
 
     private fun ftKey(identityKey: String) = KEY_FT_PREFIX + identityKey
 
     fun getFeedbackTransactions(identityKey: String): String? =
-        runCatching { settings.getStringOrNull(ftKey(identityKey)) }.getOrNull()
+        runCatching { userStore.getStringOrNull(ftKey(identityKey)) }.getOrNull()
 
     fun setFeedbackTransactions(identityKey: String, value: String) {
-        runCatching { settings[ftKey(identityKey)] = value }
+        runCatching { userStore[ftKey(identityKey)] = value }
     }
 
     fun clearFeedbackTransactions(identityKey: String) {
-        runCatching { settings.remove(ftKey(identityKey)) }
+        runCatching { userStore.remove(ftKey(identityKey)) }
     }
 
     data class Preferences(val locale: String? = null, val country: String? = null)
@@ -148,21 +156,72 @@ class EncatchStorage internal constructor(
         runCatching { settings.remove(KEY_RETRY_QUEUE) }
     }
 
+    private fun isUserKey(key: String) = key == KEY_USER_NAME || key.startsWith(KEY_USER_ID_PREFIX) ||
+        key.startsWith(KEY_FT_PREFIX) || key.startsWith(KEY_USER_SIGNATURE_PREFIX)
+
+    /**
+     * Deletes the user's data saved on the device (user name, user ids, signatures, survey history):
+     * with `persistUserAcrossRestarts = false`, what an earlier run saved with it on is not kept.
+     */
+    fun deleteSavedUserData() {
+        runCatching { settings.keys.filter(::isUserKey).forEach { settings.remove(it) } }
+    }
+
     /** Wipes every `@encatch/`-namespaced key — used by [Encatch.clearAll]. */
     fun clearAll() {
         runCatching {
             settings.remove(KEY_DEVICE_ID)
-            settings.remove(KEY_USER_NAME)
             settings.remove(KEY_PREFERENCES)
             settings.remove(KEY_SESSION_STOPPED)
             settings.remove(KEY_RETRY_QUEUE)
-            settings.keys.filter {
-                it.startsWith(KEY_USER_ID_PREFIX) || it.startsWith(KEY_FT_PREFIX) || it.startsWith(KEY_USER_SIGNATURE_PREFIX)
-            }
-                .forEach { settings.remove(it) }
         }
+        deleteSavedUserData()
+        if (userStore !== settings) runCatching { userStore.clear() }
         inMemorySessionId = null
     }
+}
+
+/**
+ * The in-memory [Settings] that holds the user's data for the current app run when
+ * `persistUserAcrossRestarts` is off: strings only (all the storage keeps), safe to use from several
+ * coroutines at once (each write replaces the whole map).
+ */
+@OptIn(ExperimentalAtomicApi::class)
+internal class MemoryUserStore : Settings {
+    private val map = AtomicReference(emptyMap<String, String>())
+
+    private inline fun update(change: (Map<String, String>) -> Map<String, String>) {
+        while (true) {
+            val current = map.load()
+            if (map.compareAndSet(current, change(current))) return
+        }
+    }
+
+    override val keys: Set<String> get() = map.load().keys
+    override val size: Int get() = map.load().size
+    override fun clear() = update { emptyMap() }
+    override fun remove(key: String) = update { it - key }
+    override fun hasKey(key: String): Boolean = key in map.load()
+    override fun putString(key: String, value: String) = update { it + (key to value) }
+    override fun getString(key: String, defaultValue: String): String = map.load()[key] ?: defaultValue
+    override fun getStringOrNull(key: String): String? = map.load()[key]
+
+    private fun unsupported(): Nothing = throw UnsupportedOperationException("MemoryUserStore keeps strings only")
+    override fun putInt(key: String, value: Int) = unsupported()
+    override fun getInt(key: String, defaultValue: Int): Int = unsupported()
+    override fun getIntOrNull(key: String): Int? = unsupported()
+    override fun putLong(key: String, value: Long) = unsupported()
+    override fun getLong(key: String, defaultValue: Long): Long = unsupported()
+    override fun getLongOrNull(key: String): Long? = unsupported()
+    override fun putFloat(key: String, value: Float) = unsupported()
+    override fun getFloat(key: String, defaultValue: Float): Float = unsupported()
+    override fun getFloatOrNull(key: String): Float? = unsupported()
+    override fun putDouble(key: String, value: Double) = unsupported()
+    override fun getDouble(key: String, defaultValue: Double): Double = unsupported()
+    override fun getDoubleOrNull(key: String): Double? = unsupported()
+    override fun putBoolean(key: String, value: Boolean) = unsupported()
+    override fun getBoolean(key: String, defaultValue: Boolean): Boolean = unsupported()
+    override fun getBooleanOrNull(key: String): Boolean? = unsupported()
 }
 
 /** A stored secure-identify signature; [time] is `generatedDateTimeInUtc` as given (epoch ms), when the key has a session time. */
