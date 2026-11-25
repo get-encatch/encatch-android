@@ -236,15 +236,15 @@ class IdentifiedAndPersistTest {
     fun memory_only_still_saves_the_device_id_a_stop_and_preferences() = runTest {
         Encatch.init("test-key", memoryOnly)
         val deviceId = Encatch.deviceId
-        Encatch.setLocale("fr")
-        identified("alice", options = IdentifyOptions(country = "FR"))
+        // locale and country through identify: both saved straight away
+        identified("alice", options = IdentifyOptions(locale = "fr", country = "FR"))
         Encatch.stopSession()
 
         assertEquals(deviceId, api.settings.getStringOrNull("@encatch/device_id"))
         assertEquals("true", api.settings.getStringOrNull("@encatch/session_stopped"))
         val prefs = api.settings.getStringOrNull("@encatch/preferences")
         assertNotNull(prefs)
-        assertTrue(prefs.contains("FR"))
+        assertTrue(prefs.contains("\"fr\"") && prefs.contains("\"FR\""), prefs)
 
         restart(memoryOnly)
         assertEquals(deviceId, Encatch.deviceId)
@@ -263,6 +263,7 @@ class IdentifiedAndPersistTest {
         eventually { Encatch.userName == "alice" }
         assertEquals("user-a", Encatch.userId)
         assertEquals(emptyList(), userKeysOnDevice())
+        settle(1_000) // the slow reply lands here, not in the next test
     }
 
     @Test
@@ -280,6 +281,7 @@ class IdentifiedAndPersistTest {
         Encatch.identifyUser("alice")
         eventually { Encatch.userName == "alice" }
         assertNull(Encatch.userId)
+        settle(1_000) // the slow reply lands here, not in the next test
     }
 
     @Test
