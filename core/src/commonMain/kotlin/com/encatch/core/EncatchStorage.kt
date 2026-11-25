@@ -2,6 +2,7 @@ package com.encatch.core
 
 import com.russhwolf.settings.Settings
 import com.russhwolf.settings.set
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.serialization.encodeToString
@@ -29,6 +30,22 @@ class EncatchStorage internal constructor(
         private const val KEY_PREFERENCES = "@encatch/preferences"
         private const val KEY_SESSION_STOPPED = "@encatch/session_stopped"
         private const val KEY_RETRY_QUEUE = "@encatch/retry_queue"
+
+        // Locale and country share one saved entry, changed by read-merge-write: saves from
+        // several threads at once (setLocale, setCountry, identifyUser) take turns, so none
+        // overwrites another's value. Process-wide, as a re-init's storage shares the same entry.
+        @OptIn(ExperimentalAtomicApi::class)
+        private val preferencesLock = AtomicBoolean(false)
+
+        @OptIn(ExperimentalAtomicApi::class)
+        private inline fun <T> withPreferencesLock(block: () -> T): T {
+            while (!preferencesLock.compareAndSet(false, true)) { /* held for a few microseconds */ }
+            try {
+                return block()
+            } finally {
+                preferencesLock.store(false)
+            }
+        }
     }
 
     // Session ID is in-memory only — reset when the app process ends.
@@ -119,20 +136,22 @@ class EncatchStorage internal constructor(
     }
 
     fun setPreferences(locale: String? = null, country: String? = null) {
-        val current = getPreferences()
-        val merged = Preferences(
-            locale = locale ?: current.locale,
-            country = country ?: current.country,
-        )
-        val map = buildMap {
-            merged.locale?.let { put("locale", it) }
-            merged.country?.let { put("country", it) }
+        withPreferencesLock {
+            val current = getPreferences()
+            val merged = Preferences(
+                locale = locale ?: current.locale,
+                country = country ?: current.country,
+            )
+            val map = buildMap {
+                merged.locale?.let { put("locale", it) }
+                merged.country?.let { put("country", it) }
+            }
+            runCatching { settings[KEY_PREFERENCES] = Json.encodeToString(map) }
         }
-        runCatching { settings[KEY_PREFERENCES] = Json.encodeToString(map) }
     }
 
     fun clearPreferences() {
-        runCatching { settings.remove(KEY_PREFERENCES) }
+        withPreferencesLock { runCatching { settings.remove(KEY_PREFERENCES) } }
     }
 
     fun getSessionStopped(): Boolean =

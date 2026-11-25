@@ -5,6 +5,18 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## Unreleased
+
+### Fixed
+
+- **Kotlin: a saved locale or country could be lost.** `setLocale()` and `setCountry()` saved in the
+  background, so a save made at the same moment (`identifyUser` with `locale`/`country`, or another
+  `setLocale`) could be overwritten, and the value was not restored at the next launch. They save
+  straight away now. Both SDKs also save the locale and the country one at a time, so saves from
+  several threads can't overwrite each other. The values in use during the app run were not affected.
+- **Swift: `setLocale()` and `setCountry()` before `initialize()` crashed.** They no longer do; call
+  them after `initialize()` for the value to be saved.
+
 ## 0.2.0-beta.2
 
 The sign-in state and the option to keep the user only for the current app run, as in the React

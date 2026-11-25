@@ -20,6 +20,10 @@ public final class EncatchStorage: @unchecked Sendable {
     private static let keyRetryQueue = "@encatch/retry_queue"
 
     private let defaults: UserDefaults
+    /// Locale and country share one saved entry, changed by read-merge-write: saves from several
+    /// threads at once (setLocale, setCountry, identifyUser) take turns, so none overwrites
+    /// another's value. Process-wide, as a re-init's storage shares the same entry.
+    private static let preferencesLock = NSLock()
     /// The user's data for this app run when `persistUserAcrossRestarts` is off; nil: `defaults`.
     private let userMemory: MemoryUserStore?
     private let lock = NSLock()
@@ -154,6 +158,8 @@ public final class EncatchStorage: @unchecked Sendable {
     }
 
     public func setPreferences(locale: String? = nil, country: String? = nil) {
+        Self.preferencesLock.lock()
+        defer { Self.preferencesLock.unlock() }
         let current = getPreferences()
         let merged = Preferences(locale: locale ?? current.locale, country: country ?? current.country)
         var map: [String: String] = [:]
@@ -166,6 +172,8 @@ public final class EncatchStorage: @unchecked Sendable {
     }
 
     public func clearPreferences() {
+        Self.preferencesLock.lock()
+        defer { Self.preferencesLock.unlock() }
         defaults.removeObject(forKey: Self.keyPreferences)
     }
 

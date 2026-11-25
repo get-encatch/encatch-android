@@ -530,12 +530,14 @@ public final class Encatch: @unchecked Sendable {
 
     public func setLocale(_ locale: String) {
         localeState = locale
-        storage.setPreferences(locale: locale)
+        // before initialize() there is no storage yet: the value is kept in memory only
+        storage?.setPreferences(locale: locale)
     }
 
     public func setCountry(_ country: String) {
         countryState = country
-        storage.setPreferences(country: country)
+        // before initialize() there is no storage yet: the value is kept in memory only
+        storage?.setPreferences(country: country)
     }
 
     public func setTheme(_ theme: Theme) {

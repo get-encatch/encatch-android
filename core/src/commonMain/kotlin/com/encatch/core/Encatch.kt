@@ -463,12 +463,15 @@ object Encatch {
 
     fun setLocale(locale: String) {
         localeState = locale
-        scope.launch { storage.setPreferences(locale = locale) }
+        // saved now, not in the background: a later save (identifyUser, setCountry, another
+        // setLocale) can't be overwritten by this one finishing after it
+        if (::storage.isInitialized) storage.setPreferences(locale = locale)
     }
 
     fun setCountry(country: String) {
         countryState = country
-        scope.launch { storage.setPreferences(country = country) }
+        // saved now, as setLocale is
+        if (::storage.isInitialized) storage.setPreferences(country = country)
     }
 
     fun setTheme(theme: Theme) {
