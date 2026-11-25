@@ -5,7 +5,9 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
-## Unreleased
+## 0.2.0-beta.3
+
+Two fixes in saving the locale and country. Kotlin and Swift.
 
 ### Fixed
 
