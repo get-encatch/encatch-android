@@ -66,6 +66,17 @@ val unsubscribe = Encatch.on { eventType, payload ->
 }
 ```
 
+### Sign-in state
+
+`Encatch.isIdentified()` says whether the SDK has a confirmed identity: `true` once
+`identifyUser` succeeded, or at launch when the user saved by an earlier run is restored. While you
+switch to another user it keeps describing the previous one until the new identify succeeds;
+`resetUser()` and `clearAll()` make it `false`.
+
+By default the identified user is saved and restored at the next launch. To keep the user for the
+current app run only (every launch starts as a visitor until you identify again), pass
+`EncatchConfig(persistUserAcrossRestarts = false)` to `Encatch.init`.
+
 ### Inline forms
 
 Renders the form inline within your layout instead of as a modal overlay — place it anywhere in

@@ -65,8 +65,20 @@ let unsubscribe = Encatch.shared.onEvent { eventType, payload in
 ```
 
 `initialize(apiKey:config:)` accepts an optional `EncatchConfig` for `apiBaseUrl`, `webHost`,
-`theme`, `isFullScreen`, `debugMode`, `appVersion`, and an `onBeforeShowForm` interceptor that
-lets you veto (and custom-render) any form before the SDK shows it.
+`theme`, `isFullScreen`, `debugMode`, `appVersion`, `persistUserAcrossRestarts`, and an
+`onBeforeShowForm` interceptor that lets you veto (and custom-render) any form before the SDK
+shows it.
+
+### Sign-in state
+
+`Encatch.shared.isIdentified()` says whether the SDK has a confirmed identity: `true` once
+`identifyUser` succeeded, or at launch when the user saved by an earlier run is restored. While you
+switch to another user it keeps describing the previous one until the new identify succeeds;
+`resetUser()` and `clearAll()` make it `false`.
+
+By default the identified user is saved and restored at the next launch. To keep the user for the
+current app run only (every launch starts as a visitor until you identify again), pass
+`EncatchConfig(persistUserAcrossRestarts: false)` to `initialize`.
 
 ### Inline forms
 

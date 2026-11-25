@@ -87,6 +87,10 @@ fun MyScreen() {
 }
 ```
 
+`Encatch` here is `kmp-sdk`'s: `Encatch.isIdentified()` and
+`EncatchConfig(persistUserAcrossRestarts = false)` work as its
+[README](../kmp-sdk/README.md#sign-in-state) describes.
+
 That's the entire integration — no `Application.onCreate` setup, no per-platform `expect`/`actual`
 of your own, no `installFormHost()`/`EncatchFormHost.install()` call.
 

@@ -5,6 +5,25 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## 0.2.0-beta.2
+
+The sign-in state and the option to keep the user only for the current app run, as in the React
+Native SDK 1.5.0. Kotlin and Swift alike.
+
+### Added
+
+- **`Encatch.isIdentified()`** (Kotlin, Swift, and `kmp-sdk`/`compose-sdk` on both platforms): `true`
+  once an identify succeeded, or at launch when the user saved by an earlier run is restored with
+  their user id. `false` before `init`, for a visitor, and while a first identify is pending or after
+  it failed. Switching to another user keeps describing the previous user until the new user's
+  identify succeeds. `resetUser()`, `clearAll()` and the server's "retries exhausted" reset make it
+  `false`; `stopSession()` and an expired secure signature leave it as it is.
+- **`EncatchConfig.persistUserAcrossRestarts`** (default `true`, unchanged behaviour). With `false`,
+  the user (user name, user id, secure signature, survey history) lives in memory for the current
+  app run only: every launch starts as a visitor until the app calls `identifyUser` again, and user
+  data an earlier run saved is deleted at `init`. The device id, a saved `stopSession()` and the
+  locale and country preferences are still saved.
+
 ## 0.2.0-beta.1
 
 The native SDKs now behave as the web SDK, React Native 1.4.4 and Flutter 1.2.0 do: same server

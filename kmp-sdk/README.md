@@ -91,6 +91,17 @@ val unsubscribe = Encatch.on { eventType, payload ->
 }
 ```
 
+### Sign-in state
+
+`Encatch.isIdentified()` says whether the SDK has a confirmed identity: `true` once
+`identifyUser` succeeded, or at launch when the user saved by an earlier run is restored. While you
+switch to another user it keeps describing the previous one until the new identify succeeds;
+`resetUser()` and `clearAll()` make it `false`.
+
+By default the identified user is saved and restored at the next launch. To keep the user for the
+current app run only (every launch starts as a visitor until you identify again), pass
+`EncatchConfig(persistUserAcrossRestarts = false)` to `Encatch.init`.
+
 For an inline (non-modal) form view outside Compose, embed the platform-native view directly —
 Android's `com.encatch.android.EncatchInlineFormView`, iOS's `EncatchInlineFormView` from
 [`swift`](../swift/README.md) — this module doesn't yet expose a non-Compose accessor
