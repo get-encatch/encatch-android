@@ -5,7 +5,9 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
-## Unreleased
+## 0.2.0-beta.4
+
+SwiftUI support in the Swift package.
 
 ### Added
 
