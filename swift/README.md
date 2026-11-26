@@ -30,7 +30,10 @@ then add `"Encatch"` as a dependency of your target.
 
 ## Setup
 
-Install the modal form host once, typically in your `App`'s initializer or
+With SwiftUI, wrap your content in `EncatchProvider` (see [SwiftUI](#swiftui) below): it
+initializes the SDK and installs the modal form host for you.
+
+Otherwise, install the modal form host once, typically in your `App`'s initializer or
 `AppDelegate.application(_:didFinishLaunchingWithOptions:)`:
 
 ```swift
@@ -80,35 +83,63 @@ By default the identified user is saved and restored at the next launch. To keep
 current app run only (every launch starts as a visitor until you identify again), pass
 `EncatchConfig(persistUserAcrossRestarts: false)` to `initialize`.
 
-### Inline forms
+### SwiftUI
 
-`EncatchInlineFormView` is a `UIView` that claims a form id, so `showForm` for that id renders
-inline in your layout instead of as a modal. Leave `formId` as `nil` to make it a wildcard slot
-that catches any form id not claimed elsewhere.
+The same building blocks as the React Native and Flutter SDKs, with the same names:
 
 ```swift
 import SwiftUI
 import Encatch
 
-struct MyFormSlot: UIViewRepresentable {
-    @Binding var height: CGFloat
-
-    func makeUIView(context: Context) -> EncatchInlineFormView {
-        let view = EncatchInlineFormView()
-        view.formId = "your-form-id"   // or nil for a wildcard slot
-        view.onHeightChange = { [binding = $height] newHeight in
-            DispatchQueue.main.async { binding.wrappedValue = newHeight }
+@main
+struct MyApp: App {
+    var body: some Scene {
+        WindowGroup {
+            // initializes the SDK once and installs the modal form host
+            EncatchProvider(apiKey: "YOUR_API_KEY") {
+                ContentView()
+            }
         }
-        return view
     }
-
-    func updateUIView(_ uiView: EncatchInlineFormView, context: Context) {}
 }
 
-// place it:  MyFormSlot(height: $height).frame(height: max(height, 64))
+struct ContentView: View {
+    // React Native's useEncatch(): the SDK's state, updated as it changes, and its calls
+    @EnvironmentObject var encatch: EncatchContext
+
+    var body: some View {
+        VStack {
+            Text(encatch.isIdentified ? "Signed in as \(encatch.userName ?? "")" : "Visitor")
+            Button("Sign in") { encatch.identifyUser(userName: "user-123") }
+            Button("Feedback") { encatch.showForm("your-form-id") }
+            EncatchInlineForm(formId: "your-inline-form-id")   // sizes itself to the survey
+        }
+        .encatchTrackScreen("Home")   // trackScreen each time the screen appears
+    }
+}
 ```
 
-UIKit hosts can add `EncatchInlineFormView` directly and use `onHeightChange` to drive layout.
+- `EncatchContext` publishes `isInitialized`, `isIdentified` and `userName`, and has React Native's
+  context methods: `identifyUser`, `setLocale`, `setCountry`, `setTheme`, `trackEvent`,
+  `trackScreen`, `showForm`, `dismissForm`, `addToResponse`, `resetUser`, `on` (returns a closure
+  that unsubscribes), `submitForm`, `emitEvent` and `refineText`. They are call-and-forget and
+  reach the SDK in the order they were made (so `resetUser()` then `identifyUser(…)` signs the new
+  user in); `showForm` and `submitForm`, which wait for a server reply, don't hold up the other
+  calls. To use a call's result, `await` the `Encatch.shared` method instead.
+- Unlike React Native's and Flutter's providers, it starts no session at launch: as everywhere in
+  the native SDKs, the session starts when an identify succeeds or the app calls `startSession()`.
+- Screens aren't tracked automatically: add `.encatchTrackScreen("Name")` to each screen.
+
+### Inline forms
+
+An inline slot claims a form id, so `showForm` for that id renders inline in your layout instead
+of as a modal. Leave `formId` as `nil` to make it a wildcard slot that catches any form id not
+claimed elsewhere.
+
+- **SwiftUI:** `EncatchInlineForm(formId: "your-form-id", minHeight: 0, onOverlayOpenChange: nil)`
+  sizes itself to the survey (0 when none is shown); don't give it a fixed height.
+- **UIKit:** add `EncatchInlineFormView` (a `UIView`) and set its `formId`; it sizes itself with its
+  own height constraint, and `onHeightChange` reports each change for manual layout.
 
 ## Default hosts
 

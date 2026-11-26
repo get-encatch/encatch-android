@@ -5,6 +5,17 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## Unreleased
+
+### Added
+
+- **SwiftUI** (Swift package, iOS 15+), with the React Native and Flutter SDKs' names:
+  `EncatchProvider(apiKey:config:)` initializes the SDK once and installs the modal form host;
+  `EncatchContext` (read with `@EnvironmentObject`, React Native's `useEncatch()`) publishes
+  `isInitialized`, `isIdentified` and `userName` and has the same call-and-forget methods;
+  `EncatchInlineForm(formId:minHeight:onOverlayOpenChange:)` is an inline survey that sizes itself;
+  `.encatchTrackScreen(_:)` tracks a screen when it appears. The UIKit views are unchanged.
+
 ## 0.2.0-beta.3
 
 Two fixes in saving the locale and country. Kotlin and Swift.
