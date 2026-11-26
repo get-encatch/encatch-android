@@ -556,40 +556,22 @@ struct EventsTabView: View {
     }
 }
 
-private struct InlineFormRepresentable: UIViewRepresentable {
-    let formId: String?
-    @Binding var height: CGFloat
-
-    func makeUIView(context: Context) -> EncatchInlineFormView {
-        let view = EncatchInlineFormView()
-        view.formId = formId
-        view.onHeightChange = { [binding = $height] newHeight in
-            DispatchQueue.main.async { binding.wrappedValue = newHeight }
-        }
-        return view
-    }
-
-    func updateUIView(_ uiView: EncatchInlineFormView, context: Context) {}
-}
-
-/// Container for the inline SDK view. Auto-height: tracks the SDK's own reported height (0 when
-/// idle, skeleton placeholder while loading, then live `form:resize` values), showing a slim
-/// dashed drop-zone when no form is rendered.
+/// Container for the SDK's SwiftUI `EncatchInlineForm`, which sizes itself (0 when idle, a
+/// placeholder while loading, then the survey's height); a slim dashed drop-zone shows behind it
+/// when no form is rendered.
 private struct InlineFormSlot: View {
     let formId: String?
-    @State private var height: CGFloat = 0
 
     var body: some View {
-        InlineFormRepresentable(formId: formId, height: $height)
-            .frame(height: max(height, 64))
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: TesterTheme.cornerRadius, style: .continuous))
-            .overlay(
+        EncatchInlineForm(formId: formId)
+            .frame(minHeight: 64)
+            .background(
                 RoundedRectangle(cornerRadius: TesterTheme.cornerRadius, style: .continuous)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                    .foregroundColor(TesterTheme.accent.opacity(height > 64 ? 0 : 0.4))
+                    .foregroundColor(TesterTheme.accent.opacity(0.4))
+                    .background(Color(.secondarySystemBackground))
             )
-            .animation(.easeOut(duration: 0.2), value: height)
+            .clipShape(RoundedRectangle(cornerRadius: TesterTheme.cornerRadius, style: .continuous))
     }
 }
 

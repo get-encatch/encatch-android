@@ -8,100 +8,70 @@ import Encatch
 /// variable (set by the UI test target / orchestrator) for a non-default port.
 private let mockServerBaseURL = ProcessInfo.processInfo.environment["MOCK_SERVER_BASE_URL"] ?? "http://127.0.0.1:8089"
 
+/// The SwiftUI integration the Swift README describes: `EncatchProvider` initializes the SDK and
+/// installs the modal form host, views read `EncatchContext`, `EncatchInlineForm` sizes itself.
 @main
 struct EncatchSampleApp: App {
-    init() {
-        EncatchFormHost.install()
-    }
-
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            EncatchProvider(
+                apiKey: "sample-api-key",
+                config: EncatchConfig(apiBaseUrl: mockServerBaseURL, webHost: mockServerBaseURL, debugMode: true)
+            ) {
+                ContentView()
+            }
         }
     }
 }
 
 struct ContentView: View {
-    @State private var status = "Not initialized"
+    @EnvironmentObject var encatch: EncatchContext
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Encatch iOS Sample")
-                .font(.title)
-                .bold()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Encatch iOS Sample")
+                    .font(.title)
+                    .bold()
 
-            Text(status)
-                .font(.footnote)
-                .foregroundColor(.secondary)
-                .accessibilityIdentifier("statusText")
+                Text("Initialized: \(encatch.isInitialized ? "true" : "false")")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier("statusText")
 
-            Button("Init SDK") {
-                Task {
-                    do {
-                        let config = EncatchConfig(
-                            apiBaseUrl: mockServerBaseURL,
-                            webHost: mockServerBaseURL,
-                            theme: Theme.system,
-                            isFullScreen: false,
-                            debugMode: true,
-                            appVersion: nil,
-                            onBeforeShowForm: nil,
-                        )
-                        try await Encatch.shared.initialize(apiKey: "sample-api-key", config: config)
-                        status = "Initialized: \(Encatch.shared.isInitialized)"
-                    } catch {
-                        status = "initialize() failed: \(EncatchError(error).localizedDescription)"
-                    }
+                Text(encatch.isIdentified ? "Identified: \(encatch.userName ?? "")" : "Identified: no")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .accessibilityIdentifier("identityText")
+
+                HStack {
+                    Button("Sign in") { encatch.identifyUser(userName: "sample-user") }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("signInButton")
+                    Button("Sign out") { encatch.resetUser() }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("signOutButton")
                 }
+
+                Button("Show modal form") { encatch.showForm("ios-modal-form-id") }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("showModalButton")
+
+                Text("Inline form slot:")
+                    .font(.headline)
+                    .padding(.top, 8)
+
+                // sizes itself: 0 until a form is shown, then the survey's height
+                EncatchInlineForm(formId: "ios-inline-form-id")
+                    .background(Color(.systemGray6))
+                    .accessibilityIdentifier("inlineForm")
+
+                Button("Show inline form") { encatch.showForm("ios-inline-form-id") }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("showInlineButton")
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier("initButton")
-
-            Button("Show modal form") {
-                Task {
-                    do {
-                        try await Encatch.shared.showForm("ios-modal-form-id")
-                    } catch {
-                        status = "showForm() failed: \(EncatchError(error).localizedDescription)"
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("showModalButton")
-
-            Text("Inline form slot:")
-                .font(.headline)
-                .padding(.top, 8)
-
-            InlineFormRepresentable()
-                .frame(height: 260)
-                .background(Color(.systemGray6))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.4)))
-
-            Button("Show inline form") {
-                Task {
-                    do {
-                        try await Encatch.shared.showForm("ios-inline-form-id")
-                    } catch {
-                        status = "showForm() failed: \(EncatchError(error).localizedDescription)"
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("showInlineButton")
-
-            Spacer()
+            .padding()
         }
-        .padding()
+        .encatchTrackScreen("Sample")
     }
-}
-
-struct InlineFormRepresentable: UIViewRepresentable {
-    func makeUIView(context: Context) -> EncatchInlineFormView {
-        let view = EncatchInlineFormView()
-        view.formId = "ios-inline-form-id"
-        return view
-    }
-
-    func updateUIView(_ uiView: EncatchInlineFormView, context: Context) {}
 }

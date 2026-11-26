@@ -19,6 +19,7 @@ struct EncatchTesterApp: App {
 
 struct RootView: View {
     @StateObject private var state = TesterState()
+    @StateObject private var encatch = EncatchContext()
 
     var body: some View {
         Group {
@@ -37,6 +38,6 @@ struct RootView: View {
                 RouteNotFoundView(route: route, state: state)
             }
         }
-        .onAppear { state.start() }
+        .onAppear { state.start(context: encatch) }
     }
 }

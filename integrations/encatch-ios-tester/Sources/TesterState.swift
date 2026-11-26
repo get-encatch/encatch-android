@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 import Encatch
 
 /// Screen state + all SDK calls the tester UI makes, mirroring `encatch-android-tester`'s
@@ -21,9 +22,13 @@ final class TesterState: ObservableObject {
     /// — plain SwiftUI `ScrollView`s don't grow their scroll range to compensate for the keyboard,
     /// so without this, fields near the bottom of a form are unreachable while the keyboard is up.
     @Published var keyboardHeight: CGFloat = 0
-    /// `Encatch.shared.isIdentified()` for the readout on Login and Home, read every half second
-    /// (it changes when an identify reply arrives).
+    /// `Encatch.isIdentified()` for the readout on Login and Home, from the SwiftUI `EncatchContext`
+    /// (it publishes each identity change). The tester initializes the SDK itself (Setup chooses
+    /// the environment), so it uses a context of its own rather than `EncatchProvider`, and calls
+    /// `refresh()` after each initialize.
     @Published var identified = false
+    private var encatchContext: EncatchContext?
+    private var contextSubscription: AnyCancellable?
 
     let prefs = TesterPrefs()
     let usersStore = TestUsersStore()
@@ -35,7 +40,16 @@ final class TesterState: ObservableObject {
     }
 
     /// Registered once for the process lifetime, same as a real host app would at startup.
-    func start() {
+    @MainActor
+    func start(context: EncatchContext) {
+        encatchContext = context
+        contextSubscription = context.$isIdentified.sink { [weak self] value in
+            if self?.identified != value { self?.identified = value }
+        }
+        start()
+    }
+
+    private func start() {
         observeKeyboard()
 
         // Capture every SDK request/response for the Logs tab. Survives re-initialize().
@@ -69,13 +83,6 @@ final class TesterState: ObservableObject {
         // app calls initialize() unconditionally at startup; mirror that here from stored prefs.
         if prefs.isSetupComplete, let apiKey = prefs.apiKey {
             Task { await initializeSdk(apiKey: apiKey, environment: prefs.environment, interceptorFormId: prefs.interceptorFormId) }
-        }
-        Task { @MainActor [weak self] in
-            while let self {
-                let value = Encatch.shared.isIdentified()
-                if self.identified != value { self.identified = value }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
         }
     }
 
@@ -148,6 +155,7 @@ final class TesterState: ObservableObject {
         } catch {
             print("Encatch.initialize failed: \(error)")
         }
+        await MainActor.run { self.encatchContext?.refresh() }
         // the login screen may have appeared before the SDK was ready: track it now
         let onLogin = await MainActor.run { if case .login = self.screen { return true } else { return false } }
         if onLogin { trackScreen("Login") }
