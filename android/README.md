@@ -98,6 +98,31 @@ Encatch.setUserProperties(
 It counts against the identify rate limit (about 5 per minute per user), and an update with
 `$increment` or `$decrement` is never retried.
 
+### Expired secure-identify signatures
+
+With secure identify, a signature is valid for the API key's session time. When the current user's
+signature has expired the SDK calls `onSignatureExpired`, so the app can get a fresh one from its
+server and identify again:
+
+```kotlin
+Encatch.init(
+    "your-api-key",
+    EncatchConfig(
+        onSignatureExpired = { info ->
+            val secure = myBackend.getEncatchSignature(info.userName) // signature + generatedDateTimeInUtc
+            if (currentUser?.id == info.userName) {
+                Encatch.identifyUser(info.userName, options = IdentifyOptions(secure = secure))
+            }
+        },
+    ),
+)
+```
+
+`generatedDateTimeInUtc` is the signed time in epoch milliseconds (13 digits), from a server clock
+within 5 minutes of real time. The SDK only learns of an expiry when an identify or a
+`setUserProperties` goes out; it can't warn at launch, so an app that wants to stay ahead can refresh
+the signature at launch.
+
 ### Inline forms
 
 Renders the form inline within your layout instead of as a modal overlay — place it anywhere in

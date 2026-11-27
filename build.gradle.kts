@@ -12,7 +12,7 @@ plugins {
 allprojects {
     group = "com.encatch"
     // Pre-1.0 like the Swift SDK (encatch-swift): 0.x signals the API can still move.
-    version = "0.2.0-beta.6"
+    version = "0.2.0-beta.7"
 }
 
 /**

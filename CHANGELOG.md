@@ -5,6 +5,47 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## 0.2.0-beta.7
+
+Kotlin and Swift (both packages are at 0.2.0-beta.7 again), as the React Native SDK 1.5.0.
+
+### Added
+
+- **`onSignatureExpired` in `EncatchConfig`.** Called when the current user's secure-identify
+  signature has expired, with the user's name, so the app can get a fresh signature from its server
+  and call `identifyUser` again with it. A rejected new signature calls it once per user until an
+  identify for them succeeds; the stored signature expiring always does (so at most twice). It runs
+  after the SDK has handled the reply, only while that user is still current, and not after
+  `stop()`, `clearAll()` or a re-init; an error it throws is logged. The SDK learns of an expiry
+  only when a request the API checks goes out (today `identifyUser` and `setUserProperties`). Also
+  on the KMP and Compose `EncatchConfig` and the Objective-C bridge. In Swift it is passed with its
+  own label, so an existing `EncatchConfig(...) { payload in ... }` trailing closure still means
+  `onBeforeShowForm`.
+
+### Changed
+
+- **Only a real expiry pauses tracking.** A 401 counts as an expired signature only when the API
+  says so (`reason: "user_signature_expired"`), or, on older APIs that give no reason, when
+  `setUserProperties` re-sent the saved signature with its time. Before, any 401 on a request
+  carrying a saved session-time signature paused events, screens, ping and automatic surveys,
+  though the API only checks the signature on identify. A new signature rejected as expired only
+  calls `onSignatureExpired`: it changes nothing else.
+- **Survey answers go only to the user they belong to.** The SDK remembers who each survey was
+  shown to; its answers are sent only while that user is current (checked again before each send
+  attempt, after a rate-limit pause), and are dropped with a warning once another user is signed in
+  or the user signs out. A visitor's answers are still sent if the visitor signs in meanwhile. A
+  survey asked for a user who is no longer current when it arrives is not shown. `clearAll()` or a
+  re-init drops a survey submit still waiting; held submits are only ever sent as the user who made
+  them.
+
+### Fixed
+
+- **Swift: two identical requests are now the same bytes** (keys sorted), so the API's 60-second
+  protection against a repeated identical identify (a doubled `$increment`) works as on Android.
+- **Android:** a survey open when its activity is destroyed (a rotation, say) is now closed, so the
+  next survey can show; a survey's close is reported once, and a dialog already closed no longer
+  reports a close that could end the next survey.
+
 ## 0.2.0-beta.6
 
 Kotlin only (the Swift package stays at 0.2.0-beta.5).
