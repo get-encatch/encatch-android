@@ -64,8 +64,161 @@ public final class Encatch: @unchecked Sendable {
     private let memoryUserStore = MemoryUserStore()
     private var heldSubmits: [SubmitFormRequest] = []
     static let maxHeldSubmits = 10
-    /// The last identify sent or in flight (dedupe); cleared when it is dropped, on reset, clearAll.
-    private var lastIdentifyKey: String?
+    /// identifyUser() dedupe, for this app run only (RN SDK 1.5.0, PostHog-style): what the last
+    /// identify sent (or still in flight) carried. Under [stateLock]. Cleared when that identify fails
+    /// or is dropped, by a different user's identify, resetUser, clearAll, stopSession and a signature
+    /// expiry (the next identify must go out; repeats still collapse).
+    private var identifyMemory: IdentifyMemory?
+
+    private struct IdentifyMemory {
+        let name: String
+        /// The signature and its time, as sent.
+        let optionsKey: String
+        /// The fingerprint of the last traits sent for this user, and the identify that sent them.
+        var traitsKey: String?
+        var traitsToken: UUID?
+        /// The locale / country the last identify for this user carried.
+        let locale: String?
+        let country: String?
+        /// The identify this memory belongs to.
+        let token: UUID
+    }
+
+    // setUserProperties (RN SDK 1.5.0) ------------------------------------------------------------
+    /// The user it may update, under [stateLock]: their identify succeeded, or they were restored with
+    /// their id at launch. Cleared on a user switch (until the new user's identify succeeds),
+    /// resetUser and clearAll.
+    private var confirmedName: String?
+    /// Identifies queued or retrying, by user name, under [stateLock]: setUserProperties waits for them.
+    private var pendingIdentifies: [String: [UUID: AsyncSignal]] = [:]
+    /// Fired (then replaced) by stop(), clearAll() and a re-init, under [stateLock]: waits started
+    /// before then give up.
+    private var lifecycleRelease = AsyncSignal()
+    /// The shared "no survey open" signal, under [surveyLock]; one watcher per signal.
+    private var surveyIdle: AsyncSignal?
+    /// setUserProperties updates go out one after the other, in call order (under [stateLock]): the
+    /// next is queued only when the previous one is sent or dropped.
+    private var propsWaiting: [(token: UUID, release: AsyncSignal, start: @Sendable () -> Void)] = []
+    /// The update being sent: claimed when it is taken off [propsWaiting], in the same lock, so two
+    /// can never start at once.
+    private var propsBusy: UUID?
+    /// setUserProperties calls wait their turn here, in call order, from the moment they're made: two
+    /// waiting at once (for a survey, or for one identify) must not go out reversed. Not [identityOps],
+    /// so an identify or reset is never held up by a waiting update.
+    private let propsOrder = SerialOps()
+
+    /// Registers an identify of [userName] as pending; the returned function ends it (sent or dropped).
+    private func addPendingIdentify(_ userName: String) -> Once {
+        let key = UUID()
+        let signal = AsyncSignal()
+        withStateLock { pendingIdentifies[userName, default: [:]][key] = signal }
+        return Once { [weak self] in
+            signal.fire()
+            self?.withStateLock {
+                self?.pendingIdentifies[userName]?[key] = nil
+                if self?.pendingIdentifies[userName]?.isEmpty == true { self?.pendingIdentifies[userName] = nil }
+            }
+        }
+    }
+
+    /// Ends every pending identify: the queue was emptied without reporting them (re-init, clearAll).
+    private func releasePendingIdentifies() {
+        let all: [AsyncSignal] = withStateLock {
+            let all = pendingIdentifies.values.flatMap(\.values)
+            pendingIdentifies = [:]
+            return all
+        }
+        for signal in all { signal.fire() }
+    }
+
+    private func releaseLifecycleWaits() {
+        let old: AsyncSignal = withStateLock {
+            let old = lifecycleRelease
+            lifecycleRelease = AsyncSignal()
+            return old
+        }
+        old.fire()
+        checkSurveyIdle(release: true)
+    }
+
+    /// A survey is loading, on screen, or about to be shown (an automatic show waiting out its delay).
+    private func isSurveyOpen() -> Bool {
+        withSurveyLock { loadingFormId != nil || isFormVisible || pendingAutoShow != nil }
+    }
+
+    private func awaitSurveyIdle(_ release: AsyncSignal) async {
+        while initialized, isSurveyOpen(), !release.isFired {
+            await AsyncSignal.either(surveyIdleSignal(), release)
+        }
+    }
+
+    /// The shared signal, and its watcher when it is new (a new one only after the last fired).
+    private func surveyIdleSignal() -> AsyncSignal {
+        let (signal, fresh): (AsyncSignal, Bool) = withSurveyLock {
+            if let surveyIdle { return (surveyIdle, false) }
+            let signal = AsyncSignal()
+            surveyIdle = signal
+            return (signal, true)
+        }
+        if fresh {
+            let pollMs = timings.surveyIdlePollMs
+            Task { [weak self] in
+                while !signal.isFired {
+                    try? await Task.sleep(nanoseconds: UInt64(max(1, pollMs)) * 1_000_000)
+                    guard let self else { return }
+                    self.checkSurveyIdle()
+                }
+            }
+        }
+        return signal
+    }
+
+    /// Wakes the survey waiters once no survey is open ([release]: wake them regardless).
+    private func checkSurveyIdle(release: Bool = false) {
+        if !release, initialized, isSurveyOpen() { return }
+        let signal: AsyncSignal? = withSurveyLock {
+            let signal = surveyIdle
+            surveyIdle = nil
+            return signal
+        }
+        signal?.fire()
+    }
+
+    private func pumpUserProps() {
+        let next: (@Sendable () -> Void)? = withStateLock {
+            guard propsBusy == nil else { return nil }
+            // stop() / clearAll() since they were queued: dropped here, in a loop (starting each
+            // released one to have it finish would nest one call in another, deep enough to
+            // overflow the stack with many waiting)
+            while let first = propsWaiting.first, first.release.isFired { propsWaiting.removeFirst() }
+            guard !propsWaiting.isEmpty else { return nil }
+            let next = propsWaiting.removeFirst()
+            propsBusy = next.token
+            return next.start
+        }
+        next?()
+    }
+
+    /// A later identifyUser() with traits is sent again: setUserProperties may have changed them.
+    private func forgetIdentifyTraits() {
+        withStateLock {
+            identifyMemory?.traitsKey = nil
+            identifyMemory?.traitsToken = nil
+        }
+    }
+
+    /// A dropped identify forgets what it set: all of it while it owns the memory, else its traits.
+    private func forgetDroppedIdentify(_ token: UUID) {
+        withStateLock {
+            guard let memory = identifyMemory else { return }
+            if memory.token == token {
+                identifyMemory = nil
+            } else if memory.traitsToken == token {
+                identifyMemory?.traitsKey = nil
+                identifyMemory?.traitsToken = nil
+            }
+        }
+    }
     private let stateLock = NSLock()
 
     private func withStateLock<T>(_ body: () -> T) -> T {
@@ -186,13 +339,25 @@ public final class Encatch: @unchecked Sendable {
             await teardown.value
             // the old queue's items must not go out later with the new key (nor stay held forever)
             await retryQueue?.clear()
+            // the cleared queue reports nothing: end what waits on it
+            releasePendingIdentifies()
+            releaseLifecycleWaits()
+            let droppedUpdates: Int = withStateLock {
+                let dropped = propsWaiting.count
+                propsWaiting = []
+                propsBusy = nil
+                return dropped
+            }
+            if droppedUpdates > 0 {
+                logger.debug("\(droppedUpdates) setUserProperties update(s) not sent: the SDK was re-initialized")
+            }
             isSessionPaused = false
             isSessionStopped = false
             // another key or environment: no identify, expiry or collapse memory carries over
             withStateLock {
                 signatureExpired = false
                 heldSubmits = []
-                lastIdentifyKey = nil
+                identifyMemory = nil
                 lastEventAtMs = [:]
                 lastScreen = nil
             }
@@ -284,6 +449,7 @@ public final class Encatch: @unchecked Sendable {
                 userSignature = stored?.signature
                 userSignatureTime = stored?.time
                 confirmedIdentity = storedId != nil
+                confirmedName = storedId != nil ? storedName : nil
             }
             feedbackTransactions = storage.getFeedbackTransactions(identityKey: storedName)
         } else {
@@ -293,6 +459,7 @@ public final class Encatch: @unchecked Sendable {
                 userSignature = nil
                 userSignatureTime = nil
                 confirmedIdentity = false
+                confirmedName = nil
             }
             feedbackTransactions = storage.getFeedbackTransactions(identityKey: "anonymous")
         }
@@ -319,22 +486,49 @@ public final class Encatch: @unchecked Sendable {
     private func identifyNow(userName: String, traits: UserTraits?, options: IdentifyOptions?) async {
         guard initialized else { return }
         let secure = options?.secure
-        // Skip a call identical to the last identify sent or still in flight (RN 1.4.4 item 3).
-        let identifyKey = canonicalJSONString(.object([
-            "userName": .string(userName),
-            "traits": traits?.toJSONValue() ?? .null,
-            "locale": options?.locale.map { .string($0) } ?? .null,
-            "country": options?.country.map { .string($0) } ?? .null,
+        // Traits a request body can't carry would fail inside the queue: refuse now.
+        if hasUnsendableValue(traits) {
+            logger.warn("identifyUser \"\(userName)\" ignored: traits contain a value that can't be sent (a number that isn't finite).")
+            return
+        }
+
+        // Dedupe (RN SDK 1.5.0). Sent: the first identify of this app run or a different user, a
+        // changed signature, a locale / country that differs from what the last identify carried,
+        // new traits. Not sent: the same user again with no traits, or with the same traits, as the
+        // last identify sent or still in flight. A skipped call changes no memory.
+        let traitsKey = traitsForDedupe(traits).map(canonicalJSONString)
+        let optionsKey = canonicalJSONString(.object([
             "signature": secure.map { .string($0.signature) } ?? .null,
             "signatureTime": secure?.generatedDateTimeInUtc.map { .string($0) } ?? .null,
         ]))
+        let memoryToken = UUID()
         let duplicate: Bool = withStateLock {
-            if lastIdentifyKey == identifyKey { return true }
-            lastIdentifyKey = identifyKey
+            let memory = identifyMemory
+            let sameUser = memory?.name == userName
+            if let memory, sameUser, optionsKey == memory.optionsKey,
+               options?.locale == nil || options?.locale == memory.locale,
+               options?.country == nil || options?.country == memory.country,
+               traitsKey == nil || traitsKey == memory.traitsKey {
+                return true
+            }
+            // another user starts with no traits, locale or country remembered
+            let kept = sameUser ? memory : nil
+            identifyMemory = IdentifyMemory(
+                name: userName,
+                optionsKey: optionsKey,
+                traitsKey: traitsKey ?? kept?.traitsKey,
+                traitsToken: traitsKey != nil ? memoryToken : kept?.traitsToken,
+                locale: options?.locale ?? kept?.locale,
+                country: options?.country ?? kept?.country,
+                token: memoryToken
+            )
             return false
         }
         if duplicate {
-            logger.debug("identifyUser \"\(userName)\" skipped: same as the last identify (duplicate)")
+            logger.debug(
+                "identifyUser \"\(userName)\" skipped: same user and traits as the last identify in this app run. " +
+                    "To update properties again on purpose (for example a repeated $increment), use setUserProperties(\"\(userName)\", traits)."
+            )
             return
         }
 
@@ -349,6 +543,8 @@ public final class Encatch: @unchecked Sendable {
             let stored = storage.getUserSignature(userName: userName)
             // the previous user's held submits and signature expiry don't carry over (as on reset)
             let droppedSubmits: Int = withStateLock {
+                // not confirmed until this user's identify succeeds (setUserProperties waits for it)
+                confirmedName = nil
                 userNameState = userName
                 userIdState = storedId
                 userSignature = stored?.signature
@@ -396,13 +592,17 @@ public final class Encatch: @unchecked Sendable {
         // pause ends, so a sign-in during a pause isn't lost and repeated calls don't pile up.
         if rateLimiter.isPaused(.tracking) { await retryQueue.removeQueued(label: "identifyUser") }
 
+        // setUserProperties for this user waits until this identify is sent or dropped
+        let finishPending = addPendingIdentify(userName)
         await retryQueue.enqueue(label: "identifyUser", onDrop: { [weak self] in
-            // dropped without succeeding: the same identify may be sent again
-            guard let self else { return }
-            self.withStateLock { if self.lastIdentifyKey == identifyKey { self.lastIdentifyKey = nil } }
+            finishPending()
+            // dropped without succeeding: the same identify may be sent again (its traits too, even
+            // if a later identify without traits took over the rest of the memory)
+            self?.forgetDroppedIdentify(memoryToken)
         }) {
             let res = try await self.apiClient.post(endpoint: Endpoints.identifyUser, body: requestBody, options: requestOptions)
             await self.applyIdentifyReply(res, userName: userName, secure: secure)
+            finishPending()
         }
 
         Task { await self.retryQueue.flush() }
@@ -422,7 +622,10 @@ public final class Encatch: @unchecked Sendable {
             guard userNameState == userName else { return false }
             if let replyUserId { userIdState = replyUserId }
             // the identify succeeded: this user is now the confirmed identity
-            if userIdState != nil { confirmedIdentity = true }
+            if userIdState != nil {
+                confirmedIdentity = true
+                confirmedName = userName
+            }
             // After a successful secure identify its signature (and time) go on every request of this
             // user; an identify without `secure` clears them.
             userSignature = secure?.signature
@@ -459,6 +662,220 @@ public final class Encatch: @unchecked Sendable {
         await handleSurveyInReply(res)
     }
 
+    // ============================================================================
+    // setUserProperties
+    // ============================================================================
+
+    /// Updates the identified user's properties, with the same operations as identifyUser's traits
+    /// (`$set`, `$setOnce`, `$increment`, `$decrement`, `$unset`), through identify-user. Never
+    /// deduped: every call is sent.
+    ///
+    /// `userName` must be the current user, and their identify must have succeeded (or they were
+    /// restored with their id at launch); otherwise the call is ignored, so a pending or failed switch
+    /// can't update the wrong person. Waits for an identify of that user still in flight, and for an
+    /// open survey to close. Returns once the update is queued or ignored.
+    ///
+    /// It counts against the identify-user rate limit (about 5 per minute per user; a 429 pauses all
+    /// tracking). An update with `$increment` or `$decrement` is sent once, never retried, so a
+    /// timeout can't apply it twice.
+    public func setUserProperties(userName: String, traits: UserTraits) async throws {
+        await startSetUserProperties(userName: userName, traits: traits)?.value
+    }
+
+    /// Checks the traits and takes the call's place among the identity calls now (so it sees every
+    /// identify and reset made before it); the returned task does the waiting and queues the update.
+    /// The SwiftUI context starts it without waiting for it.
+    @discardableResult
+    func startSetUserProperties(userName: String, traits: UserTraits) -> Task<Void, Never>? {
+        guard initialized else { return nil }
+        if hasUnsendableValue(traits) {
+            logger.warn("setUserProperties(\"\(userName)\") ignored: traits contain a value that can't be sent (a number that isn't finite).")
+            return nil
+        }
+        guard traitsForDedupe(traits) != nil else {
+            logger.debug("setUserProperties ignored: no traits to set.")
+            return nil
+        }
+        // what will be sent, taken now (UserTraits is a value type: the caller's later changes don't reach it)
+        let wire = traits.toJSONValue()
+        let counts = !(traits.increment?.isEmpty ?? true) || !(traits.decrement?.isEmpty ?? true)
+
+        // Identity calls made before this one run first; then wait, outside the identity chain (so a
+        // resetUser() isn't held up), for an identify of this user still in flight and for an open
+        // survey to close.
+        let release = withStateLock { lifecycleRelease }
+        let lookUpPending: @Sendable (PendingBox) -> @Sendable () async -> Void = { box in
+            { box.signals = self.withStateLock { Array(self.pendingIdentifies[userName]?.values ?? [:].values) } }
+        }
+        let first = PendingBox()
+        let firstLookup = identityOps.start(lookUpPending(first))
+        return propsOrder.start {
+            await firstLookup.value
+            await self.waitThenSetUserProperties(userName: userName, wire: wire, counts: counts, release: release, first: first, lookUpPending: lookUpPending)
+        }
+    }
+
+    private func waitThenSetUserProperties(
+        userName: String,
+        wire: JSONValue,
+        counts: Bool,
+        release: AsyncSignal,
+        first: PendingBox,
+        lookUpPending: @escaping @Sendable (PendingBox) -> @Sendable () async -> Void
+    ) async {
+        // [first] keeps the identifies made before this call even if they finished since; each turn of
+        // the loop also looks again (identify calls made while this one waited its turn count too)
+        var earlier: [AsyncSignal] = first.signals
+        while true {
+            let box = PendingBox()
+            await identityOps.run(lookUpPending(box))
+            let signals = earlier + box.signals
+            earlier = []
+            if !signals.isEmpty {
+                for signal in signals {
+                    await AsyncSignal.either(signal, release)
+                    if release.isFired { break }
+                }
+            } else if isSurveyOpen() {
+                await awaitSurveyIdle(release)
+            } else {
+                break
+            }
+            if release.isFired || !initialized { return }
+        }
+        await identityOps.run { await self.setUserPropertiesNow(userName: userName, wire: wire, counts: counts, release: release) }
+    }
+
+    final class PendingBox: @unchecked Sendable {
+        var signals: [AsyncSignal] = []
+    }
+
+    private func setUserPropertiesNow(userName: String, wire: JSONValue, counts: Bool, release: AsyncSignal) async {
+        guard initialized, !release.isFired else { return }
+        let (current, userId, confirmed, expired) = withStateLock { (userNameState, userIdState, confirmedName, signatureExpired) }
+        guard let current else {
+            logger.debug("setUserProperties ignored: no user is identified. Call identifyUser() first.")
+            return
+        }
+        guard current == userName else {
+            logger.warn("setUserProperties(\"\(userName)\") ignored: the current user is \"\(current)\".")
+            return
+        }
+        guard let userId, confirmed == userName else {
+            logger.warn("setUserProperties(\"\(userName)\") ignored: \"\(userName)\" isn't identified (identifyUser failed or was never called).")
+            return
+        }
+        if expired {
+            logger.debug("setUserProperties(\"\(userName)\") ignored: secure signature expired, waiting for identify")
+            return
+        }
+        if rateLimiter.isPaused(.tracking) {
+            logger.warn("setUserProperties ignored: rate limited, try again later.")
+            return
+        }
+
+        // a later identifyUser() with traits is sent again (the properties may have changed since)
+        forgetIdentifyTraits()
+
+        var req: [String: JSONValue] = [
+            "userName": .string(userName),
+            "userId": .string(userId),
+            "$deviceInfo": buildDeviceInfo().toJSONValue(),
+            "userAttributes": wire,
+        ]
+        if let feedbackTransactions { req["$feedbackTransactions"] = .string(feedbackTransactions) }
+        let body = JSONValue.object(req)
+
+        let token = UUID()
+        let finish = Once { [weak self] in
+            guard let self else { return }
+            let mine: Bool = self.withStateLock {
+                guard self.propsBusy == token else { return false }
+                self.propsBusy = nil
+                return true
+            }
+            if mine { self.pumpUserProps() }
+        }
+        // runs with the pump already claimed for this update ([propsBusy] == token)
+        let start: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            // stop() / clearAll() since it was queued: it was for the user being cleared
+            if release.isFired {
+                finish()
+                return
+            }
+            Task { await self.queueUserProperties(userName: userName, userId: userId, body: body, counts: counts, release: release, finish: finish) }
+        }
+        withStateLock { propsWaiting.append((token: token, release: release, start: start)) }
+        pumpUserProps()
+    }
+
+    private func queueUserProperties(userName: String, userId: String, body: JSONValue, counts: Bool, release: AsyncSignal, finish: Once) async {
+        guard let retryQueue else {
+            finish()
+            return
+        }
+        await retryQueue.enqueue(
+            label: "setUserProperties",
+            maxRetries: counts ? 1 : RetryQueue.maxRetries,
+            onDrop: { finish() }
+        ) { [weak self] in
+            guard let self else {
+                finish()
+                return
+            }
+            // checked again just before sending: a reset or switch may have happened
+            let (current, currentId, confirmed, expired, signature, signatureTime) = self.withStateLock {
+                (self.userNameState, self.userIdState, self.confirmedName, self.signatureExpired, self.userSignature, self.userSignatureTime)
+            }
+            if release.isFired || current != userName || confirmed != userName || currentId != userId {
+                self.logger.debug("setUserProperties(\"\(userName)\") not sent: the user changed")
+                finish()
+                return
+            }
+            if expired {
+                self.logger.debug("setUserProperties(\"\(userName)\") ignored: secure signature expired, waiting for identify")
+                finish()
+                return
+            }
+            // a survey opened meanwhile: send after it closes (an identify-user while a survey is
+            // open can drop it from the person's candidates on the server, so its submit fails)
+            if self.isSurveyOpen() {
+                Task {
+                    await self.awaitSurveyIdle(release)
+                    if release.isFired {
+                        finish()
+                    } else {
+                        await self.queueUserProperties(userName: userName, userId: userId, body: body, counts: counts, release: release, finish: finish)
+                    }
+                }
+                return
+            }
+            // the user name, plus the stored signature and its time (there is no call signature)
+            let options = RequestOptions(identifyUserName: userName, signature: signature, signatureTime: signatureTime, storedSignature: true)
+            let res = try await self.apiClient.post(endpoint: Endpoints.identifyUser, body: body, options: options)
+            defer { finish() }
+            // a reply for a user who is no longer current (reset or switched since): not applied
+            guard self.withStateLock({ self.userNameState == userName }) else {
+                self.logger.debug("setUserProperties reply for \"\(userName)\" ignored: no longer the current user")
+                return
+            }
+            // its own reply handling, not identify's: no signature change, no held submits released,
+            // no session restart, no "user identified"
+            if case .object(let resObj) = res, case .string(let value)? = resObj["$feedbackTransactions"] {
+                self.feedbackTransactions = value
+                self.storage.setFeedbackTransactions(identityKey: userName, value: value)
+            }
+            let meta = res.toResponseMeta()
+            self.sessionManager.handleResponseMeta(meta)
+            // only while the ping runs (scheduleNextPing doesn't start a stopped one)
+            if let pingAgainIn = meta.pingAgainIn, pingAgainIn > 0 {
+                self.sessionManager.scheduleNextPing(delayMs: Int64(pingAgainIn * 1000))
+            }
+            await self.handleSurveyInReply(res)
+        }
+    }
+
     /// The identity, signature and app state the next request is built from — one snapshot.
     private func authState() -> AuthState {
         withStateLock {
@@ -485,8 +902,8 @@ public final class Encatch: @unchecked Sendable {
             signatureExpired = true
             userSignature = nil
             userSignatureTime = nil
-            // the same signed identify may be sent again
-            lastIdentifyKey = nil
+            // the next identify (with a fresh signature) must go out, even if it matches
+            identifyMemory = nil
             return (true, userNameState)
         }
         guard first else { return }
@@ -716,6 +1133,7 @@ public final class Encatch: @unchecked Sendable {
             pendingAutoShow = nil
             pendingAutoShowToken = nil
         }
+        checkSurveyIdle()
     }
 
     private func showFormInternal(
@@ -730,26 +1148,34 @@ public final class Encatch: @unchecked Sendable {
         // nil: go ahead; otherwise why the show is skipped
         let skipReason: String? = withSurveyLock {
             // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
-            if let token {
-                guard pendingAutoShowToken == token else { return "superseded by a newer automatic show" }
+            if let token, pendingAutoShowToken != token { return "superseded by a newer automatic show" }
+            let reason: String? = {
+                if rateLimited { return "rate limited" }
+                if triggerType == .automatic && expired { return "secure signature expired" }
+                if triggerType == .automatic && (loadingFormId != nil || isFormVisible) { return "a survey is loading or open (survey-open)" }
+                if triggerType == .manual && (loadingFormId == formId || (isFormVisible && openFormIds.contains(formId))) {
+                    return "that survey is already loading or open"
+                }
+                loadingFormId = formId
+                return nil
+            }()
+            // the scheduled show has started: "loading" is set before "pending" ends, so a survey
+            // check never sees neither
+            if token != nil {
                 pendingAutoShow = nil
                 pendingAutoShowToken = nil
             }
-            if rateLimited { return "rate limited" }
-            if triggerType == .automatic && expired { return "secure signature expired" }
-            if triggerType == .automatic && (loadingFormId != nil || isFormVisible) { return "a survey is loading or open (survey-open)" }
-            if triggerType == .manual && (loadingFormId == formId || (isFormVisible && openFormIds.contains(formId))) {
-                return "that survey is already loading or open"
-            }
-            loadingFormId = formId
-            return nil
+            return reason
         }
         if let skipReason {
             logger.debug("show-form \(formId) skipped: \(skipReason)")
+            // a scheduled show that ended here was "open" for setUserProperties until now
+            if token != nil { checkSurveyIdle() }
             return
         }
         await showFormRequest(formId: formId, resetMode: resetMode, triggerType: triggerType, context: context)
         withSurveyLock { if loadingFormId == formId { loadingFormId = nil } }
+        checkSurveyIdle()
     }
 
     private func showFormRequest(
@@ -880,6 +1306,7 @@ public final class Encatch: @unchecked Sendable {
             isFormVisible = false
             openFormIds = []
         }
+        checkSurveyIdle()
 
         Task { await self.trackFormEvent("form:dismissed", formConfigurationId) }
 
@@ -1066,7 +1493,13 @@ public final class Encatch: @unchecked Sendable {
 
         initialized = false
         apiKeyState = nil
+        // waiting setUserProperties updates were for the user being cleared
+        releaseLifecycleWaits()
+        releasePendingIdentifies()
         withStateLock {
+            propsWaiting = []
+            propsBusy = nil
+            confirmedName = nil
             confirmedIdentity = false
             userNameState = nil
             userIdState = nil
@@ -1074,7 +1507,7 @@ public final class Encatch: @unchecked Sendable {
             userSignatureTime = nil
             signatureExpired = false
             heldSubmits = []
-            lastIdentifyKey = nil
+            identifyMemory = nil
             lastEventAtMs = [:]
             lastScreen = nil
         }
@@ -1135,6 +1568,8 @@ public final class Encatch: @unchecked Sendable {
     public func stopSession() async throws {
         guard !isSessionStopped else { return }
         isSessionStopped = true
+        // the next identify turns the session back on, so it must go out even if it matches
+        withStateLock { identifyMemory = nil }
         isSessionPaused = false
         sessionManager?.stopPingInterval()
         cancelPendingAutoShow()
@@ -1143,6 +1578,7 @@ public final class Encatch: @unchecked Sendable {
             isFormVisible = false
             openFormIds = []
         }
+        checkSurveyIdle()
         storage?.setSessionStopped()
     }
 
@@ -1160,13 +1596,14 @@ public final class Encatch: @unchecked Sendable {
             let previous = userNameState
             let dropped = heldSubmits.count
             confirmedIdentity = false
+            confirmedName = nil
             userNameState = nil
             userIdState = nil
             userSignature = nil
             userSignatureTime = nil
             signatureExpired = false
             heldSubmits = []
-            lastIdentifyKey = nil
+            identifyMemory = nil
             lastEventAtMs = [:]
             lastScreen = nil
             return (previous, dropped)
@@ -1213,6 +1650,7 @@ public final class Encatch: @unchecked Sendable {
             return false
         }
         if ignored { logger.debug("close of \(formId ?? "") ignored: another survey is open") }
+        if !visible { checkSurveyIdle() }
     }
 
     /// Flushes the offline retry queue. The RN SDK does this automatically on `AppState` foreground;
@@ -1243,6 +1681,8 @@ public final class Encatch: @unchecked Sendable {
 
     public func stop() {
         sessionManager?.stopPingInterval()
+        // anything waiting for a survey to close or an identify gives up
+        releaseLifecycleWaits()
     }
 
     // ============================================================================
@@ -1447,6 +1887,11 @@ final class SerialOps: @unchecked Sendable {
         await enqueue(op).value
     }
 
+    /// Takes [op]'s place in line now and returns its task (to wait for it later, or not).
+    func start(_ op: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
+        enqueue(op)
+    }
+
     private func enqueue(_ op: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
         lock.lock()
         defer { lock.unlock() }
@@ -1458,6 +1903,36 @@ final class SerialOps: @unchecked Sendable {
         tail = task
         return task
     }
+}
+
+/// The traits as the dedupe compares them (RN SDK 1.5.0): empty operations dropped, `$unset` as a
+/// sorted copy (the caller's array is never reordered); nil when nothing is left ("no traits").
+func traitsForDedupe(_ traits: UserTraits?) -> JSONValue? {
+    guard let traits else { return nil }
+    var result: [String: JSONValue] = [:]
+    if let set = traits.set, !set.isEmpty { result["$set"] = .object(set) }
+    if let setOnce = traits.setOnce, !setOnce.isEmpty { result["$setOnce"] = .object(setOnce) }
+    if let increment = traits.increment, !increment.isEmpty { result["$increment"] = .object(increment.mapValues { .number($0) }) }
+    if let decrement = traits.decrement, !decrement.isEmpty { result["$decrement"] = .object(decrement.mapValues { .number($0) }) }
+    if let unset = traits.unset, !unset.isEmpty { result["$unset"] = .array(unset.sorted().map { .string($0) }) }
+    return result.isEmpty ? nil : .object(result)
+}
+
+/// Traits a request body can't carry: a number that isn't finite (JSON has no NaN or Infinity).
+func hasUnsendableValue(_ traits: UserTraits?) -> Bool {
+    guard let traits else { return false }
+    func unsendable(_ value: JSONValue) -> Bool {
+        switch value {
+        case .number(let n): return !n.isFinite
+        case .object(let o): return o.values.contains(where: unsendable)
+        case .array(let a): return a.contains(where: unsendable)
+        default: return false
+        }
+    }
+    return (traits.set?.values.contains(where: unsendable) ?? false) ||
+        (traits.setOnce?.values.contains(where: unsendable) ?? false) ||
+        (traits.increment?.values.contains { !$0.isFinite } ?? false) ||
+        (traits.decrement?.values.contains { !$0.isFinite } ?? false)
 }
 
 /// JSON with object keys sorted, so equal values give equal strings (identify dedupe key).

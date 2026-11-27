@@ -423,6 +423,24 @@ public final class EncatchBridge: NSObject {
         }
     }
 
+    /// `Encatch.setUserProperties`: updates the identified user's properties; never deduped; ignored
+    /// unless `userName` is the current, identified user. Completes once queued or ignored.
+    @objc public func setUserProperties(
+        userName: String,
+        traits: EncatchBridgeUserTraits,
+        completion: @escaping (NSError?) -> Void
+    ) {
+        let traits = traits.toUserTraits()
+        Task {
+            do {
+                try await Encatch.shared.setUserProperties(userName: userName, traits: traits)
+                completion(nil)
+            } catch {
+                completion(error as NSError)
+            }
+        }
+    }
+
     // ============================================================================
     // Preferences
     // ============================================================================

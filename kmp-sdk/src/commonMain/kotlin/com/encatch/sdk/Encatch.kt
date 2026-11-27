@@ -38,6 +38,15 @@ expect object Encatch {
 
     suspend fun identifyUser(userName: String, traits: UserTraits? = null, options: IdentifyOptions? = null)
 
+    /**
+     * Updates the identified user's properties (the same operations as [identifyUser]'s traits).
+     * Never deduped: every call is sent. Ignored unless [userName] is the current user and their
+     * identify succeeded; waits for an identify of that user still in flight and for an open survey
+     * to close. Counts against the identify-user rate limit; `$increment` / `$decrement` updates are
+     * never retried. Returns once the update is queued or ignored.
+     */
+    suspend fun setUserProperties(userName: String, traits: UserTraits)
+
     // ============================================================================
     // Preferences
     // ============================================================================

@@ -182,6 +182,14 @@ public final class EncatchContext: ObservableObject {
         enqueue(.identity) { try? await encatch.identifyUser(userName: userName, traits: traits, options: options) }
     }
 
+    /// `Encatch.setUserProperties`: updates the identified user's properties. It takes its place after
+    /// the calls made before it (an `identifyUser` just before it counts), then waits on its own for
+    /// that identify and for an open survey, without holding up the calls made after it.
+    public func setUserProperties(userName: String, traits: UserTraits) {
+        let encatch = encatch
+        enqueue { encatch.startSetUserProperties(userName: userName, traits: traits) }
+    }
+
     /// `Encatch.setLocale`.
     public func setLocale(_ locale: String) {
         let encatch = encatch

@@ -157,11 +157,15 @@ struct RequestOptions: Sendable {
     /// Secure identify: the call's signature and `generatedDateTimeInUtc` (epoch ms, as given).
     var signature: String?
     var signatureTime: String?
+    /// setUserProperties: [signature] is the stored session-time signature, not the call's own, so a
+    /// 401 is an expiry as on any other request.
+    var storedSignature: Bool
 
-    init(identifyUserName: String? = nil, signature: String? = nil, signatureTime: String? = nil) {
+    init(identifyUserName: String? = nil, signature: String? = nil, signatureTime: String? = nil, storedSignature: Bool = false) {
         self.identifyUserName = identifyUserName
         self.signature = signature
         self.signatureTime = signatureTime
+        self.storedSignature = storedSignature
     }
 }
 
@@ -388,7 +392,7 @@ final class EncatchApiClient: @unchecked Sendable {
         }
 
         // A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16).
-        if statusCode == 401, options.identifyUserName == nil,
+        if statusCode == 401, options.identifyUserName == nil || options.storedSignature,
            let sentSignature = authHeaders["X-User-Signature"], authHeaders["X-User-Session-Time"] != nil {
             onSignatureExpired(sentSignature, authHeaders["X-User-Name"])
         }

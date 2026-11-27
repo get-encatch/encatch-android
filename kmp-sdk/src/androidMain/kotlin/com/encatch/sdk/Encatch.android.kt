@@ -31,6 +31,10 @@ actual object Encatch {
         com.encatch.core.Encatch.identifyUser(userName, traits?.toCore(), options?.toCore())
     }
 
+    actual suspend fun setUserProperties(userName: String, traits: UserTraits) {
+        com.encatch.core.Encatch.setUserProperties(userName, traits.toCore())
+    }
+
     // ============================================================================
     // Preferences
     // ============================================================================

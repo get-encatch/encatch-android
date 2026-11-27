@@ -68,6 +68,9 @@ actor RetryQueue {
     /// not-yet-removed item and would run its request twice without this guard — observed live
     /// as every trackScreen/trackEvent landing on the API twice.
     private var inFlightIds: Set<String> = []
+    /// In-flight items removed by [removeQueued] or [clear]: if that attempt fails, they are dropped
+    /// (and reported) instead of retried.
+    private var removedInFlightIds: Set<String> = []
     /// The flush in progress, if any, and whether it must go through the queue once more.
     private var running: Task<Void, Never>?
     private var runAgain = false
@@ -165,10 +168,17 @@ actor RetryQueue {
             do {
                 try await item.fn()
                 inFlightIds.remove(item.id)
+                removedInFlightIds.remove(item.id)
                 queue.removeAll { $0.id == item.id }
                 persistQueue()
             } catch {
                 inFlightIds.remove(item.id)
+                if removedInFlightIds.remove(item.id) != nil {
+                    // removed while it was being sent, then failed: not retried
+                    item.onDrop?()
+                    logger.debug("Retry queue: dropping \"\(item.label)\" (removed while in flight, then failed)")
+                    continue
+                }
                 let apiError = error as? EncatchApiException
                 if apiError?.status == 429 {
                     drop(item)
@@ -216,17 +226,26 @@ actor RetryQueue {
         item.onDrop?()
     }
 
-    /// Removes queued (not in flight) items with this label; returns how many were removed.
+    /// Removes queued items with this label; returns how many. One being sent right now is not
+    /// reported as dropped: it may still succeed. If it fails, it is dropped (and reported) then,
+    /// never retried.
     @discardableResult
     func removeQueued(label: String) -> Int {
-        let matching = queue.filter { $0.label == label && !inFlightIds.contains($0.id) }
-        for item in matching { drop(item) }
+        let matching = queue.filter { $0.label == label }
+        let inFlight = matching.filter { inFlightIds.contains($0.id) }
+        for item in inFlight {
+            removedInFlightIds.insert(item.id)
+            queue.removeAll { $0.id == item.id }
+        }
+        let waiting = matching.filter { !inFlightIds.contains($0.id) }
+        for item in waiting { drop(item) }
         if !matching.isEmpty { persistQueue() }
-        return matching.count
+        return waiting.count
     }
 
     /// Forgets every queued item (clearAll): nothing more is sent.
     func clear() {
+        removedInFlightIds.formUnion(inFlightIds)
         queue.removeAll()
         wakeTask?.cancel()
         wakeTask = nil

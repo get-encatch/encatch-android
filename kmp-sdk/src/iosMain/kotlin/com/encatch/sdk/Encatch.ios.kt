@@ -85,6 +85,14 @@ actual object Encatch {
         }
     }
 
+    actual suspend fun setUserProperties(userName: String, traits: UserTraits) {
+        suspendCancellableCoroutine<Unit> { cont ->
+            EncatchBridge.shared().setUserPropertiesWithUserName(userName, traits.toBridge()) { error ->
+                if (error != null) cont.resumeWithException(RuntimeException(error.localizedDescription)) else cont.resume(Unit)
+            }
+        }
+    }
+
     // ============================================================================
     // Preferences
     // ============================================================================

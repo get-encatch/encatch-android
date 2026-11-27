@@ -83,6 +83,27 @@ By default the identified user is saved and restored at the next launch. To keep
 current app run only (every launch starts as a visitor until you identify again), pass
 `EncatchConfig(persistUserAcrossRestarts: false)` to `initialize`.
 
+### Repeat identifies and user properties
+
+After the first `identifyUser` of each app run, calling it again for the same user with the same
+traits, or with none, sends nothing, so it is safe to call on every launch or screen. A different
+user, a new signature, a locale or country the last identify didn't carry, and changed traits are
+sent.
+
+To update the user's properties on purpose (a counter, say), use `setUserProperties`. It takes the
+same traits, is never skipped, and is ignored unless that user is the current one and their identify
+succeeded. It waits for an identify of that user still in flight and for an open survey.
+
+```swift
+try await Encatch.shared.setUserProperties(
+    userName: "user-123",
+    traits: UserTraits(set: ["plan": .string("team")], increment: ["logins": 1])
+)
+```
+
+It counts against the identify rate limit (about 5 per minute per user), and an update with
+`$increment` or `$decrement` is never retried.
+
 ### SwiftUI
 
 The same building blocks as the React Native and Flutter SDKs, with the same names:
@@ -120,7 +141,7 @@ struct ContentView: View {
 ```
 
 - `EncatchContext` publishes `isInitialized`, `isIdentified` and `userName`, and has React Native's
-  context methods: `identifyUser`, `setLocale`, `setCountry`, `setTheme`, `trackEvent`,
+  context methods: `identifyUser`, `setUserProperties`, `setLocale`, `setCountry`, `setTheme`, `trackEvent`,
   `trackScreen`, `showForm`, `dismissForm`, `addToResponse`, `resetUser`, `on` (returns a closure
   that unsubscribes), `submitForm`, `emitEvent` and `refineText`. They are call-and-forget and
   reach the SDK in the order they were made (so `resetUser()` then `identifyUser(…)` signs the new

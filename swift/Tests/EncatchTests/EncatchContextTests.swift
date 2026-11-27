@@ -322,4 +322,56 @@ final class EncatchContextTests: XCTestCase {
         context.emitEvent(.formShow, EventPayload(formId: "form-1", timestamp: 0))
         XCTAssertEqual(events, [.formShow, .formClose], "no event after unsubscribing")
     }
+
+    // MARK: setUserProperties
+
+    private func updates(_ server: FakeServer) -> [FakeServer.Call] {
+        server.calls("identify-user").filter { $0.body["userAttributes"] != nil }
+    }
+
+    func testSetUserPropertiesRightAfterANewUsersIdentifyIsSentAfterIt() async throws {
+        let server = FakeServer()
+        replyIds(server, delayMs: 300)
+        let (sdk, context) = makeContext(server)
+        defer { sdk.stop() }
+        await context.initialize(apiKey: "key", config: config)
+
+        context.identifyUser(userName: "bob")
+        context.setUserProperties(userName: "bob", traits: UserTraits(set: ["plan": .string("pro")]))
+        await waitFor("the update sent") { self.updates(server).count == 1 }
+        XCTAssertEqual(updates(server)[0].string("userId"), "uid-bob")
+        XCTAssertEqual(server.calls("identify-user").first?.body["userAttributes"], nil, "the identify went first")
+    }
+
+    func testAWaitingUpdateDoesntHoldUpTheCallsAfterIt() async throws {
+        let server = FakeServer()
+        replyIds(server)
+        let (sdk, context) = makeContext(server)
+        defer { sdk.stop() }
+        await context.initialize(apiKey: "key", config: config)
+        context.identifyUser(userName: "alice")
+        await waitFor("identified") { context.isIdentified }
+
+        sdk.setFormVisible(true) // the update waits for this survey to close
+        context.setUserProperties(userName: "alice", traits: UserTraits(set: ["plan": .string("pro")]))
+        context.trackEvent("after")
+        await waitFor("the event after it sent") { server.count("track-event") == 1 }
+        XCTAssertEqual(updates(server).count, 0, "still waiting for the survey")
+        sdk.setFormVisible(false)
+        await waitFor("the update sent once the survey closed") { self.updates(server).count == 1 }
+    }
+
+    func testAResetMadeAfterItStopsAnUpdateStillWaiting() async throws {
+        let server = FakeServer()
+        replyIds(server, delayMs: 300)
+        let (sdk, context) = makeContext(server)
+        defer { sdk.stop() }
+        await context.initialize(apiKey: "key", config: config)
+
+        context.identifyUser(userName: "bob")
+        context.setUserProperties(userName: "bob", traits: UserTraits(set: ["plan": .string("pro")]))
+        context.resetUser()
+        await sleepMs(900)
+        XCTAssertEqual(updates(server).count, 0, "bob was reset before his identify finished")
+    }
 }

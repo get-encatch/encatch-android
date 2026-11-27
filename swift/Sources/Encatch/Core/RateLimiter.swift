@@ -14,6 +14,8 @@ struct EncatchTimings: Sendable {
     var defaultPauseMs: Int64 = 60_000
     /// …and no pause is longer than this, whatever Retry-After says.
     var maxPauseMs: Int64 = 5 * 60_000
+    /// How often setUserProperties' shared watcher checks that an open survey closed (a close also wakes it).
+    var surveyIdlePollMs: Int64 = 500
 }
 
 /// Monotonic milliseconds (not wall time), for windows and pauses.

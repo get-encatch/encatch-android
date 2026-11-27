@@ -332,6 +332,9 @@ SWIFT_CLASS_PROPERTY(@property (nonatomic, class, readonly, strong) EncatchBridg
 @property (nonatomic, readonly) BOOL isInitialized;
 /// Mirrors <code>Encatch.shared.identifyUser(userName:traits:options:)</code>.
 - (void)identifyUserWithUserName:(NSString * _Nonnull)userName traits:(EncatchBridgeUserTraits * _Nullable)traits options:(EncatchBridgeIdentifyOptions * _Nullable)options completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
+/// <code>Encatch.setUserProperties</code>: updates the identified user’s properties; never deduped; ignored
+/// unless <code>userName</code> is the current, identified user. Completes once queued or ignored.
+- (void)setUserPropertiesWithUserName:(NSString * _Nonnull)userName traits:(EncatchBridgeUserTraits * _Nonnull)traits completion:(void (^ _Nonnull)(NSError * _Nullable))completion;
 - (void)setLocale:(NSString * _Nonnull)locale;
 - (void)setCountry:(NSString * _Nonnull)country;
 /// <code>theme</code> is one of “light” / “dark” / “system” (case-insensitive); anything else resolves to
