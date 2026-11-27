@@ -38,7 +38,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.serialization.json)
+            // api: public types (UserTraits, the show-form payloads) use its JsonElement / JsonObject,
+            // so an app that builds them needs it on its compile classpath too
+            api(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
