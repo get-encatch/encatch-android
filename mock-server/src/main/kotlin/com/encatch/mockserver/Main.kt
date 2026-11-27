@@ -35,15 +35,15 @@ import io.ktor.http.HttpStatusCode
  */
 private const val DEFAULT_PORT = 8089
 
-/** One recorded API call: the endpoint and the headers the identity and session checks need. */
-private data class Recorded(val endpoint: String, val headers: Map<String, String?>, val atMs: Long)
+/** One recorded API call: the endpoint, the headers the identity and session checks need, and (identify-user) the body. */
+private data class Recorded(val endpoint: String, val headers: Map<String, String?>, val atMs: Long, val body: String? = null)
 
 private val recorded = java.util.concurrent.CopyOnWriteArrayList<Recorded>()
 private val recordedHeaders = listOf("X-Session-Id", "X-User-Name", "X-User-Id", "X-User-Signature", "X-Device-Id")
 
-private fun io.ktor.server.application.ApplicationCall.record() {
+private fun io.ktor.server.application.ApplicationCall.record(body: String? = null) {
     val endpoint = request.local.uri.substringBefore('?').substringAfterLast('/')
-    recorded += Recorded(endpoint, recordedHeaders.associateWith { request.headers[it] }, System.currentTimeMillis())
+    recorded += Recorded(endpoint, recordedHeaders.associateWith { request.headers[it] }, System.currentTimeMillis(), body)
 }
 
 private fun jsonString(value: String?): String =
@@ -69,7 +69,8 @@ fun main(args: Array<String>) {
             get("/__mock/requests") {
                 val items = recorded.joinToString(",") { r ->
                     val headers = r.headers.entries.joinToString(",") { "${jsonString(it.key)}:${jsonString(it.value)}" }
-                    """{"endpoint":${jsonString(r.endpoint)},"atMs":${r.atMs},"headers":{$headers}}"""
+                    val body = r.body?.let { ",\"body\":$it" } ?: ""
+                    """{"endpoint":${jsonString(r.endpoint)},"atMs":${r.atMs},"headers":{$headers}$body}"""
                 }
                 call.respondJson("[$items]")
             }
@@ -84,8 +85,9 @@ fun main(args: Array<String>) {
                 call.respondJson("""{"feedbackConfigurationId":"mock-config-1","appearanceProperties":{}}""")
             }
             post("/engage-product/encatch/api/v2/encatch/identify-user") {
-                call.record()
                 val body = call.receiveText()
+                // the body too (it is JSON): the dedupe checks tell plain, traits and property updates apart
+                call.record(body.takeIf { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) }.isSuccess })
                 val name = runCatching {
                     kotlinx.serialization.json.Json.parseToJsonElement(body)
                         .let { it as kotlinx.serialization.json.JsonObject }["userName"]

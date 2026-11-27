@@ -1,0 +1,129 @@
+# E14 (RN SDK 1.5.0 handover, identifyUser dedupe and setUserProperties): sign in, identify again,
+# identify with traits twice, set properties twice, identify with the traits again, then restart and
+# identify twice. Run by integrations/e2e/run-e14.sh, which checks what the mock-server recorded.
+#   APP_ID   com.encatch.androidtester (Android) or com.encatch.iostester (iOS)
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Encatch Tester"
+    timeout: 20000
+- tapOn: "Mock"
+- tapOn: "en_dev_…"
+- inputText: "e2e-api-key"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- tapOn:
+    text: "form id"
+    index: 0
+- inputText: "e2e-form"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- scrollUntilVisible:
+    element: "Save & continue"
+- tapOn: "Save & continue"
+- extendedWaitUntil:
+    visible: "Encatch.isIdentified(): no"
+    timeout: 15000
+- tapOn: ".*New user"
+- tapOn: "Username"
+- inputText: "e2e-alice"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- tapOn: "Save user"
+- scrollUntilVisible:
+    element: "Identify user"
+- tapOn: "Identify user"
+- extendedWaitUntil:
+    visible: "Encatch.isIdentified(): yes"
+    timeout: 15000
+# 1. signed in: one identify, no traits
+# 2. identify again with no traits: not sent
+- scrollUntilVisible:
+    element: "Identify again"
+    centerElement: true
+- tapOn: "Identify again"
+- waitForAnimationToEnd:
+    timeout: 1500
+# 3. plan free twice: the first sent, the second not
+- scrollUntilVisible:
+    element: "Identify: plan free"
+    centerElement: true
+- tapOn: "Identify: plan free"
+- waitForAnimationToEnd:
+    timeout: 1500
+- scrollUntilVisible:
+    element: "Identify: plan free"
+    centerElement: true
+- tapOn: "Identify: plan free"
+- waitForAnimationToEnd:
+    timeout: 1500
+# 4. set properties twice: both sent
+- scrollUntilVisible:
+    element: "Set properties"
+    centerElement: true
+- tapOn: "Set properties"
+- waitForAnimationToEnd:
+    timeout: 1500
+- scrollUntilVisible:
+    element: "Set properties"
+    centerElement: true
+- tapOn: "Set properties"
+- waitForAnimationToEnd:
+    timeout: 1500
+# 5. plan free again: sent (setUserProperties cleared identify's traits memory)
+- scrollUntilVisible:
+    element: "Identify: plan free"
+    centerElement: true
+- tapOn: "Identify: plan free"
+- waitForAnimationToEnd:
+    timeout: 1500
+# 6. a new app run keeping the data: the first identify of the run sent, the repeat not
+- stopApp
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Log in"
+    timeout: 20000
+- extendedWaitUntil:
+    visible: "Encatch.isIdentified(): yes"
+    timeout: 10000
+# the user is still selected: identify (the first of this run), then the repeat from Home
+- scrollUntilVisible:
+    element: "Identify user"
+    centerElement: true
+- tapOn: "Identify user"
+- extendedWaitUntil:
+    visible: "Signed in as"
+    timeout: 10000
+- scrollUntilVisible:
+    element: "Identify again"
+    centerElement: true
+- tapOn: "Identify again"
+- waitForAnimationToEnd:
+    timeout: 1500

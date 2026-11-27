@@ -466,6 +466,33 @@ struct HomeTabView: View {
                     }
                     .card()
                 }
+
+                // identifyUser dedupe and setUserProperties (RN SDK 1.5.0 flow E14)
+                if let userName = state.prefs.userName {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionHeader(title: "User properties", icon: "person.text.rectangle")
+                        VStack(spacing: 10) {
+                            Button("Identify again") {
+                                Task { try? await Encatch.shared.identifyUser(userName: userName) }
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            Button("Identify: plan free") {
+                                Task { try? await Encatch.shared.identifyUser(userName: userName, traits: UserTraits(set: ["e2e_plan": .string("free")])) }
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                            Button("Set properties") {
+                                Task {
+                                    try? await Encatch.shared.setUserProperties(
+                                        userName: userName,
+                                        traits: UserTraits(set: ["e2e_plan": .string("team")], increment: ["e2e_count": 1])
+                                    )
+                                }
+                            }
+                            .buttonStyle(SecondaryButtonStyle())
+                        }
+                        .card()
+                    }
+                }
             }
             .padding()
         }

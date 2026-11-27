@@ -52,6 +52,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.encatch.android.EncatchInlineFormView
 import com.encatch.core.Encatch
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonPrimitive
+import com.encatch.core.UserTraits
 
 /** What the SDK says about the identity (`Encatch.isIdentified()`), shown on Login and Home. */
 @Composable
@@ -403,6 +407,38 @@ fun HomeScreen(
                 if (!interceptorFormId.isNullOrBlank()) {
                     Spacer(Modifier.height(10.dp))
                     SecondaryPillButton("Show Form (interceptor test)", onClick = { onShowInterceptorForm(interceptorFormId) })
+                }
+            }
+        }
+
+        // identifyUser dedupe and setUserProperties (RN SDK 1.5.0 flow E14)
+        if (!userName.isNullOrBlank()) {
+            val scope = rememberCoroutineScope()
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("User properties")
+                TesterCard {
+                    SecondaryPillButton("Identify again", onClick = { scope.launch { Encatch.identifyUser(userName) } })
+                    Spacer(Modifier.height(10.dp))
+                    SecondaryPillButton(
+                        "Identify: plan free",
+                        onClick = {
+                            scope.launch {
+                                Encatch.identifyUser(userName, UserTraits(set = mapOf("e2e_plan" to JsonPrimitive("free"))))
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    SecondaryPillButton(
+                        "Set properties",
+                        onClick = {
+                            scope.launch {
+                                Encatch.setUserProperties(
+                                    userName,
+                                    UserTraits(set = mapOf("e2e_plan" to JsonPrimitive("team")), increment = mapOf("e2e_count" to 1.0)),
+                                )
+                            }
+                        },
+                    )
                 }
             }
         }
