@@ -35,6 +35,8 @@ object EncatchFormHost {
     private val installed = AtomicBoolean(false)
     @Volatile private var currentActivity: Activity? = null
     private var currentDialog: EncatchFormDialog? = null
+    /** The activity [currentDialog] was created in (its context is a theme wrapper, not the activity). */
+    private var currentDialogActivity: Activity? = null
 
     /** Whether the host is installed (by [EncatchFormHostInitializer] or an [install] call). */
     val isInstalled: Boolean get() = installed.get()
@@ -68,9 +70,12 @@ object EncatchFormHost {
 
                 override fun onActivityDestroyed(activity: Activity) {
                     if (currentActivity === activity) currentActivity = null
-                    if (currentDialog?.context === activity) {
+                    // the survey closes with its activity (a rotation, a finish): core is told, and a
+                    // later dismiss doesn't touch a window the system already removed
+                    if (currentDialog != null && currentDialogActivity === activity) {
                         currentDialog?.dismiss()
                         currentDialog = null
+                        currentDialogActivity = null
                     }
                 }
 
@@ -122,6 +127,14 @@ object EncatchFormHost {
                         currentDialog?.dismiss()
                         val dialog = EncatchFormDialog(activity)
                         currentDialog = dialog
+                        currentDialogActivity = activity
+                        // forgotten once it closes itself, so a later show doesn't dismiss it again
+                        dialog.setOnDismissListener {
+                            if (currentDialog === dialog) {
+                                currentDialog = null
+                                currentDialogActivity = null
+                            }
+                        }
                         dialog.present(event.payload)
                     }
                     is InternalEvent.DismissForm -> {

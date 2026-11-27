@@ -204,7 +204,8 @@ class FormWebViewBridge(
                         visitedQuestionIds = (data["visitedQuestionIds"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull },
                     ),
                 )
-                scope.launch { runCatching { Encatch.submitForm(submitReq) } }
+                // its owner taken now: the page's close may follow at once and forget who it was shown to
+                Encatch.submitFromSurvey(submitReq)
                 Encatch.emitEvent(EventType.FORM_SUBMIT, EventPayload(formId = parsed.formId, timestamp = 0L, data = data))
             }
 

@@ -519,6 +519,39 @@ class SignatureExpiredTest {
         identify("bob", "sig-b2")
         settle(400)
         assertEquals(1, api.called("submit-form").size, "alice's answers are never sent as bob")
-        assertTrue(log.warnings.value.any { "made by another user" in it })
+        assertTrue(log.warnings.value.any { "no longer the current user" in it })
+    }
+
+    @Test
+    fun after_a_switch_the_new_user_s_submit_is_sent_not_held() = runTest {
+        start()
+        identify("alice", "sig-1")
+        expired = setOf("sig-1")
+        update()
+        eventually { notified.value == listOf("alice") }
+        identify("bob")
+        submit()
+        eventually { api.called("submit-form").size == 1 }
+        assertEquals("bob", api.called("submit-form")[0].header("X-User-Name"))
+    }
+
+    @Test
+    fun a_submit_waiting_out_a_429_is_not_sent_as_a_user_identified_meanwhile() = runTest {
+        start()
+        identify("alice")
+        var submits = 0
+        api.replyCall = { call ->
+            if (call.endpoint == "submit-form" && ++submits == 1) {
+                MockApi.Reply(status = HttpStatusCode.TooManyRequests, headers = mapOf("Retry-After" to "1"))
+            } else {
+                gateway(call)
+            }
+        }
+        launch(Dispatchers.Default) { submit() }
+        eventually { api.called("submit-form").size == 1 } // paused for a second
+        identify("bob")
+        settle(1_500)
+        assertEquals(1, api.called("submit-form").size, "alice's answers are not sent as bob")
+        assertTrue(log.warnings.value.any { "no longer the current user" in it })
     }
 }

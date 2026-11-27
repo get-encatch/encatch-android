@@ -87,6 +87,34 @@ object Encatch {
     // identify succeeded. Kept through a user switch until the new user's identify succeeds; cleared
     // by resetUser() (also the server's "retries exhausted" reset) and clearAll().
     @Volatile private var confirmedIdentity = false
+    /**
+     * Who each survey was shown to (handover 6b): the user current right before its show-form request
+     * (null: a visitor), by the form's ids (the id asked for and the reply's feedbackConfigurationId).
+     * A submit's answers belong to that user; kept until the survey closes or is dismissed, so a
+     * repeated final submit resolves the same way. A new show of the same survey overwrites it.
+     */
+    private class Owner(val userName: String?)
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private val shownTo = AtomicReference<Map<String, Owner>>(emptyMap())
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun updateShownTo(change: (Map<String, Owner>) -> Map<String, Owner>) {
+        while (true) {
+            val cur = shownTo.load()
+            if (shownTo.compareAndSet(cur, change(cur))) return
+        }
+    }
+
+    /** The survey with these ids closed or was dismissed: its answers no longer need an owner. */
+    private fun forgetShown(ids: Collection<String?>) {
+        val keys = ids.filterNotNull().filter { it.isNotEmpty() }
+        if (keys.isNotEmpty()) updateShownTo { it - keys.toSet() }
+    }
+
+    /** Bumped by clearAll(): a submit waiting out a rate-limit pause since then is dropped. */
+    @Volatile private var clearGeneration = 0
+
     /** Survey submits held while the signature is expired, each with the user who made it. */
     private class HeldSubmit(val userName: String?, val params: SubmitFormRequest)
     private val heldSubmits = mutableListOf<HeldSubmit>()
@@ -349,6 +377,7 @@ object Encatch {
     // ============================================================================
 
     @Throws(Exception::class)
+    @OptIn(ExperimentalAtomicApi::class)
     suspend fun init(apiKey: String, config: EncatchConfig? = null) {
         // Wait for any prior init() call's reconfigure to fully finish before we touch
         // anything. Without this, two overlapping calls (or a call landing while a previous
@@ -383,7 +412,10 @@ object Encatch {
             releasePendingIdentifies()
             releaseLifecycleWaits()
             rateLimiter.clear()
-            // nothing of the old key's identify/secure/collapse memory carries over to the new one
+            // nothing of the old key's identify/secure/collapse memory carries over to the new one, nor
+            // who its surveys were shown to; a submit waiting out a pause is dropped
+            shownTo.store(emptyMap())
+            clearGeneration++
             clearIdentifyMemory()
             collapser.clear()
             val dropped = secureLock.withLock {
@@ -583,7 +615,7 @@ object Encatch {
                     loadStoredSignature(userName)
                     heldSubmits.size.also { heldSubmits.clear() }
                 }
-                if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
+                if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: identifyUser() switched to another user")
             }
             storage.setUserName(userName)
 
@@ -949,22 +981,32 @@ object Encatch {
         }
     }
 
+    private enum class Hold { HELD, DROPPED, NOT_EXPIRED }
+
     /**
-     * Keeps a survey submit made by [madeBy] until the next successful identify (in memory, the latest
-     * [MAX_HELD_SUBMITS]). Only while [madeBy] is still the current user: a submit whose 401 arrives
-     * after a switch must never be held for, and later sent as, the next user.
+     * Keeps a survey submit of [owner] until the next successful identify (in memory, the latest
+     * [MAX_HELD_SUBMITS]). Checked again under the lock: once the expired state has ended (an identify
+     * succeeded meanwhile) it isn't held but sent ([Hold.NOT_EXPIRED]); a signed-in owner who is no
+     * longer current has it dropped.
      */
-    private suspend fun holdSubmit(params: SubmitFormRequest, madeBy: String?) {
-        val held = secureLock.withLock {
-            (madeBy == userNameState).also { current ->
-                if (current) {
-                    heldSubmits.add(HeldSubmit(madeBy, params))
+    private suspend fun holdSubmit(params: SubmitFormRequest, owner: String?): Hold {
+        val outcome = secureLock.withLock {
+            when {
+                !signatureExpired -> Hold.NOT_EXPIRED
+                owner != null && owner != userNameState -> Hold.DROPPED
+                else -> {
+                    heldSubmits.add(HeldSubmit(owner, params))
                     if (heldSubmits.size > MAX_HELD_SUBMITS) heldSubmits.removeAt(0)
+                    Hold.HELD
                 }
             }
         }
-        if (held) logger.debug("submitForm held until the next identify (secure signature expired)")
-        else logger.warn("[Encatch] A survey submit was dropped: it was made by another user than the current one")
+        when (outcome) {
+            Hold.HELD -> logger.debug("submitForm held until the next identify (secure signature expired)")
+            Hold.DROPPED -> logger.warn("[Encatch] A survey submit was dropped: it belongs to \"$owner\", no longer the current user")
+            Hold.NOT_EXPIRED -> Unit
+        }
+        return outcome
     }
 
     /** A successful identify ends the expired state and sends the held submits, each only as the user who made it. */
@@ -973,15 +1015,7 @@ object Encatch {
             signatureExpired = false
             heldSubmits.toList().also { heldSubmits.clear() }
         }
-        held.forEach { submit ->
-            scope.launch {
-                if (submit.userName == userNameState) {
-                    submitForm(submit.params)
-                } else {
-                    logger.warn("[Encatch] A held survey submit was dropped: it was made by another user than the current one")
-                }
-            }
-        }
+        held.forEach { submit -> scope.launch { submitFormAs(submit.params, owner = submit.userName) } }
     }
 
     // ============================================================================
@@ -1232,6 +1266,9 @@ object Encatch {
             feedbackTransactions?.let { put("\$feedbackTransactions", it) }
         }
 
+        // who the survey is for: a signed-in user who is no longer current when the reply arrives
+        // doesn't see it (a visitor's request that completes after sign-in still does)
+        val requestedBy = userNameState
         runCatching {
             val res = apiClient.post(Endpoints.SHOW_FORM, req)
             applyFeedbackTransactions(res)
@@ -1240,6 +1277,14 @@ object Encatch {
 
             val feedbackConfigurationId = res["feedbackConfigurationId"]?.jsonPrimitive?.contentOrNull
             feedbackConfigurationId?.let { pendingCtaScheduler?.cancel(it) }
+
+            if (requestedBy != null && requestedBy != userNameState) {
+                logger.debug("survey $formId not shown: it was asked for \"$requestedBy\", no longer the current user")
+                return@runCatching
+            }
+            // its answers belong to that user (a custom form shown from onBeforeShowForm too)
+            val owner = Owner(requestedBy)
+            updateShownTo { it + listOfNotNull(formId, feedbackConfigurationId?.takeIf { id -> id.isNotEmpty() }).associateWith { owner } }
 
             val prefill = pendingResponsesJson()
 
@@ -1263,6 +1308,10 @@ object Encatch {
 
             val target = InlineSlotRegistry.resolvePresentationTarget(formId, feedbackConfigurationId)
 
+            // open before the UI hears of it: a UI that can't show it ("no activity") closes it at once,
+            // and that close must not land before this
+            isFormVisible = true
+            openFormIds = setOfNotNull(formId, feedbackConfigurationId?.takeIf { it.isNotEmpty() })
             EncatchInternalEmitter.emit(
                 InternalEvent.ShowForm(
                     ShowFormPayload(
@@ -1279,9 +1328,6 @@ object Encatch {
                     ),
                 ),
             )
-
-            isFormVisible = true
-            openFormIds = setOfNotNull(formId, feedbackConfigurationId?.takeIf { it.isNotEmpty() })
         }.onFailure {
             if (it is CancellationException) throw it
             // 404: "not eligible now" (the server has no "already shown") — expected, no retry
@@ -1302,6 +1348,7 @@ object Encatch {
     internal suspend fun recordDismissal(formConfigurationId: String?) {
         if (!initialized) return
         val id = formConfigurationId?.takeIf { it.isNotEmpty() }
+        forgetShown(listOf(id))
         scope.launch { runCatching { trackFormEvent("form:dismissed", id) } }
         if (id != null) {
             val req = buildJsonObject {
@@ -1328,6 +1375,7 @@ object Encatch {
         pendingCtaScheduler?.cancel(formConfigurationId)
         EncatchInternalEmitter.emit(InternalEvent.DismissForm(formConfigurationId))
         isFormVisible = false
+        forgetShown(openFormIds + listOfNotNull(formConfigurationId))
         openFormIds = emptySet()
         checkSurveyIdle()
 
@@ -1370,15 +1418,45 @@ object Encatch {
     // ============================================================================
 
     @Throws(Exception::class)
+    @OptIn(ExperimentalAtomicApi::class)
     suspend fun submitForm(params: SubmitFormRequest) {
         if (!initialized) return
-        // the user these answers belong to: they are never held for, or sent as, another
-        val madeBy = userNameState
-        // secure signature expired: the answers wait for the next identify
-        if (signatureExpired) {
-            holdSubmit(params, madeBy)
+        submitFormAs(params, owner = ownerOf(params))
+    }
+
+    /**
+     * The user these answers belong to: who the survey was shown to, else (not found, or shown to a
+     * visitor) the current user.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun ownerOf(params: SubmitFormRequest): String? =
+        shownTo.load()[params.formDetails.formConfigurationId]?.userName ?: userNameState
+
+    /**
+     * The survey page's submit. Its owner is taken now, in the message handler: the page sends the
+     * final submit and its close back to back, and the close forgets who the survey was shown to.
+     */
+    internal fun submitFromSurvey(params: SubmitFormRequest) {
+        if (!initialized) return
+        val owner = ownerOf(params)
+        scope.launch { runCatching { submitFormAs(params, owner) } }
+    }
+
+    /**
+     * submitForm for answers of [owner] (null: a visitor's, sent whoever is current). A signed-in
+     * owner's answers are sent only while they are the current user: checked now and before each send
+     * attempt (after a rate-limit wait); signing out drops them too. clearAll() while one waits drops it.
+     */
+    private suspend fun submitFormAs(params: SubmitFormRequest, owner: String?) {
+        if (!initialized) return
+        val generation = clearGeneration
+        fun ownerGone() = owner != null && owner != userNameState
+        if (ownerGone()) {
+            logger.warn("[Encatch] A survey submit was dropped: it belongs to \"$owner\", no longer the current user")
             return
         }
+        // secure signature expired: the answers wait for the next identify
+        if (signatureExpired && holdSubmit(params, owner) != Hold.NOT_EXPIRED) return
         val deviceInfo = buildDeviceInfo()
         val req = buildJsonObject {
             params.triggerType?.let { put("triggerType", it) }
@@ -1390,6 +1468,14 @@ object Encatch {
         for (attempt in 1..SUBMIT_MAX_ATTEMPTS) {
             val wait = rateLimiter.remainingMs(RateBucket.SUBMIT_FORM)
             if (wait > 0) delay(wait)
+            if (generation != clearGeneration || !initialized) {
+                logger.warn("[Encatch] A survey submit was dropped: the SDK was cleared or re-initialized while it waited")
+                return
+            }
+            if (ownerGone()) {
+                logger.warn("[Encatch] A survey submit was dropped: it belongs to \"$owner\", no longer the current user")
+                return
+            }
             try {
                 val res = apiClient.post(Endpoints.SUBMIT_FORM, req)
                 applyFeedbackTransactions(res)
@@ -1400,8 +1486,15 @@ object Encatch {
             } catch (err: Throwable) {
                 val status = (err as? EncatchApiException)?.status
                 if (status == 429 && attempt < SUBMIT_MAX_ATTEMPTS) continue
-                if (status == 401 && signatureExpired) holdSubmit(params, madeBy)
-                else logger.warn("submitForm API error: ${err.message}")
+                if (status == 401 && signatureExpired) {
+                    // held; or, if an identify ended the expired state meanwhile, tried again
+                    if (holdSubmit(params, owner) == Hold.NOT_EXPIRED) {
+                        if (attempt < SUBMIT_MAX_ATTEMPTS) continue
+                        logger.warn("submitForm API error: ${err.message}")
+                    }
+                } else {
+                    logger.warn("submitForm API error: ${err.message}")
+                }
                 return
             }
         }
@@ -1468,6 +1561,7 @@ object Encatch {
     // ============================================================================
 
     @Throws(Exception::class)
+    @OptIn(ExperimentalAtomicApi::class)
     suspend fun clearAll() {
         if (::sessionManager.isInitialized) sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
@@ -1483,12 +1577,16 @@ object Encatch {
         if (::storage.isInitialized) storage.clearAll()
 
         initialized = false
+        // a submit waiting out a pause is dropped; nothing shown is remembered
+        clearGeneration++
+        shownTo.store(emptyMap())
         confirmedIdentity = false
         confirmedName = null
         // waiting setUserProperties updates were for the user being cleared
         releaseLifecycleWaits()
-        // nothing queued goes out after consent is withdrawn, and nothing waits on it any more
-        if (::retryQueue.isInitialized) retryQueue.clear()
+        // nothing queued goes out after consent is withdrawn (cleared last: its clear suspends, and an
+        // init overlapping it must not have its new state wiped by the rest of this)
+        val queue = if (::retryQueue.isInitialized) retryQueue else null
         releasePendingIdentifies()
         apiKeyState = null
         userNameState = null
@@ -1497,10 +1595,6 @@ object Encatch {
         userSignatureTime = null
         signatureExpired = false
         onSignatureExpired = null
-        secureLock.withLock {
-            heldSubmits.clear()
-            expiryToldUsers.clear()
-        }
         feedbackTransactions = null
         deviceIdState = null
         sessionIdState = null
@@ -1513,6 +1607,12 @@ object Encatch {
         isSessionStopped = false
 
         EncatchInternalEmitter.emit(InternalEvent.UserIdentified(null, null))
+        // the steps that may suspend come last: an init overlapping them keeps its new state
+        secureLock.withLock {
+            heldSubmits.clear()
+            expiryToldUsers.clear()
+        }
+        queue?.clear()
     }
 
     // ============================================================================
@@ -1634,6 +1734,8 @@ object Encatch {
         }
         isFormVisible = visible
         if (!visible) {
+            // closed (submitted, X, back, CTA, remind me later): its answers no longer need an owner
+            forgetShown(openFormIds + listOfNotNull(formId))
             openFormIds = emptySet()
             checkSurveyIdle()
         }

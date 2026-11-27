@@ -84,6 +84,8 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     private var isLoadingForm = false
     private var currentPosition = "middle-center"
     private var currentPayload: ShowFormPayload? = null
+    /** close() already told core this survey closed: dismiss() doesn't tell it again. */
+    private var closeReported = false
     private var currentAppearanceProperties: JsonObject? = null
     private var currentCorners = CornerStyle.SOFT
     private var currentDarkOverlay = false
@@ -214,6 +216,7 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
         closeAnimator?.cancel()
         webViewInstanceKey += 1
         currentPayload = payload
+        closeReported = false
         isLoadingForm = true
         val (activeMode, darkOverlay) = applyAppearance(payload)
         showSkeleton(activeMode)
@@ -486,7 +489,10 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
     private fun close(immediate: Boolean) {
         // a dialog already gone reports nothing: dismiss() did, and another survey may be open now
         if (!isShowing) return
-        Encatch.setFormVisible(false, currentPayload?.formId)
+        if (!closeReported) {
+            closeReported = true
+            Encatch.setFormVisible(false, currentPayload?.formId)
+        }
         if (immediate) {
             closeAnimator?.cancel()
             dismiss()
@@ -502,8 +508,11 @@ class EncatchFormDialog(context: Context) : Dialog(context, android.R.style.Them
 
     override fun dismiss() {
         // every way out — the back button and a cancel included, not only close() — tells core the
-        // survey is gone: otherwise it stays "open" and no automatic survey is shown again
-        Encatch.setFormVisible(false, currentPayload?.formId)
+        // survey is gone: otherwise it stays "open" and no automatic survey is shown again. A dialog
+        // already closed reports nothing: another survey may be open now, and a close without an id
+        // would end it (and forget who it was shown to).
+        if (!closeReported) currentPayload?.let { Encatch.setFormVisible(false, it.formId) }
+        closeReported = true
         super.dismiss()
         popupShell.removeCallbacks(readyWatchdog)
         bridge.setFormPayload(null)
