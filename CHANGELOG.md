@@ -5,6 +5,35 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## 0.2.0-beta.5
+
+Repeat identifies are skipped, and a new call updates the user's properties, as in the React Native
+SDK 1.5.0. Kotlin and Swift alike.
+
+### Changed
+
+- **A repeat `identifyUser()` is no longer sent.** After the first identify of each app run, a call
+  for the same user with the same traits, or with none, sends nothing (it is logged in debug mode).
+  A different user, a new or removed signature, a locale or country the last identify didn't carry,
+  and changed traits are sent as before. Use `setUserProperties` to update properties again on
+  purpose. Traits with a number that isn't finite are refused with a warning instead of failing in
+  the request queue.
+
+### Added
+
+- **`Encatch.setUserProperties(userName, traits)`** (Kotlin, Swift, the ObjC bridge, `kmp-sdk` and
+  `compose-sdk` on both platforms, and SwiftUI's `EncatchContext`): updates the identified user's
+  properties with the same traits as `identifyUser`. Never skipped. Ignored unless `userName` is the
+  current user and their identify succeeded (or they were restored with their id), so a pending or
+  failed switch can't update the wrong person. Waits for an identify of that user still in flight and
+  for an open survey. Updates go out in call order; it counts against the identify rate limit; an
+  update with `$increment` or `$decrement` is never retried.
+
+### Fixed
+
+- **`clearAll()` (Kotlin) now also empties the request queue**, as Swift's did: nothing queued
+  before it is sent afterwards.
+
 ## 0.2.0-beta.4
 
 SwiftUI support in the Swift package.

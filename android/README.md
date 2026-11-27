@@ -77,6 +77,27 @@ By default the identified user is saved and restored at the next launch. To keep
 current app run only (every launch starts as a visitor until you identify again), pass
 `EncatchConfig(persistUserAcrossRestarts = false)` to `Encatch.init`.
 
+### Repeat identifies and user properties
+
+After the first `identifyUser` of each app run, calling it again for the same user with the same
+traits, or with none, sends nothing, so it is safe to call on every launch or screen. A different
+user, a new signature, a locale or country the last identify didn't carry, and changed traits are
+sent.
+
+To update the user's properties on purpose (a counter, say), use `setUserProperties`. It takes the
+same traits, is never skipped, and is ignored unless that user is the current one and their identify
+succeeded. It waits for an identify of that user still in flight and for an open survey.
+
+```kotlin
+Encatch.setUserProperties(
+    "user-123",
+    UserTraits(set = mapOf("plan" to JsonPrimitive("team")), increment = mapOf("logins" to 1.0)),
+)
+```
+
+It counts against the identify rate limit (about 5 per minute per user), and an update with
+`$increment` or `$decrement` is never retried.
+
 ### Inline forms
 
 Renders the form inline within your layout instead of as a modal overlay — place it anywhere in
