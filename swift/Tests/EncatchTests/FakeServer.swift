@@ -3,12 +3,14 @@ import XCTest
 @testable import Encatch
 
 /// An in-memory stand-in for the Encatch API, plugged in through `Encatch.transportForTesting`.
-/// Records every request (endpoint, headers, body) and answers with what `respond` returns.
+/// Records every request (endpoint, headers, body and its raw bytes) and answers with what `respond` returns.
 final class FakeServer: @unchecked Sendable {
     struct Call {
         let endpoint: String
         let headers: [String: String]
         let body: [String: JSONValue]
+        /// The request body exactly as sent.
+        let rawBody: Data?
 
         func header(_ name: String) -> String? { headers[name] }
         func string(_ key: String) -> String? {
@@ -63,7 +65,7 @@ final class FakeServer: @unchecked Sendable {
             if let data = request.httpBody, case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: data) {
                 body = object
             }
-            let call = Call(endpoint: endpoint, headers: request.allHTTPHeaderFields ?? [:], body: body)
+            let call = Call(endpoint: endpoint, headers: request.allHTTPHeaderFields ?? [:], body: body, rawBody: request.httpBody)
             let reply = record(call)
             if reply.delayMs > 0 { try await Task.sleep(nanoseconds: reply.delayMs * 1_000_000) }
             let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers)!

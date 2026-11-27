@@ -183,6 +183,17 @@ private struct TransportResult: @unchecked Sendable {
     let response: URLResponse
 }
 
+/// A request body as JSON with object keys sorted at every level. A Swift dictionary's key order
+/// can change from one encode to the next, so without sorting two identical requests could go out
+/// with different bytes. The core API answers a byte-identical identify-user body for the same user
+/// within 60 s without storing it again (its protection against a doubled `$increment`); that only
+/// works when equal bodies are equal bytes, as they are from the other SDKs.
+func requestBodyData(_ body: JSONValue) throws -> Data {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return try encoder.encode(body)
+}
+
 /// Runs `transport` with a total-time cap (URLRequest.timeoutInterval is only an idle timer): a
 /// request that never answers would hold up the retry queue, which sends one request at a time.
 func sendWithTimeout(_ transport: @escaping HttpTransport, _ request: URLRequest, timeoutMs: Int64) async throws -> (Data, URLResponse) {
@@ -333,7 +344,8 @@ final class EncatchApiClient: @unchecked Sendable {
             throw EncatchApiException(endpoint: endpoint, status: 0, responseBody: "Invalid URL: \(urlString)")
         }
         let authHeaders = try buildAuthHeaders(options)
-        let bodyForLog = maskedBodyForLog(body).toJSONString()
+        // keys sorted, as sent, so two logged bodies compare as the server sees them
+        let bodyForLog = canonicalJSONString(maskedBodyForLog(body))
 
         logger.debug("POST \(endpoint) -> \(urlString)")
         logger.debug("Request headers:\n\(redactedHeadersForLog(authHeaders))")
@@ -344,7 +356,7 @@ final class EncatchApiClient: @unchecked Sendable {
         request.timeoutInterval = TimeInterval(requestTimeoutMs) / 1000
         for (key, value) in authHeaders { request.setValue(value, forHTTPHeaderField: key) }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = try requestBodyData(body)
 
         let startedAt = Date()
         var logHeaders = authHeaders
@@ -541,7 +553,7 @@ final class EncatchApiClient: @unchecked Sendable {
         // response can come back non-SSE/empty and the stream "ends without a done event".
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.httpBody = try JSONEncoder().encode(bodyObject)
+        request.httpBody = try requestBodyData(bodyObject)
 
         var accumulatedAnswer = ""
         var doneOrErrorReceived = false

@@ -104,6 +104,45 @@ final class SetUserPropertiesTests: XCTestCase {
         XCTAssertEqual(updates.count, 2)
     }
 
+    /// The core API answers a byte-identical identify-user body for the same user within 60 s without
+    /// storing it again, so two equal updates must be equal bytes (as from the other SDKs): keys sorted
+    /// at every level, whatever order the app built its dictionaries in.
+    func testTwoEqualUpdatesAreByteIdenticalWithKeysSortedAtEveryLevel() async throws {
+        try await identify("alice")
+        var set: [String: JSONValue] = [:]
+        for key in ["zeta", "alpha", "plan", "mid", "beta", "omega", "gamma", "kappa"] { set[key] = .string(key) }
+        set["props"] = .string("bytes")
+        set["address"] = .object(["zip": .string("400001"), "city": .string("Mumbai"), "country": .string("IN"), "line1": .string("1 Road")])
+        let first = UserTraits(
+            set: set,
+            setOnce: ["signupSource": .string("ios"), "firstSeen": .string("2026-11-27"), "cohort": .number(7)],
+            increment: ["logins": 1, "sessions": 2, "visits": 3],
+            unset: ["legacyA", "legacyB"]
+        )
+        // the same traits, each dictionary built in another order
+        var setAgain: [String: JSONValue] = [:]
+        for (key, value) in set.sorted(by: { $0.key > $1.key }) { setAgain[key] = value }
+        let second = UserTraits(
+            set: setAgain,
+            setOnce: ["cohort": .number(7), "firstSeen": .string("2026-11-27"), "signupSource": .string("ios")],
+            increment: ["visits": 3, "sessions": 2, "logins": 1],
+            unset: ["legacyA", "legacyB"]
+        )
+        try await sdk.setUserProperties(userName: "alice", traits: first)
+        try await sdk.setUserProperties(userName: "alice", traits: second)
+        await waitFor { self.updates.count == 2 }
+        let bodies = updates.map { $0.rawBody }
+        guard bodies.count == 2 else { return XCTFail("expected 2 updates, got \(bodies.count)") }
+        let a = try XCTUnwrap(bodies[0]), b = try XCTUnwrap(bodies[1])
+        XCTAssertEqual(String(decoding: a, as: UTF8.self), String(decoding: b, as: UTF8.self), "two equal updates are the same bytes")
+        let sorted = JSONEncoder()
+        sorted.outputFormatting = [.sortedKeys]
+        for body in [a, b] {
+            let reEncoded = try sorted.encode(JSONDecoder().decode(JSONValue.self, from: body))
+            XCTAssertEqual(String(decoding: body, as: UTF8.self), String(decoding: reEncoded, as: UTF8.self), "keys sorted at every level")
+        }
+    }
+
     func testAVisitorOrAnotherUserIsIgnored() async throws {
         try await sdk.setUserProperties(userName: "alice", traits: props("a"))
         try await identify("alice")
