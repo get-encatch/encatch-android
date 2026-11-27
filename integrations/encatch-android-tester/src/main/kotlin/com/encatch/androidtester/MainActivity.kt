@@ -117,6 +117,9 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
     // Encatch.init once at startup; this tester must do the same on every process start, not
     // just the first-run Setup pass (identifyUser/showForm silently no-op un-initialized).
     suspend fun initializeSdk() {
+        // the E8 helpers talk to the mock-server only: nothing is sent to a real API host
+        MockSignature.baseUrl = (prefs.apiBaseUrl ?: prefs.environment.apiBaseUrl).trimEnd('/')
+            .takeIf { prefs.environment == TesterEnvironment.MOCK }
         Encatch.init(
             prefs.apiKey.orEmpty(),
             EncatchConfig(
@@ -124,6 +127,15 @@ private fun TesterApp(prefs: TesterPrefs, usersStore: TestUsersStore, scope: Cor
                 webHost = prefs.webHost ?: prefs.environment.webHost,
                 debugMode = true,
                 persistUserAcrossRestarts = prefs.persistUser,
+                // E8: the secure signature expired — report it, get a fresh one from "the app's
+                // server" (the mock-server) and identify again, as the docs recommend
+                onSignatureExpired = { info ->
+                    MockSignature.reportExpired(info.userName)
+                    val fresh = MockSignature.sign(info.userName, ageMinutes = 0)
+                    if (fresh != null && Encatch.userName == info.userName) {
+                        Encatch.identifyUser(info.userName, options = com.encatch.core.IdentifyOptions(secure = fresh))
+                    }
+                },
                 // Unconditionally blocks the configured interceptor form id and queues it for
                 // the InterceptorCarousel — demonstrates fully replacing the SDK's modal with
                 // a custom-rendered native form.

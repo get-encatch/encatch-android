@@ -1,0 +1,9 @@
+# E8, second part (after run-e8.sh saw the fresh signed identify on the mock-server): a property
+# update of the signed-in user, which must carry the fresh signature. The app is already open.
+#   APP_ID   com.encatch.androidtester (Android) or com.encatch.iostester (iOS)
+appId: ${APP_ID}
+---
+- scrollUntilVisible:
+    element: "Set properties"
+    centerElement: true
+- tapOn: "Set properties"

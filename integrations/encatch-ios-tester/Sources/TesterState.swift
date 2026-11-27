@@ -129,7 +129,9 @@ final class TesterState: ObservableObject {
     /// Shared by `saveSetupAndInit` (fresh Setup entry) and `start()` (a plain relaunch that
     /// skips Setup because it was already completed in a prior session).
     private func initializeSdk(apiKey: String, environment: TesterEnvironment, interceptorFormId: String?) async {
-        let config = EncatchConfig(
+        // the E8 helpers talk to the mock-server only: nothing is sent to a real API host
+        MockSignature.baseUrl = environment == .mock ? environment.apiBaseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) : nil
+        var config = EncatchConfig(
             apiBaseUrl: environment.apiBaseUrl,
             webHost: environment.webHost,
             debugMode: true,
@@ -150,6 +152,14 @@ final class TesterState: ObservableObject {
                 return false
             }
         )
+        // E8: the secure signature expired — report it, get a fresh one from "the app's server" (the
+        // mock-server) and identify again, as the docs recommend
+        config.onSignatureExpired = { info in
+            await MockSignature.reportExpired(info.userName)
+            guard let fresh = await MockSignature.sign(info.userName, ageMinutes: 0),
+                  Encatch.shared.userName == info.userName else { return }
+            try await Encatch.shared.identifyUser(userName: info.userName, options: IdentifyOptions(secure: fresh))
+        }
         do {
             try await Encatch.shared.initialize(apiKey: apiKey, config: config)
         } catch {

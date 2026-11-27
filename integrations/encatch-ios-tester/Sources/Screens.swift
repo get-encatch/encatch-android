@@ -476,6 +476,17 @@ struct HomeTabView: View {
                                 Task { try? await Encatch.shared.identifyUser(userName: userName) }
                             }
                             .buttonStyle(SecondaryButtonStyle())
+                            // E8 (Mock environment): a secure identify whose signature is already expired
+                            // (the mock-server signs it 20 min old)
+                            if MockSignature.baseUrl != nil {
+                                Button("Sign in: expired signature") {
+                                    Task {
+                                        guard let secure = await MockSignature.sign(userName, ageMinutes: 20) else { return }
+                                        try? await Encatch.shared.identifyUser(userName: userName, options: IdentifyOptions(secure: secure))
+                                    }
+                                }
+                                .buttonStyle(SecondaryButtonStyle())
+                            }
                             Button("Identify: plan free") {
                                 Task { try? await Encatch.shared.identifyUser(userName: userName, traits: UserTraits(set: ["e2e_plan": .string("free")])) }
                             }

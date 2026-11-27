@@ -1,0 +1,76 @@
+# E8 (React Native handover HANDOVER-ON-SIGNATURE-EXPIRED.md §9, onSignatureExpired): sign in, then
+# identify with a signature the mock-server signed 20 minutes ago (expired: its session is 15). The
+# tester's onSignatureExpired reports to the mock-server and identifies again with a fresh signature.
+# run-e8.sh then waits for that identify on the mock-server and runs e8-then-update.yaml (a property
+# update that must carry the fresh signature), and checks what the mock-server recorded.
+#
+# Unlike React Native's E8 the user signs in first without a signature (the mock accepts that, as a
+# key without a secret, so E13 / E14 keep working): here the expiry hits an already identified user.
+# The cases E8 can't see (a rejected new signature must not pause tracking; a 401 without the reason
+# is not an expiry) are covered by the SDKs' unit tests (SignatureExpiredTest / SignatureExpiredTests).
+#   APP_ID   com.encatch.androidtester (Android) or com.encatch.iostester (iOS)
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Encatch Tester"
+    timeout: 20000
+- tapOn: "Mock"
+- tapOn: "en_dev_…"
+- inputText: "e2e-api-key"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- tapOn:
+    text: "form id"
+    index: 0
+- inputText: "e2e-form"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- scrollUntilVisible:
+    element: "Save & continue"
+- tapOn: "Save & continue"
+- extendedWaitUntil:
+    visible: "Encatch.isIdentified(): no"
+    timeout: 15000
+- tapOn: ".*New user"
+- tapOn: "Username"
+- inputText: "e2e-signed"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - hideKeyboard
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - pressKey: Enter
+- tapOn: "Save user"
+- scrollUntilVisible:
+    element: "Identify user"
+- tapOn: "Identify user"
+- extendedWaitUntil:
+    visible: "Encatch.isIdentified(): yes"
+    timeout: 15000
+# the expired signature: 401 (reason user_signature_expired), the callback, a fresh identify
+- scrollUntilVisible:
+    element: "Sign in: expired signature"
+    centerElement: true
+- tapOn: "Sign in: expired signature"

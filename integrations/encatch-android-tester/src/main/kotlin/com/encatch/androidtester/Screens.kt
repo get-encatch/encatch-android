@@ -419,6 +419,19 @@ fun HomeScreen(
                 TesterCard {
                     SecondaryPillButton("Identify again", onClick = { scope.launch { Encatch.identifyUser(userName) } })
                     Spacer(Modifier.height(10.dp))
+                    // E8 (Mock environment): a secure identify whose signature is already expired (the
+                    // mock-server signs it 20 min old)
+                    if (MockSignature.baseUrl != null) SecondaryPillButton(
+                        "Sign in: expired signature",
+                        onClick = {
+                            scope.launch {
+                                MockSignature.sign(userName, ageMinutes = 20)?.let {
+                                    Encatch.identifyUser(userName, options = com.encatch.core.IdentifyOptions(secure = it))
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(10.dp))
                     SecondaryPillButton(
                         "Identify: plan free",
                         onClick = {

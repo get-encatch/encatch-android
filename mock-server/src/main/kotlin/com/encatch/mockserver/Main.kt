@@ -32,18 +32,64 @@ import io.ktor.http.HttpStatusCode
  * headers: `GET /__mock/requests` returns them as JSON, `POST /__mock/reset` clears them.
  * identify-user answers with a user id derived from the name (`uid-<userName>`), as the real
  * server gives each user one.
+ *
+ * Secure identify, as the user gateway (React Native handover HANDOVER-ON-SIGNATURE-EXPIRED.md §3)
+ * for a key with a secret and a session time, except that an identify without a signature is still
+ * accepted (as a key without a secret), so the other flows (E13, E14) keep working:
+ * an identify-user carrying `X-User-Signature` is checked against HMAC-SHA256(userName + time,
+ * [MOCK_SECRET]) with the time from `X-User-Signature-Time` (else `X-User-Session-Time`). A wrong
+ * signature, or a time that isn't 13-digit epoch ms or is over 5 minutes ahead, gets 401 with no
+ * reason; a signature older than [SESSION_MINUTES] gets 401 with reason `user_signature_expired`.
+ * `GET /__mock/sign?userName=&ageMinutes=` signs a time `ageMinutes` old (for the testers' E8
+ * flow), and `POST /__mock/hooks` / `GET /__mock/hooks` record the app's onSignatureExpired calls.
  */
 private const val DEFAULT_PORT = 8089
 
+/** The mock API key's secret (mock only) and its session time, as a session key on the gateway. */
+private const val MOCK_SECRET = "e2e-mock-secret"
+private const val SESSION_MINUTES = 15L
+
+private fun hmacHex(message: String): String {
+    val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+    mac.init(javax.crypto.spec.SecretKeySpec(MOCK_SECRET.toByteArray(), "HmacSHA256"))
+    return mac.doFinal(message.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+
+/** The gateway's answer to a signed identify: null when it passes, else the 401 body. */
+private fun signatureRejection(userName: String?, signature: String?, time: String?): String? {
+    if (signature.isNullOrEmpty()) return null
+    if (userName == null || signature != hmacHex(userName + (time ?: ""))) return """{"error":"invalid api key"}"""
+    if (time == null) return null
+    val ms = time.takeIf { it.length == 13 && it.all { c -> c in '0'..'9' } }?.toLong() ?: return """{"error":"invalid api key"}"""
+    val now = System.currentTimeMillis()
+    if (ms > now + 5 * 60_000) return """{"error":"invalid api key"}"""
+    // whole minutes, as the gateway
+    if ((now - ms) / 60_000 > SESSION_MINUTES) return """{"error":"invalid api key","reason":"user_signature_expired"}"""
+    return null
+}
+
+/** The app's onSignatureExpired reports (E8). */
+private val hookCalls = java.util.concurrent.CopyOnWriteArrayList<String>()
+
 /** One recorded API call: the endpoint, the headers the identity and session checks need, and (identify-user) the body. */
-private data class Recorded(val endpoint: String, val headers: Map<String, String?>, val atMs: Long, val body: String? = null)
+private data class Recorded(
+    val endpoint: String,
+    val headers: Map<String, String?>,
+    val atMs: Long,
+    val body: String? = null,
+    val status: Int = 200,
+    /** A 401's response body (it carries the gateway's `reason`). */
+    val response: String? = null,
+)
 
 private val recorded = java.util.concurrent.CopyOnWriteArrayList<Recorded>()
-private val recordedHeaders = listOf("X-Session-Id", "X-User-Name", "X-User-Id", "X-User-Signature", "X-Device-Id")
+private val recordedHeaders = listOf(
+    "X-Session-Id", "X-User-Name", "X-User-Id", "X-User-Signature", "X-User-Signature-Time", "X-User-Session-Time", "X-Device-Id",
+)
 
-private fun io.ktor.server.application.ApplicationCall.record(body: String? = null) {
+private fun io.ktor.server.application.ApplicationCall.record(body: String? = null, status: Int = 200, response: String? = null) {
     val endpoint = request.local.uri.substringBefore('?').substringAfterLast('/')
-    recorded += Recorded(endpoint, recordedHeaders.associateWith { request.headers[it] }, System.currentTimeMillis(), body)
+    recorded += Recorded(endpoint, recordedHeaders.associateWith { request.headers[it] }, System.currentTimeMillis(), body, status, response)
 }
 
 private fun jsonString(value: String?): String =
@@ -70,13 +116,30 @@ fun main(args: Array<String>) {
                 val items = recorded.joinToString(",") { r ->
                     val headers = r.headers.entries.joinToString(",") { "${jsonString(it.key)}:${jsonString(it.value)}" }
                     val body = r.body?.let { ",\"body\":$it" } ?: ""
-                    """{"endpoint":${jsonString(r.endpoint)},"atMs":${r.atMs},"headers":{$headers}$body}"""
+                    val response = r.response?.let { ",\"response\":$it" } ?: ""
+                    """{"endpoint":${jsonString(r.endpoint)},"atMs":${r.atMs},"status":${r.status},"headers":{$headers}$body$response}"""
                 }
                 call.respondJson("[$items]")
             }
             post("/__mock/reset") {
                 recorded.clear()
+                hookCalls.clear()
                 call.respondOk()
+            }
+            get("/__mock/sign") {
+                val userName = call.request.queryParameters["userName"].orEmpty()
+                val ageMinutes = call.request.queryParameters["ageMinutes"]?.toLongOrNull() ?: 0L
+                val time = (System.currentTimeMillis() - ageMinutes * 60_000).toString()
+                call.respondJson("""{"signature":${jsonString(hmacHex(userName + time))},"generatedDateTimeInUtc":${jsonString(time)}}""")
+            }
+            post("/__mock/hooks") {
+                // JSON objects only: the list is served as a JSON array
+                call.receiveText().takeIf { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as kotlinx.serialization.json.JsonObject }.isSuccess }
+                    ?.let { hookCalls += it }
+                call.respondOk()
+            }
+            get("/__mock/hooks") {
+                call.respondJson("[${hookCalls.joinToString(",")}]")
             }
 
             post("/engage-product/encatch/api/v2/encatch/show-form") {
@@ -86,14 +149,25 @@ fun main(args: Array<String>) {
             }
             post("/engage-product/encatch/api/v2/encatch/identify-user") {
                 val body = call.receiveText()
-                // the body too (it is JSON): the dedupe checks tell plain, traits and property updates apart
-                call.record(body.takeIf { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) }.isSuccess })
                 val name = runCatching {
                     kotlinx.serialization.json.Json.parseToJsonElement(body)
                         .let { it as kotlinx.serialization.json.JsonObject }["userName"]
                         ?.let { (it as kotlinx.serialization.json.JsonPrimitive).content }
                 }.getOrNull()
-                call.respondJson(if (name != null) """{"userId":${jsonString("uid-$name")}}""" else "{}")
+                val headers = call.request.headers
+                // the gateway checks the signature against X-User-Name (identify-user sends its own name)
+                val rejection = signatureRejection(
+                    headers["X-User-Name"],
+                    headers["X-User-Signature"],
+                    headers["X-User-Signature-Time"]?.takeIf { it.isNotBlank() } ?: headers["X-User-Session-Time"],
+                )
+                // the body too (it is JSON): the dedupe checks tell plain, traits and property updates apart
+                call.record(body.takeIf { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) }.isSuccess }, if (rejection != null) 401 else 200, rejection)
+                if (rejection != null) {
+                    call.respondText(rejection, ContentType.Application.Json, HttpStatusCode.Unauthorized)
+                } else {
+                    call.respondJson(if (name != null) """{"userId":${jsonString("uid-$name")}}""" else "{}")
+                }
             }
             post("/engage-product/encatch/api/v2/encatch/track-event") { call.record(); call.respondOk() }
             post("/engage-product/encatch/api/v2/encatch/track-screen") { call.record(); call.respondOk() }
