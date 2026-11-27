@@ -64,11 +64,16 @@ internal class RetryQueue(
         var nextAttemptAt: Long,
         /** Called when the item is dropped without succeeding (a 4xx, a 429, out of attempts, removed). */
         val onDrop: (() -> Unit)? = null,
-    )
+    ) {
+        /** Removed by [removeQueued] while being sent: if this attempt fails, it is dropped, not retried. */
+        var removedInFlight = false
+    }
 
     private val mutex = Mutex()
     private val queue = mutableListOf<QueuedRequest>()
     private var nextId = 0L
+    /** The item being sent right now. */
+    private var inFlight: QueuedRequest? = null
     /** The flush in progress, and whether a flush asked for during it wants one more pass. */
     private var running: Job? = null
     private var runAgain = false
@@ -144,19 +149,38 @@ internal class RetryQueue(
         for (item in snapshot) {
             // paused after a 429: hold the rest until the pause ends (the limiter flushes then)
             if (isPaused()) return
-            val due = mutex.withLock { queue.any { it === item } && item.nextAttemptAt <= clock() }
+            val due = mutex.withLock {
+                (queue.any { it === item } && item.nextAttemptAt <= clock()).also { if (it) inFlight = item }
+            }
             if (!due) continue
             try {
                 item.fn()
                 mutex.withLock {
+                    inFlight = null
                     queue.remove(item)
                     persistQueue()
                 }
             } catch (cancel: CancellationException) {
+                withContext(NonCancellable) {
+                    val removed = mutex.withLock {
+                        if (inFlight === item) inFlight = null
+                        item.removedInFlight
+                    }
+                    // removed while it was being sent, and it never finished: report it now
+                    if (removed) runCatching { item.onDrop?.invoke() }
+                }
                 throw cancel
             } catch (err: Throwable) {
+                withContext(NonCancellable) { mutex.withLock { inFlight = null } }
                 val status = (err as? EncatchApiException)?.status
                 when {
+                    item.removedInFlight -> {
+                        // removed while it was being sent, then failed: not retried
+                        drop(item)
+                        logger?.debug("Retry queue: dropping \"${item.label}\" (removed while in flight, then failed)")
+                        // a 429 still holds the rest until the pause ends
+                        if (status == 429) return
+                    }
                     status == 429 -> {
                         drop(item)
                         logger?.warn("[Encatch] Retry queue: dropping \"${item.label}\" (rate limited, not retried)")
@@ -205,13 +229,24 @@ internal class RetryQueue(
         }
     }
 
-    /** Removes queued (not yet sent) items with this label; returns how many. */
+    /**
+     * Removes queued items with this label; returns how many. One being sent right now is not
+     * reported as dropped: it may still succeed. If it fails, it is dropped (and reported) then,
+     * never retried.
+     */
     suspend fun removeQueued(label: String): Int {
         val removed = mutex.withLock {
             val matching = queue.filter { it.label == label }
             queue.removeAll(matching)
             if (matching.isNotEmpty()) persistQueue()
-            matching
+            matching.filter { item ->
+                if (item === inFlight) {
+                    item.removedInFlight = true
+                    false
+                } else {
+                    true
+                }
+            }
         }
         removed.forEach { runCatching { it.onDrop?.invoke() } }
         return removed.size
@@ -225,6 +260,7 @@ internal class RetryQueue(
         mutex.withLock {
             wakeJob?.cancel()
             wakeJob = null
+            inFlight?.removedInFlight = true
             queue.clear()
             persistQueue()
         }

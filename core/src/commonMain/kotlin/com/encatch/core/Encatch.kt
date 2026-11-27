@@ -10,6 +10,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -73,8 +75,45 @@ object Encatch {
     private val secureLock = Mutex()
     /** identifyUser and resetUser run one after the other (RN 1.4.4 item 13). */
     private val identityMutex = Mutex()
-    /** The last identify sent or in flight, to skip an identical one (RN 1.4.4 item 3). */
-    @Volatile private var lastIdentifyKey: String? = null
+    // identifyUser() dedupe, for this app run only (RN SDK 1.5.0, PostHog-style): what the last
+    // identify sent (or still in flight) carried. Cleared when that identify fails or is dropped, by a
+    // different user's identify, resetUser, clearAll, stopSession and a signature expiry (the next
+    // identify must go out; repeats still collapse). One immutable value, swapped atomically: a drop
+    // reported from the retry queue can't interleave with an identify half-way through its update.
+    private class IdentifyMemory(
+        val name: String,
+        /** The signature and its time, as sent. */
+        val optionsKey: String,
+        /** The fingerprint of the last traits sent for this user, and the identify that sent them. */
+        val traitsKey: String?,
+        val traitsToken: Any?,
+        /** The locale / country the last identify for this user carried. */
+        val locale: String?,
+        val country: String?,
+        /** The identify this memory belongs to. */
+        val token: Any,
+    )
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private val identifyMemory = AtomicReference<IdentifyMemory?>(null)
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun clearIdentifyMemory() = identifyMemory.store(null)
+
+    /** A dropped identify forgets what it set: all of it while it owns the memory, else its traits. */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun forgetDroppedIdentify(token: Any) {
+        while (true) {
+            val cur = identifyMemory.load() ?: return
+            val next = when {
+                cur.token === token -> null
+                cur.traitsToken === token ->
+                    IdentifyMemory(cur.name, cur.optionsKey, null, null, cur.locale, cur.country, cur.token)
+                else -> return
+            }
+            if (identifyMemory.compareAndSet(cur, next)) return
+        }
+    }
 
     // Preferences
     private var localeState: String? = null
@@ -177,7 +216,7 @@ object Encatch {
             teardown.join()
             rateLimiter.clear()
             // nothing of the old key's identify/secure/collapse memory carries over to the new one
-            lastIdentifyKey = null
+            clearIdentifyMemory()
             collapser.clear()
             val dropped = secureLock.withLock {
                 signatureExpired = false
@@ -293,118 +332,158 @@ object Encatch {
     suspend fun identifyUser(userName: String, traits: UserTraits? = null, options: IdentifyOptions? = null) {
         if (!initialized) return
         // one after the other with resetUser, so a reset fired just before can't undo this identify
-        identityMutex.withLock { identifyNow(userName, traits, options) }
+        // and, once started, to the end: a caller cancelled half-way must not leave the memory saying
+        // "sent" with nothing queued (every repeat would be skipped for the rest of the run)
+        identityMutex.withLock { withContext(NonCancellable) { identifyNow(userName, traits, options) } }
     }
 
+    @OptIn(ExperimentalAtomicApi::class)
     private suspend fun identifyNow(userName: String, traits: UserTraits?, options: IdentifyOptions?) {
         val secure = options?.secure
+        // Traits a request body can't carry would fail inside the queue: refuse now.
+        if (hasUnsendableValue(traits)) {
+            logger.warn("identifyUser \"$userName\" ignored: traits contain a value that can't be sent (a number that isn't finite).")
+            return
+        }
         val attributes = traits?.toJson()
-        // Skip a call identical to the last identify sent or still in flight; forgotten when that
-        // identify is dropped, on resetUser and on clearAll.
-        val identifyKey = stableJsonKey(
+
+        // Dedupe (RN SDK 1.5.0). Sent: the first identify of this app run or a different user, a
+        // changed signature, a locale / country that differs from what the last identify carried,
+        // new traits. Not sent: the same user again with no traits, or with the same traits, as the
+        // last identify sent or still in flight. A skipped call changes no memory.
+        val traitsKey = traitsForDedupe(traits)?.let { stableJsonKey(it) }
+        val optionsKey = stableJsonKey(
             buildJsonObject {
-                put("userName", userName)
-                put("traits", attributes ?: kotlinx.serialization.json.JsonNull)
-                put("locale", options?.locale)
-                put("country", options?.country)
                 put("signature", secure?.signature)
                 put("signatureTime", secure?.generatedDateTimeInUtc)
             },
         )
-        if (identifyKey == lastIdentifyKey) {
-            logger.debug("identifyUser \"$userName\" skipped: same as the last identify (duplicate)")
-            return
+        val memoryToken = Any()
+        while (true) {
+            val mem = identifyMemory.load()
+            val sameUser = mem != null && mem.name == userName
+            val duplicate = mem != null && sameUser && optionsKey == mem.optionsKey &&
+                (options?.locale == null || options.locale == mem.locale) &&
+                (options?.country == null || options.country == mem.country) &&
+                (traitsKey == null || traitsKey == mem.traitsKey)
+            if (duplicate) {
+                logger.debug(
+                    "identifyUser \"$userName\" skipped: same user and traits as the last identify in this app run. " +
+                        "To update properties again on purpose (for example a repeated \$increment), use setUserProperties(\"$userName\", traits).",
+                )
+                return
+            }
+            // another user starts with no traits, locale or country remembered
+            val kept = if (sameUser) mem else null
+            val next = IdentifyMemory(
+                name = userName,
+                optionsKey = optionsKey,
+                traitsKey = traitsKey ?: kept?.traitsKey,
+                traitsToken = if (traitsKey != null) memoryToken else kept?.traitsToken,
+                locale = options?.locale ?: kept?.locale,
+                country = options?.country ?: kept?.country,
+                token = memoryToken,
+            )
+            // cleared meanwhile (a signature expiry, stopSession): decide again on what's there now
+            if (identifyMemory.compareAndSet(mem, next)) break
         }
-        lastIdentifyKey = identifyKey
+        // once the memory says "sent", the identify must be queued: if anything below fails, forget it
+        try {
 
-        // Switching user: take this user's own stored id (or none) with the name, so a request never
-        // pairs this name with another user's id; without one, requests go as a visitor until the
-        // reply. The previous user's signature is not carried over.
-        if (userName != userNameState) {
-            // a queued identify of the previous user is not sent any more
-            retryQueue.removeQueued("identifyUser")
-            // nor are the previous user's held survey answers, and their expired signature ends here
-            // (never send one user's answers as another's)
-            val dropped = secureLock.withLock {
-                signatureExpired = false
-                heldSubmits.size.also { heldSubmits.clear() }
+            // Switching user: take this user's own stored id (or none) with the name, so a request never
+            // pairs this name with another user's id; without one, requests go as a visitor until the
+            // reply. The previous user's signature is not carried over.
+            if (userName != userNameState) {
+                // a queued identify of the previous user is not sent any more
+                retryQueue.removeQueued("identifyUser")
+                // nor are the previous user's held survey answers, and their expired signature ends here
+                // (never send one user's answers as another's)
+                val dropped = secureLock.withLock {
+                    signatureExpired = false
+                    heldSubmits.size.also { heldSubmits.clear() }
+                }
+                if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
+                userIdState = null
+                userNameState = userName
+                userIdState = storage.getUserId(userName)
+                loadStoredSignature(userName)
             }
-            if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
-            userIdState = null
-            userNameState = userName
-            userIdState = storage.getUserId(userName)
-            loadStoredSignature(userName)
-        }
-        storage.setUserName(userName)
+            storage.setUserName(userName)
 
-        options?.locale?.let {
-            localeState = it
-            storage.setPreferences(locale = it)
-        }
-        options?.country?.let {
-            countryState = it
-            storage.setPreferences(country = it)
-        }
-
-        val deviceInfo = buildDeviceInfo()
-        val req = buildJsonObject {
-            put("userName", userName)
-            userIdState?.let { put("userId", it) }
-            secure?.signature?.let { put("userSignature", it) }
-            put("\$deviceInfo", deviceInfo.toJson())
-            attributes?.let { put("userAttributes", it) }
-            feedbackTransactions?.let { put("\$feedbackTransactions", it) }
-        }
-        val auth = IdentifyAuth(userName, secure?.signature, secure?.generatedDateTimeInUtc)
-
-        // While tracking is paused after a 429, hold only the latest identify: it goes out when the
-        // pause ends, so a sign-in during a pause isn't lost and repeated calls don't pile up.
-        if (rateLimiter.isPaused(RateBucket.TRACKING)) retryQueue.removeQueued("identifyUser")
-
-        retryQueue.enqueue(
-            "identifyUser",
-            onDrop = { if (lastIdentifyKey == identifyKey) lastIdentifyKey = null },
-        ) {
-            val res = apiClient.send(Endpoints.IDENTIFY_USER, req, identify = auth)
-            // a reply for a user who is no longer current (reset or switched since): not applied
-            if (userNameState != userName) {
-                logger.debug("identify reply for \"$userName\" ignored: no longer the current user")
-                return@enqueue
+            options?.locale?.let {
+                localeState = it
+                storage.setPreferences(locale = it)
             }
-            res["userId"]?.jsonPrimitive?.contentOrNull?.let {
-                userIdState = it
-                storage.setUserId(userName, it)
-            }
-            // the identify succeeded: this user is now the confirmed identity
-            if (userIdState != null) confirmedIdentity = true
-            // Secure identify: from now on the signature (and its time) go on every request of this
-            // user and survive a restart; an identify without `secure` clears them.
-            if (secure != null) {
-                userSignature = secure.signature
-                userSignatureTime = secure.generatedDateTimeInUtc
-                storage.setUserSignature(userName, StoredSignature(secure.signature, secure.generatedDateTimeInUtc))
-            } else {
-                userSignature = null
-                userSignatureTime = null
-                storage.clearUserSignature(userName)
-            }
-            endSignatureExpired()
-            res["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull?.let {
-                feedbackTransactions = it
-                storage.setFeedbackTransactions(userName, it)
-            }
-            val meta = res.toResponseMeta()
-            sessionManager.handleResponseMeta(meta)
-
-            EncatchInternalEmitter.emit(InternalEvent.UserIdentified(userNameState, userIdState))
-
-            startSession(StartSessionOptions(skipImmediatePing = true, skipImmediateTrackScreen = true))
-
-            if (meta.pingAgainIn != null && meta.pingAgainIn > 0) {
-                sessionManager.scheduleNextPing((meta.pingAgainIn * 1000).toLong())
+            options?.country?.let {
+                countryState = it
+                storage.setPreferences(country = it)
             }
 
-            handleSurveyInReply(res)
+            val deviceInfo = buildDeviceInfo()
+            val req = buildJsonObject {
+                put("userName", userName)
+                userIdState?.let { put("userId", it) }
+                secure?.signature?.let { put("userSignature", it) }
+                put("\$deviceInfo", deviceInfo.toJson())
+                attributes?.let { put("userAttributes", it) }
+                feedbackTransactions?.let { put("\$feedbackTransactions", it) }
+            }
+            val auth = IdentifyAuth(userName, secure?.signature, secure?.generatedDateTimeInUtc)
+
+            // While tracking is paused after a 429, hold only the latest identify: it goes out when the
+            // pause ends, so a sign-in during a pause isn't lost and repeated calls don't pile up.
+            if (rateLimiter.isPaused(RateBucket.TRACKING)) retryQueue.removeQueued("identifyUser")
+
+            retryQueue.enqueue(
+                "identifyUser",
+                // dropped without succeeding: the same identify may be sent again (its traits too, even
+                // if a later identify without traits took over the rest of the memory)
+                onDrop = { forgetDroppedIdentify(memoryToken) },
+            ) {
+                val res = apiClient.send(Endpoints.IDENTIFY_USER, req, identify = auth)
+                // a reply for a user who is no longer current (reset or switched since): not applied
+                if (userNameState != userName) {
+                    logger.debug("identify reply for \"$userName\" ignored: no longer the current user")
+                    return@enqueue
+                }
+                res["userId"]?.jsonPrimitive?.contentOrNull?.let {
+                    userIdState = it
+                    storage.setUserId(userName, it)
+                }
+                // the identify succeeded: this user is now the confirmed identity
+                if (userIdState != null) confirmedIdentity = true
+                // Secure identify: from now on the signature (and its time) go on every request of this
+                // user and survive a restart; an identify without `secure` clears them.
+                if (secure != null) {
+                    userSignature = secure.signature
+                    userSignatureTime = secure.generatedDateTimeInUtc
+                    storage.setUserSignature(userName, StoredSignature(secure.signature, secure.generatedDateTimeInUtc))
+                } else {
+                    userSignature = null
+                    userSignatureTime = null
+                    storage.clearUserSignature(userName)
+                }
+                endSignatureExpired()
+                res["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull?.let {
+                    feedbackTransactions = it
+                    storage.setFeedbackTransactions(userName, it)
+                }
+                val meta = res.toResponseMeta()
+                sessionManager.handleResponseMeta(meta)
+
+                EncatchInternalEmitter.emit(InternalEvent.UserIdentified(userNameState, userIdState))
+
+                startSession(StartSessionOptions(skipImmediatePing = true, skipImmediateTrackScreen = true))
+
+                if (meta.pingAgainIn != null && meta.pingAgainIn > 0) {
+                    sessionManager.scheduleNextPing((meta.pingAgainIn * 1000).toLong())
+                }
+
+                handleSurveyInReply(res)
+            }
+        } catch (err: Throwable) {
+            forgetDroppedIdentify(memoryToken)
+            throw err
         }
     }
 
@@ -427,8 +506,8 @@ object Encatch {
                 return
             }
             signatureExpired = true
-            // the same signed identify, sent again, is not a duplicate any more
-            lastIdentifyKey = null
+            // the next identify (with a fresh signature) must go out, even if it matches
+            clearIdentifyMemory()
         }
         logger.warn(
             "[Encatch] Secure identify signature expired (401). Call identifyUser() with a fresh signature; " +
@@ -936,7 +1015,7 @@ object Encatch {
     suspend fun clearAll() {
         if (::sessionManager.isInitialized) sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
-        lastIdentifyKey = null
+        clearIdentifyMemory()
         collapser.clear()
         if (::rateLimiter.isInitialized) rateLimiter.clear()
 
@@ -1013,6 +1092,8 @@ object Encatch {
     suspend fun stopSession() {
         if (isSessionStopped) return
         isSessionStopped = true
+        // the next identify turns the session back on, so it must go out even if it matches
+        clearIdentifyMemory()
         isSessionPaused = false
         sessionManager.stopPingIntervalNow()
         cancelPendingAutoShow()
@@ -1024,13 +1105,13 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun resetUser() {
         if (!initialized) return
-        identityMutex.withLock { resetNow() }
+        identityMutex.withLock { withContext(NonCancellable) { resetNow() } }
     }
 
     private suspend fun resetNow() {
         // a queued identify of the user being reset is not sent any more
         retryQueue.removeQueued("identifyUser")
-        lastIdentifyKey = null
+        clearIdentifyMemory()
         collapser.clear()
         // the in-memory identity first, so nothing goes out with a half-cleared one
         val previous = userNameState
@@ -1316,6 +1397,36 @@ internal class CallCollapser(
         lastEventAt.clear()
         lastScreen = null
     }
+}
+
+/**
+ * Traits as compared for duplicates (RN SDK 1.5.0 `traitsForDedupe`): empty operations dropped
+ * (`$set: {}`, `$unset: []`), `$unset` as a sorted copy (a set of names); null when nothing is left.
+ * The caller's traits are never changed.
+ */
+internal fun traitsForDedupe(traits: UserTraits?): JsonObject? {
+    if (traits == null) return null
+    val out = buildJsonObject {
+        traits.set?.takeIf { it.isNotEmpty() }?.let { m -> put("\$set", JsonObject(m)) }
+        traits.setOnce?.takeIf { it.isNotEmpty() }?.let { m -> put("\$setOnce", JsonObject(m)) }
+        traits.increment?.takeIf { it.isNotEmpty() }?.let { m -> put("\$increment", JsonObject(m.mapValues { JsonPrimitive(it.value) })) }
+        traits.decrement?.takeIf { it.isNotEmpty() }?.let { m -> put("\$decrement", JsonObject(m.mapValues { JsonPrimitive(it.value) })) }
+        traits.unset?.takeIf { it.isNotEmpty() }?.let { l -> put("\$unset", JsonArray(l.sorted().map { JsonPrimitive(it) })) }
+    }
+    return out.takeIf { it.isNotEmpty() }
+}
+
+/** Traits a request body can't carry: a number that isn't finite (NaN, infinity) anywhere in them. */
+internal fun hasUnsendableValue(traits: UserTraits?): Boolean {
+    if (traits == null) return false
+    fun bad(e: JsonElement): Boolean = when (e) {
+        is JsonObject -> e.values.any(::bad)
+        is JsonArray -> e.any(::bad)
+        is JsonPrimitive -> !e.isString && e.doubleOrNull?.isFinite() == false
+        else -> false
+    }
+    return listOfNotNull(traits.set?.values, traits.setOnce?.values).flatten().any(::bad) ||
+        listOfNotNull(traits.increment?.values, traits.decrement?.values).flatten().any { !it.isFinite() }
 }
 
 /** JSON with object keys sorted, so equal values give equal strings (the identify dedupe key). */
