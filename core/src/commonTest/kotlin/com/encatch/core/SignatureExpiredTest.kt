@@ -501,4 +501,24 @@ class SignatureExpiredTest {
         eventually { api.called("submit-form").size == 2 }
         assertEquals("sig-2", api.called("submit-form")[1].header("X-User-Signature"))
     }
+
+    @Test
+    fun a_submit_whose_401_arrives_after_a_switch_is_never_held_for_the_next_user() = runTest {
+        start()
+        identify("alice", "sig-a")
+        checksEveryRequest = true
+        expired = setOf("sig-a")
+        slowSignatures = setOf("sig-a")
+        launch(Dispatchers.Default) { submit() } // alice's answers, rejected late
+        eventually { api.called("submit-form").size == 1 }
+        identify("bob", "sig-b")
+        expired = setOf("sig-a", "sig-b")
+        Encatch.trackEvent("bob-expires") // bob's signature expires too: the expired state
+        eventually { notified.value.contains("bob") }
+        settle(700) // alice's 401 has arrived
+        identify("bob", "sig-b2")
+        settle(400)
+        assertEquals(1, api.called("submit-form").size, "alice's answers are never sent as bob")
+        assertTrue(log.warnings.value.any { "made by another user" in it })
+    }
 }

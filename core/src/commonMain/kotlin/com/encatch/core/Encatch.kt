@@ -87,7 +87,9 @@ object Encatch {
     // identify succeeded. Kept through a user switch until the new user's identify succeeds; cleared
     // by resetUser() (also the server's "retries exhausted" reset) and clearAll().
     @Volatile private var confirmedIdentity = false
-    private val heldSubmits = mutableListOf<SubmitFormRequest>()
+    /** Survey submits held while the signature is expired, each with the user who made it. */
+    private class HeldSubmit(val userName: String?, val params: SubmitFormRequest)
+    private val heldSubmits = mutableListOf<HeldSubmit>()
     private val secureLock = Mutex()
     /** identifyUser and resetUser run one after the other (RN 1.4.4 item 13). */
     private val identityMutex = Mutex()
@@ -947,22 +949,39 @@ object Encatch {
         }
     }
 
-    /** Keeps a survey submit until the next successful identify (in memory, the latest [MAX_HELD_SUBMITS]). */
-    private suspend fun holdSubmit(params: SubmitFormRequest) {
-        secureLock.withLock {
-            heldSubmits.add(params)
-            if (heldSubmits.size > MAX_HELD_SUBMITS) heldSubmits.removeAt(0)
+    /**
+     * Keeps a survey submit made by [madeBy] until the next successful identify (in memory, the latest
+     * [MAX_HELD_SUBMITS]). Only while [madeBy] is still the current user: a submit whose 401 arrives
+     * after a switch must never be held for, and later sent as, the next user.
+     */
+    private suspend fun holdSubmit(params: SubmitFormRequest, madeBy: String?) {
+        val held = secureLock.withLock {
+            (madeBy == userNameState).also { current ->
+                if (current) {
+                    heldSubmits.add(HeldSubmit(madeBy, params))
+                    if (heldSubmits.size > MAX_HELD_SUBMITS) heldSubmits.removeAt(0)
+                }
+            }
         }
-        logger.debug("submitForm held until the next identify (secure signature expired)")
+        if (held) logger.debug("submitForm held until the next identify (secure signature expired)")
+        else logger.warn("[Encatch] A survey submit was dropped: it was made by another user than the current one")
     }
 
-    /** A successful identify ends the expired state and sends the held submits. */
+    /** A successful identify ends the expired state and sends the held submits, each only as the user who made it. */
     private suspend fun endSignatureExpired() {
         val held = secureLock.withLock {
             signatureExpired = false
             heldSubmits.toList().also { heldSubmits.clear() }
         }
-        held.forEach { params -> scope.launch { submitForm(params) } }
+        held.forEach { submit ->
+            scope.launch {
+                if (submit.userName == userNameState) {
+                    submitForm(submit.params)
+                } else {
+                    logger.warn("[Encatch] A held survey submit was dropped: it was made by another user than the current one")
+                }
+            }
+        }
     }
 
     // ============================================================================
@@ -1353,9 +1372,11 @@ object Encatch {
     @Throws(Exception::class)
     suspend fun submitForm(params: SubmitFormRequest) {
         if (!initialized) return
+        // the user these answers belong to: they are never held for, or sent as, another
+        val madeBy = userNameState
         // secure signature expired: the answers wait for the next identify
         if (signatureExpired) {
-            holdSubmit(params)
+            holdSubmit(params, madeBy)
             return
         }
         val deviceInfo = buildDeviceInfo()
@@ -1379,7 +1400,7 @@ object Encatch {
             } catch (err: Throwable) {
                 val status = (err as? EncatchApiException)?.status
                 if (status == 429 && attempt < SUBMIT_MAX_ATTEMPTS) continue
-                if (status == 401 && signatureExpired) holdSubmit(params)
+                if (status == 401 && signatureExpired) holdSubmit(params, madeBy)
                 else logger.warn("submitForm API error: ${err.message}")
                 return
             }
