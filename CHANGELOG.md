@@ -5,6 +5,18 @@ SDK-facing changes to the published packages (`com.encatch:core` / `:android` / 
 Package). Kotlin versions 0.1.0 and 0.1.1 are also on Maven Central. Tester-app and tooling
 changes are not listed.
 
+## 0.2.0-beta.6
+
+Kotlin only (the Swift package stays at 0.2.0-beta.5).
+
+### Fixed
+
+- **An app had to add `kotlinx-serialization-json` itself to build `UserTraits`.** `core` and
+  `kmp-sdk` use its `JsonElement` and `JsonObject` in public types (`UserTraits`, the show-form
+  payloads) but didn't pass the library on to apps, so code like `JsonPrimitive("team")` didn't
+  compile without it. They now do, and `android` and `compose-sdk` pass it on with them. Apps that
+  already add it are unaffected.
+
 ## 0.2.0-beta.5
 
 Repeat identifies are skipped, and a new call updates the user's properties, as in the React Native
