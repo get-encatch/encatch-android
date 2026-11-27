@@ -91,6 +91,14 @@ data class EncatchConfig(
      */
     val persistUserAcrossRestarts: Boolean = true,
     /**
+     * Called when the current user's secure-identify signature has expired, so the app can get a
+     * fresh one from its own server and call `Encatch.identifyUser` again with it. A rejected new
+     * signature tells it once per user until an identify for them succeeds; the stored signature
+     * expiring always does, so at most twice. Only while that user is still the current one.
+     * May be called on any thread; an exception it throws is logged and otherwise ignored.
+     */
+    val onSignatureExpired: (suspend (SignatureExpiredInfo) -> Unit)? = null,
+    /**
      * Called before any form is shown (manual or automatic). Return `false` to block the SDK form
      * from opening — the host app can then show its own UI using [ShowFormInterceptorPayload].
      * Free to await anything (a coroutine, user input, a network check) before answering: on iOS
@@ -99,6 +107,9 @@ data class EncatchConfig(
      */
     val onBeforeShowForm: (suspend (ShowFormInterceptorPayload) -> Boolean)? = null,
 )
+
+/** Passed to [EncatchConfig.onSignatureExpired]: the user whose secure-identify signature expired. */
+data class SignatureExpiredInfo(val userName: String)
 
 data class UserTraits(
     val set: Map<String, JsonElement>? = null,

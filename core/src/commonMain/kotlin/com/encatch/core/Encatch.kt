@@ -11,6 +11,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -58,6 +59,17 @@ object Encatch {
     private var webHostState: String = DEFAULT_WEB_HOST
     private var isFullScreenState = false
     private var onBeforeShowForm: BeforeShowFormInterceptor? = null
+    @Volatile private var onSignatureExpired: SignatureExpiredListener? = null
+    /**
+     * Users already told through [onSignatureExpired] (guarded by [secureLock]). A rejected new
+     * signature isn't told again for the same user until an identify for them succeeds, else a
+     * signature the app's server keeps getting wrong would loop (callback, identify, 401, callback);
+     * entering the expired state always tells, and adds the user. A successful identify removes its
+     * user; resetUser(), clearAll() and a re-init clear it.
+     */
+    private val expiryToldUsers = mutableSetOf<String>()
+    /** Tests: how long the callback waits after the reply (0: just until this reply is handled). */
+    @Volatile internal var signatureExpiredCallDelayMs = 0L
 
     // Identity. [userIdState] is always the id of [userNameState] (or null): a request carries both
     // identity headers or neither (RN 1.4.4 item 11).
@@ -292,6 +304,8 @@ object Encatch {
     // regular ping interval (commonTest only; read at init).
     internal var engineFactory: (() -> io.ktor.client.engine.HttpClientEngine)? = null
     internal var settingsFactory: (() -> com.russhwolf.settings.Settings)? = null
+    /** Tests: the logger init() uses (given the debugMode switch). */
+    internal var loggerFactory: ((debugMode: () -> Boolean) -> EncatchLogger)? = null
     internal var pingIntervalMs: Long = SessionManager.PING_INTERVAL_MS
 
     // Session control
@@ -343,7 +357,7 @@ object Encatch {
         pendingReinitJob?.join()
 
         debugModeState = config?.debugMode ?: false
-        logger = DefaultEncatchLogger { debugModeState }
+        logger = loggerFactory?.invoke { debugModeState } ?: DefaultEncatchLogger { debugModeState }
 
         if (initialized) {
             // Reconfigure rather than no-op: a host app (or this repo's tester apps switching
@@ -372,6 +386,7 @@ object Encatch {
             collapser.clear()
             val dropped = secureLock.withLock {
                 signatureExpired = false
+                expiryToldUsers.clear()
                 heldSubmits.size.also { heldSubmits.clear() }
             }
             if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: the SDK was re-initialized")
@@ -389,6 +404,7 @@ object Encatch {
         isFullScreenState = config?.isFullScreen ?: false
         config?.theme?.let { themeState = it }
         onBeforeShowForm = config?.onBeforeShowForm
+        onSignatureExpired = config?.onSignatureExpired
 
         logger.debug("Initializing SDK...")
 
@@ -428,7 +444,7 @@ object Encatch {
                 resetUser()
             },
             logger = logger,
-            onSignatureExpired = { user, signature -> onSignatureExpired(user, signature) },
+            onUnauthorized = { reply -> onUnauthorized(reply) },
             onRateLimited = { endpoint, retryAfterMs -> limiter.pauseFor(bucketOf(endpoint), retryAfterMs) },
         )
         retryQueue = RetryQueue(scope, storage, limiter, logger)
@@ -553,17 +569,19 @@ object Encatch {
                 retryQueue.removeQueued("identifyUser")
                 // nor are the previous user's held survey answers, and their expired signature ends here
                 // (never send one user's answers as another's)
+                // under the expiry lock, so a 401 for the previous user can't land half-way and pause
+                // (or drop the signature of) the new one
                 val dropped = secureLock.withLock {
                     signatureExpired = false
+                    // not confirmed until this user's identify succeeds (setUserProperties waits for it)
+                    confirmedName = null
+                    userIdState = null
+                    userNameState = userName
+                    userIdState = storage.getUserId(userName)
+                    loadStoredSignature(userName)
                     heldSubmits.size.also { heldSubmits.clear() }
                 }
                 if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
-                // not confirmed until this user's identify succeeds (setUserProperties waits for it)
-                confirmedName = null
-                userIdState = null
-                userNameState = userName
-                userIdState = storage.getUserId(userName)
-                loadStoredSignature(userName)
             }
             storage.setUserName(userName)
 
@@ -609,16 +627,18 @@ object Encatch {
                 }
                 // Secure identify: from now on the signature (and its time) go on every request of this
                 // user and survive a restart; an identify without `secure` clears them.
+                // under the expiry lock: a late 401 for the old signature then sees it replaced
+                secureLock.withLock {
+                    userSignature = secure?.signature
+                    userSignatureTime = secure?.generatedDateTimeInUtc
+                }
                 if (secure != null) {
-                    userSignature = secure.signature
-                    userSignatureTime = secure.generatedDateTimeInUtc
                     storage.setUserSignature(userName, StoredSignature(secure.signature, secure.generatedDateTimeInUtc))
                 } else {
-                    userSignature = null
-                    userSignatureTime = null
                     storage.clearUserSignature(userName)
                 }
                 endSignatureExpired()
+                secureLock.withLock { expiryToldUsers.remove(userName) }
                 res["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull?.let {
                     feedbackTransactions = it
                     storage.setFeedbackTransactions(userName, it)
@@ -837,28 +857,94 @@ object Encatch {
     }
 
     /**
-     * The stored session-time signature expired (a 401 on a request that carried [signature] for
-     * [userName]): warn once and wait for a new identify. A late 401 for an older signature, or for
-     * a user no longer current, is ignored — it must not undo a fresh secure identify.
+     * A 401 (HANDOVER-ON-SIGNATURE-EXPIRED §4). Only for the current user. The app's own new signature
+     * (identifyUser with `secure`, another signature than the stored one) rejected as expired: warn and
+     * tell the app, nothing else (that identify just failed). The stored signature (re-sent by
+     * setUserProperties, by an identifyUser with that same signature, or on any request), while it is
+     * still the one in use: expired when the API says so, or (no reason: an older API, or a problem
+     * the SDK can't tell apart) when setUserProperties re-sent it with a session time; then the
+     * expired state, and the app is told. Any other 401 (a wrong signature, the key, the referer) is
+     * not an expiry.
      */
-    private suspend fun onSignatureExpired(userName: String, signature: String) {
+    @OptIn(ExperimentalAtomicApi::class)
+    private suspend fun onUnauthorized(reply: UnauthorizedReply) {
+        // taken as the reply arrives: a stop() or re-init from here on means no callback
+        val release = lifecycleRelease.load()
+        // once started, to the end: a cancelled requester must not leave the state entered untold
+        withContext(NonCancellable) { checkSignatureExpiry(reply, release) }
+    }
+
+    private suspend fun checkSignatureExpiry(reply: UnauthorizedReply, release: Deferred<Unit>) {
+        val user = reply.userName ?: return
+        if (user != userNameState) {
+            logger.debug("401 for \"$user\", no longer the current user: ignored")
+            return
+        }
+        val signature = reply.signature ?: return
+        if (reply.identify == UnauthorizedReply.Identify.OWN && signature != userSignature) {
+            if (!reply.signatureExpiredReason) return
+            logger.warn(
+                "[Encatch] identifyUser(\"$user\") rejected: the secure signature has expired. " +
+                    "Get a fresh signature from your server and call identifyUser() again.",
+            )
+            notifySignatureExpired(user, enteredExpiredState = false, release)
+            return
+        }
+        val expired = reply.signatureExpiredReason ||
+            (reply.identify == UnauthorizedReply.Identify.STORED_SIGNATURE && reply.hadSessionTime)
+        if (expired && enterSignatureExpired(user, signature)) notifySignatureExpired(user, enteredExpiredState = true, release)
+    }
+
+    /**
+     * The stored signature expired: warn once and wait for a new identify. A late 401 for an older
+     * signature, or for a user no longer current, is ignored — it must not undo a fresh secure
+     * identify. True when the expired state was entered.
+     */
+    private suspend fun enterSignatureExpired(userName: String, signature: String): Boolean {
         secureLock.withLock {
-            if (signatureExpired) return
+            if (signatureExpired) return false
             if (userName != userNameState || signature != userSignature) {
                 logger.debug("401 for an older signature or another user: ignored")
-                return
+                return false
             }
             signatureExpired = true
             // the next identify (with a fresh signature) must go out, even if it matches
             clearIdentifyMemory()
+            userSignature = null
+            userSignatureTime = null
+            storage.clearUserSignature(userName)
         }
         logger.warn(
             "[Encatch] Secure identify signature expired (401). Call identifyUser() with a fresh signature; " +
                 "until then events, screens, ping and automatic surveys are skipped and survey submits are held.",
         )
-        userSignature = null
-        userSignatureTime = null
-        userNameState?.let { storage.clearUserSignature(it) }
+        return true
+    }
+
+    /**
+     * Calls [EncatchConfig.onSignatureExpired] for [userName]: always when the expired state was just
+     * entered, else (a rejected new signature) only if they weren't told since their last successful
+     * identify. After this reply is handled (an identifyUser() made from it starts from the updated
+     * state), and not when stop() / clearAll() / a re-init ran or the user changed meanwhile. What it
+     * throws is logged and ignored.
+     */
+    private suspend fun notifySignatureExpired(userName: String, enteredExpiredState: Boolean, release: Deferred<Unit>) {
+        val tell = secureLock.withLock { expiryToldUsers.add(userName) || enteredExpiredState }
+        val listener = onSignatureExpired ?: return
+        if (!tell) {
+            logger.debug("onSignatureExpired already called for \"$userName\": waiting for a successful identify")
+            return
+        }
+        scope.launch {
+            val wait = signatureExpiredCallDelayMs
+            if (wait > 0) delay(wait) else yield()
+            if (release.isCompleted || !initialized || userNameState != userName) return@launch
+            try {
+                listener(SignatureExpiredInfo(userName))
+            } catch (err: Throwable) {
+                logger.warn("[Encatch] onSignatureExpired threw: ${err.message ?: err}")
+            }
+        }
     }
 
     /** Keeps a survey submit until the next successful identify (in memory, the latest [MAX_HELD_SUBMITS]). */
@@ -1389,7 +1475,11 @@ object Encatch {
         userSignature = null
         userSignatureTime = null
         signatureExpired = false
-        secureLock.withLock { heldSubmits.clear() }
+        onSignatureExpired = null
+        secureLock.withLock {
+            heldSubmits.clear()
+            expiryToldUsers.clear()
+        }
         feedbackTransactions = null
         deviceIdState = null
         sessionIdState = null
@@ -1479,6 +1569,7 @@ object Encatch {
         userSignatureTime = null
         val dropped = secureLock.withLock {
             signatureExpired = false
+            expiryToldUsers.clear()
             heldSubmits.size.also { heldSubmits.clear() }
         }
         if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: the user was reset")

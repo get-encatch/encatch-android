@@ -243,7 +243,7 @@ class IdentifyDedupeTest {
         identify("alice", options = sig)
         api.reply = { endpoint, body ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""")
                 "identify-user" -> MockApi.Reply(body = """{"userId":"uid-${(body["userName"] as JsonPrimitive).content}"}""")
                 else -> MockApi.Reply()
             }

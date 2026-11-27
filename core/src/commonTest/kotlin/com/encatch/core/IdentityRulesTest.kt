@@ -209,7 +209,7 @@ class IdentityRulesTest {
         identified("alice", secure)
         api.reply = { endpoint, _ ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"signature expired"}""")
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""")
                 "identify-user" -> MockApi.Reply(body = """{"userId":"user-1"}""")
                 else -> MockApi.Reply()
             }
@@ -322,7 +322,7 @@ class IdentityRulesTest {
         api.reply = { endpoint, body ->
             when {
                 endpoint == "track-event" && body["eventName"]?.jsonPrimitive?.content == "form:show" ->
-                    MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""", delayMs = 800)
+                    MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""", delayMs = 800)
                 endpoint == "identify-user" -> MockApi.Reply(body = """{"userId":"user-1"}""")
                 else -> MockApi.Reply()
             }
@@ -346,7 +346,7 @@ class IdentityRulesTest {
         identified("alice", secure)
         api.reply = { endpoint, _ ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""")
                 "identify-user" -> MockApi.Reply(body = """{"userId":"user-1"}""")
                 else -> MockApi.Reply()
             }
@@ -376,7 +376,7 @@ class IdentityRulesTest {
         identified("alice", secure)
         api.reply = { endpoint, _ ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""")
                 "identify-user" -> MockApi.Reply(body = """{"userId":"user-2"}""")
                 else -> MockApi.Reply()
             }

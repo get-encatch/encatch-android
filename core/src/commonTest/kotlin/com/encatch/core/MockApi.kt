@@ -42,6 +42,9 @@ internal class MockApi {
         if (endpoint == "identify-user") Reply(body = """{"userId":"user-1"}""") else Reply()
     }
 
+    /** When set, answers instead of [reply], seeing the whole call (headers included). */
+    @Volatile var replyCall: ((Call) -> Reply)? = null
+
     val settings = InMemorySettings()
 
     fun called(endpoint: String): List<Call> = calls.value.filter { it.endpoint == endpoint }
@@ -54,8 +57,9 @@ internal class MockApi {
                 val endpoint = request.url.encodedPath.substringAfterLast('/')
                 val text = (request.body as? OutgoingContent.ByteArrayContent)?.bytes()?.decodeToString() ?: "{}"
                 val body = runCatching { Json.parseToJsonElement(text).jsonObject }.getOrDefault(JsonObject(emptyMap()))
-                calls.update { it + Call(endpoint, request.headers, body, currentTimeMillis()) }
-                val r = reply(endpoint, body)
+                val call = Call(endpoint, request.headers, body, currentTimeMillis())
+                calls.update { it + call }
+                val r = replyCall?.invoke(call) ?: reply(endpoint, body)
                 if (r.delayMs > 0) delay(r.delayMs)
                 val headers = headersOf(
                     *(r.headers + (HttpHeaders.ContentType to "application/json")).map { it.key to listOf(it.value) }.toTypedArray(),
@@ -69,6 +73,7 @@ internal class MockApi {
         Encatch.clearAll()
         Encatch.engineFactory = null
         Encatch.settingsFactory = null
+        Encatch.loggerFactory = null
     }
 }
 

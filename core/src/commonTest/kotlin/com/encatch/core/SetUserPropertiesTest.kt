@@ -264,7 +264,7 @@ class SetUserPropertiesTest {
         identify("alice", options = sig)
         api.reply = { endpoint, body ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""")
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""")
                 "identify-user" -> identifyReply(body)
                 else -> MockApi.Reply()
             }
@@ -547,7 +547,7 @@ class SetUserPropertiesTest {
         identify("alice", options = sig)
         api.reply = { endpoint, body ->
             when (endpoint) {
-                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""", delayMs = 400)
+                "track-event" -> MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""", delayMs = 400)
                 "identify-user" -> identifyReply(body)
                 else -> MockApi.Reply()
             }

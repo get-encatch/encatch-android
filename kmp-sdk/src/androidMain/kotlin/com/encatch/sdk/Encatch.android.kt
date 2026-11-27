@@ -275,6 +275,9 @@ private fun EncatchConfig.toCore(): com.encatch.core.EncatchConfig {
         onBeforeShowForm = onBeforeShowForm?.let { interceptor ->
             { payload: com.encatch.core.ShowFormInterceptorPayload -> interceptor(payload.toSdk()) }
         },
+        onSignatureExpired = onSignatureExpired?.let { listener ->
+            { info: com.encatch.core.SignatureExpiredInfo -> listener(SignatureExpiredInfo(info.userName)) }
+        },
     )
 }
 

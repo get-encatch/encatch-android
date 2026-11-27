@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -168,25 +169,34 @@ class ApiClientTest {
     }
 
     @Test
-    fun post_401WithTimedSignature_reportsExpiry_butNotOnIdentify() = runTest {
-        var expired = 0
-        val engine = MockEngine { respond("""{"message":"unauthorized"}""", HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/json")) }
+    fun every401IsReportedWithWhatTheRequestCarriedAndTheReason() = runTest {
+        var body = """{"message":"unauthorized"}"""
+        val engine = MockEngine { respond(body, HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/json")) }
+        val replies = mutableListOf<UnauthorizedReply>()
         val api = EncatchApiClient(
             httpClient = createHttpClient(engine),
             baseUrlProvider = { "https://api.encatch.com" },
             authStateProvider = { AuthState("k", null, "alice", "user-1", "sig", null, null, "123") },
-            onSignatureExpired = { user, signature ->
-                assertEquals("alice", user)
-                assertEquals("sig", signature)
-                expired++
-            },
+            onUnauthorized = { replies += it },
         )
         assertFailsWith<EncatchApiException> { api.post(Endpoints.TRACK_EVENT, buildJsonObject { }) }
-        assertEquals(1, expired)
+        assertEquals(UnauthorizedReply("alice", "sig", true, UnauthorizedReply.Identify.NONE, false), replies.last())
+        body = """{"error":"invalid api key","reason":"user_signature_expired"}"""
         assertFailsWith<EncatchApiException> {
-            api.send(Endpoints.IDENTIFY_USER, buildJsonObject { }, IdentifyAuth("alice", "sig2", "456"))
+            api.send(Endpoints.IDENTIFY_USER, buildJsonObject { }, IdentifyAuth("bob", "sig2", "456"))
         }
-        assertEquals(1, expired, "an identify's 401 is not an expiry")
+        assertEquals(UnauthorizedReply("bob", "sig2", true, UnauthorizedReply.Identify.OWN, true), replies.last())
+        assertFailsWith<EncatchApiException> {
+            api.send(Endpoints.IDENTIFY_USER, buildJsonObject { }, IdentifyAuth("alice", "sig", null), storedSignature = true)
+        }
+        assertEquals(UnauthorizedReply("alice", "sig", false, UnauthorizedReply.Identify.STORED_SIGNATURE, true), replies.last())
+        // the reason only counts as a string; a body that isn't JSON has none
+        for (other in listOf("""{"reason":42}""", """{"reason":null}""", "not json", """{"error":{"reason":"user_signature_expired"}}""")) {
+            body = other
+            assertFailsWith<EncatchApiException> { api.post(Endpoints.TRACK_EVENT, buildJsonObject { }) }
+            assertFalse(replies.last().signatureExpiredReason, other)
+        }
+        assertEquals(7, replies.size)
     }
 
     @Test

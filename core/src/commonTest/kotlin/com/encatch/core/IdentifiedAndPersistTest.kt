@@ -183,7 +183,7 @@ class IdentifiedAndPersistTest {
         assertTrue(Encatch.isIdentified())
         Encatch.startSession()
         api.reply = { endpoint, _ ->
-            if (endpoint == "track-event") MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"message":"expired"}""") else MockApi.Reply()
+            if (endpoint == "track-event") MockApi.Reply(status = HttpStatusCode.Unauthorized, body = """{"error":"invalid api key","reason":"user_signature_expired"}""") else MockApi.Reply()
         }
         Encatch.trackEvent("expires")
         eventually { api.called("track-event").isNotEmpty() }

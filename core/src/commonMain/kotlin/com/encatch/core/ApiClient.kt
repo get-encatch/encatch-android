@@ -27,6 +27,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -169,6 +170,35 @@ data class EncatchNetworkLogEntry(
     val responseHeaders: Map<String, String> = emptyMap(),
 )
 
+/** The 401 body's `reason` for an expired secure-identify signature (the user gateway). */
+internal const val SIGNATURE_EXPIRED_REASON = "user_signature_expired"
+
+/** A 401 body's `reason`, when it is a string (anything else: none). */
+internal fun JsonObject.errorReason(): String? =
+    (this["reason"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+/** A 401 reply: what the request carried, for the signature-expiry rules. */
+internal data class UnauthorizedReply(
+    /** The user the request was for: identify-user's own name, else `X-User-Name` (null: a visitor). */
+    val userName: String?,
+    /** The `X-User-Signature` it carried. */
+    val signature: String?,
+    /** It carried a session time with that signature. */
+    val hadSessionTime: Boolean,
+    val identify: Identify,
+    /** The body said `reason: "user_signature_expired"`. */
+    val signatureExpiredReason: Boolean,
+) {
+    enum class Identify {
+        /** Not identify-user. */
+        NONE,
+        /** identify-user from identifyUser(): the call's own signature (or none). */
+        OWN,
+        /** identify-user re-sending the stored signature (setUserProperties). */
+        STORED_SIGNATURE,
+    }
+}
+
 /**
  * Thin Ktor-backed HTTP layer mirroring `_post`/`_buildHeaders` from the RN SDK's
  * `encatch.ts`, plus the SSE (`streamQnaWithAi`) and multipart (`uploadFile`) calls.
@@ -181,11 +211,10 @@ class EncatchApiClient internal constructor(
     private val logger: EncatchLogger = DefaultEncatchLogger { false },
     private val networkLogSink: (EncatchNetworkLogEntry) -> Unit = {},
     /**
-     * A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item
-     * 16). Given the user name and signature that request carried, so a late 401 for an older
-     * signature can be told apart from one for the current signature.
+     * Every 401, with what the request carried and whether the body marked it as an expired
+     * signature: the SDK decides whether it is one (HANDOVER-ON-SIGNATURE-EXPIRED §4).
      */
-    private val onSignatureExpired: suspend (userName: String, signature: String) -> Unit = { _, _ -> },
+    private val onUnauthorized: suspend (UnauthorizedReply) -> Unit = {},
     /** A 429: the endpoint and its Retry-After in ms (null when missing), to pause that bucket (RN 1.4.4 item 2). */
     private val onRateLimited: suspend (endpoint: String, retryAfterMs: Long?) -> Unit = { _, _ -> },
 ) {
@@ -232,8 +261,8 @@ class EncatchApiClient internal constructor(
 
     /**
      * [post], with identify-user's own identity ([identify]) when it is that call. [storedSignature]:
-     * [identify] carries the stored session-time signature (setUserProperties), so a 401 is an expiry
-     * as on any other request (identify's own signature is the call's, never treated so).
+     * [identify] carries the stored session-time signature (setUserProperties), which decides how its
+     * 401 is reported ([UnauthorizedReply.Identify.STORED_SIGNATURE]).
      */
     internal suspend fun send(
         endpoint: String,
@@ -301,12 +330,20 @@ class EncatchApiClient internal constructor(
             onUserPendingRetryExhausted()
         }
 
-        val sentSignature = authHeaders["X-User-Signature"]
-        val sentUser = authHeaders["X-User-Name"]
-        if (response.status.value == 401 && (identify == null || storedSignature) &&
-            sentSignature != null && sentUser != null && authHeaders["X-User-Session-Time"] != null
-        ) {
-            onSignatureExpired(sentUser, sentSignature)
+        if (response.status.value == 401) {
+            onUnauthorized(
+                UnauthorizedReply(
+                    userName = identify?.userName ?: authHeaders["X-User-Name"],
+                    signature = authHeaders["X-User-Signature"],
+                    hadSessionTime = authHeaders["X-User-Session-Time"] != null,
+                    identify = when {
+                        identify == null -> UnauthorizedReply.Identify.NONE
+                        storedSignature -> UnauthorizedReply.Identify.STORED_SIGNATURE
+                        else -> UnauthorizedReply.Identify.OWN
+                    },
+                    signatureExpiredReason = parsed?.errorReason() == SIGNATURE_EXPIRED_REASON,
+                ),
+            )
         }
 
         if (response.status.value == 429) {
