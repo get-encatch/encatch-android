@@ -16,6 +16,8 @@ struct EncatchTimings: Sendable {
     var maxPauseMs: Int64 = 5 * 60_000
     /// How often setUserProperties' shared watcher checks that an open survey closed (a close also wakes it).
     var surveyIdlePollMs: Int64 = 500
+    /// How long onSignatureExpired waits after the reply (0: just until this reply is handled).
+    var signatureExpiredCallDelayMs: Int64 = 0
 }
 
 /// Monotonic milliseconds (not wall time), for windows and pauses.

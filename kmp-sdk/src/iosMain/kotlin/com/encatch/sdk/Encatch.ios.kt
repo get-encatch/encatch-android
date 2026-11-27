@@ -462,6 +462,21 @@ private fun EncatchConfig.toBridge(): EncatchBridgeConfig = EncatchBridgeConfig(
             }
         }
     }
+    val signatureExpired = onSignatureExpired
+    if (signatureExpired != null) {
+        // a plain callback on the bridge; the suspend listener runs in its own coroutine
+        setOnSignatureExpired { userName ->
+            if (userName != null) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    try {
+                        signatureExpired(SignatureExpiredInfo(userName))
+                    } catch (err: Throwable) {
+                        println("[Encatch] onSignatureExpired threw: ${err.message ?: err}")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Suppress("UNCHECKED_CAST")

@@ -162,7 +162,7 @@ final class IdentifiedAndPersistTests: XCTestCase {
         try await sdk.stopSession()
         XCTAssertTrue(sdk.isIdentified())
         try await sdk.startSession()
-        server.respond { $0.endpoint == "track-event" ? FakeServer.Reply(status: 401, body: #"{"message":"expired"}"#) : .init() }
+        server.respond { $0.endpoint == "track-event" ? FakeServer.Reply(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#) : .init() }
         try await sdk.trackEvent("expires")
         await waitFor { server.count("track-event") == 1 }
         await sleepMs(300)

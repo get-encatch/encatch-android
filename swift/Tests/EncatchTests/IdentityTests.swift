@@ -285,7 +285,7 @@ final class IdentityTests: XCTestCase {
             switch call.endpoint {
             case "identify-user": return self.identifyReply("uid-a")
             default:
-                if call.header("X-User-Signature") == "sig-1" && expired.value { return .init(status: 401, body: "expired") }
+                if call.header("X-User-Signature") == "sig-1" && expired.value { return .init(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#) }
                 return .init()
             }
         }
@@ -325,7 +325,7 @@ final class IdentityTests: XCTestCase {
         server.respond { call in
             switch call.endpoint {
             case "identify-user": return self.identifyReply("uid-\(call.string("userName") ?? "")")
-            default: return call.header("X-User-Signature") != nil ? .init(status: 401, body: "expired") : .init()
+            default: return call.header("X-User-Signature") != nil ? .init(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#) : .init()
             }
         }
         let logger = RecordingLogger()
@@ -376,7 +376,7 @@ final class IdentityTests: XCTestCase {
             switch call.endpoint {
             case "identify-user": return self.identifyReply("uid-a")
             case "submit-form" where call.header("X-User-Signature") == "sig-1":
-                return .init(status: 401, body: "expired", delayMs: 300) // answers after sig-2 is in place
+                return .init(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#, delayMs: 300) // answers after sig-2 is in place
             default: return .init()
             }
         }
@@ -400,7 +400,7 @@ final class IdentityTests: XCTestCase {
     func testAfterAnExpiryTheSameSignedIdentifyIsSentAgain() async throws {
         let server = FakeServer()
         server.respond { call in
-            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: "expired")
+            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#)
         }
         let sdk = try await makeTestSDK(server: server)
         defer { sdk.stop() }
@@ -415,7 +415,7 @@ final class IdentityTests: XCTestCase {
     func testReinitializeForgetsIdentifyExpiryAndCollapseMemory() async throws {
         let server = FakeServer()
         server.respond { call in
-            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: "expired")
+            call.endpoint == "identify-user" ? self.identifyReply("uid-a") : .init(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#)
         }
         let sdk = try await makeTestSDK(server: server)
         defer { sdk.stop() }

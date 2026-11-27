@@ -112,6 +112,10 @@ public final class EncatchBridgeShowFormInterceptorPayload: NSObject {
 /// Swift, the same way `onEvent`'s callback closure already crosses this boundary from Kotlin).
 public typealias EncatchBridgeInterceptorCallback = @Sendable (EncatchBridgeShowFormInterceptorPayload, @escaping (Bool) -> Void) -> Void
 
+/// Callback shape for `EncatchBridgeConfig.onSignatureExpired`: the user whose secure-identify
+/// signature expired. A plain callback (see `EncatchBridgeInterceptorCallback` for why not `async`).
+public typealias EncatchBridgeSignatureExpiredCallback = @Sendable (String) -> Void
+
 /// `@objc`-compatible mirror of `EncatchConfig`, for Kotlin/Native cinterop callers that can't
 /// construct the Swift struct directly. Unset fields fall back to `Encatch.initialize`'s own
 /// defaults (see `EncatchConfig.init`).
@@ -129,6 +133,8 @@ public final class EncatchBridgeConfig: NSObject {
     @objc public var theme: String?
     /// See `EncatchBridgeInterceptorCallback`'s doc comment for why this isn't an `async` closure.
     @objc public var onBeforeShowForm: EncatchBridgeInterceptorCallback?
+    /// `EncatchConfig.onSignatureExpired`, given the user name.
+    @objc public var onSignatureExpired: EncatchBridgeSignatureExpiredCallback?
 
     @objc public override init() {
         super.init()
@@ -136,7 +142,8 @@ public final class EncatchBridgeConfig: NSObject {
 
     fileprivate func toEncatchConfig() -> EncatchConfig {
         let interceptor = onBeforeShowForm
-        return EncatchConfig(
+        let signatureExpired = onSignatureExpired
+        var config = EncatchConfig(
             apiBaseUrl: apiBaseUrl ?? DEFAULT_API_BASE_URL,
             webHost: webHost ?? DEFAULT_WEB_HOST,
             theme: parseBridgeTheme(theme),
@@ -157,6 +164,10 @@ public final class EncatchBridgeConfig: NSObject {
                 }
             }
         )
+        config.onSignatureExpired = signatureExpired.map { handler in
+            { @Sendable (info: SignatureExpiredInfo) async throws in handler(info.userName) }
+        }
+        return config
     }
 }
 

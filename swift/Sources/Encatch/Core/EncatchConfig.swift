@@ -8,6 +8,15 @@ public let DEFAULT_WEB_HOST = "https://form.encatch.com"
 /// custom widget using the payload. Prefills are cleared when false.
 public typealias BeforeShowFormInterceptor = @Sendable (ShowFormInterceptorPayload) async -> Bool
 
+/// Passed to `EncatchConfig.onSignatureExpired`: the user whose secure-identify signature expired.
+public struct SignatureExpiredInfo: Sendable, Equatable {
+    public let userName: String
+    public init(userName: String) { self.userName = userName }
+}
+
+/// See `EncatchConfig.onSignatureExpired`.
+public typealias SignatureExpiredListener = @Sendable (SignatureExpiredInfo) async throws -> Void
+
 public struct EncatchConfig: Sendable {
     /// Base URL used for all API calls. Defaults to `DEFAULT_API_BASE_URL`.
     public var apiBaseUrl: String
@@ -28,6 +37,18 @@ public struct EncatchConfig: Sendable {
     /// preferences are still saved.
     public var persistUserAcrossRestarts: Bool
     public var onBeforeShowForm: BeforeShowFormInterceptor?
+    /// Called when the current user's secure-identify signature has expired, so the app can get a
+    /// fresh one from its own server and call `identifyUser` again with it. A rejected new signature
+    /// calls it once per user until an identify for them succeeds (a signature that keeps being
+    /// rejected doesn't loop); the stored signature expiring always does, so at most twice. Called
+    /// after the SDK has handled the reply, and only while that user is still the current one. Not on
+    /// the main actor; an error it throws is logged and otherwise ignored.
+    ///
+    /// The SDK only learns of the expiry when a request the API checks goes out (today identify-user:
+    /// `identifyUser` and `setUserProperties`); it can't warn at launch. The signed time
+    /// (`generatedDateTimeInUtc`) must be epoch milliseconds (13 digits) from a server clock within
+    /// 5 minutes of real time.
+    public var onSignatureExpired: SignatureExpiredListener?
 
     public init(
         apiBaseUrl: String = DEFAULT_API_BASE_URL,
@@ -47,5 +68,33 @@ public struct EncatchConfig: Sendable {
         self.appVersion = appVersion
         self.persistUserAcrossRestarts = persistUserAcrossRestarts
         self.onBeforeShowForm = onBeforeShowForm
+    }
+
+    /// The same, with `onSignatureExpired`. A separate initializer with the label required, so an
+    /// existing `EncatchConfig(...) { payload in ... }` trailing closure still means `onBeforeShowForm`
+    /// in every Swift language mode.
+    @_disfavoredOverload
+    public init(
+        apiBaseUrl: String = DEFAULT_API_BASE_URL,
+        webHost: String = DEFAULT_WEB_HOST,
+        theme: Theme = .system,
+        isFullScreen: Bool = false,
+        debugMode: Bool = false,
+        appVersion: String? = nil,
+        persistUserAcrossRestarts: Bool = true,
+        onBeforeShowForm: BeforeShowFormInterceptor? = nil,
+        onSignatureExpired: @escaping SignatureExpiredListener
+    ) {
+        self.init(
+            apiBaseUrl: apiBaseUrl,
+            webHost: webHost,
+            theme: theme,
+            isFullScreen: isFullScreen,
+            debugMode: debugMode,
+            appVersion: appVersion,
+            persistUserAcrossRestarts: persistUserAcrossRestarts,
+            onBeforeShowForm: onBeforeShowForm
+        )
+        self.onSignatureExpired = onSignatureExpired
     }
 }

@@ -211,7 +211,7 @@ final class IdentifyDedupeTests: XCTestCase {
         try await identify("alice", nil, sig)
         server.respond { call in
             switch call.endpoint {
-            case "track-event": return FakeServer.Reply(status: 401, body: #"{"message":"expired"}"#)
+            case "track-event": return FakeServer.Reply(status: 401, body: #"{"error":"invalid api key","reason":"user_signature_expired"}"#)
             case "identify-user": return Self.idReply(call)
             default: return .init()
             }

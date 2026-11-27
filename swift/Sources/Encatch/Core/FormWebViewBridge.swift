@@ -249,7 +249,9 @@ public final class FormWebViewBridge: @unchecked Sendable {
                     context: data["context"]?.asObject != nil ? data["context"] : nil
                 )
             )
-            Task { try? await Encatch.shared.submitForm(submitReq) }
+            // its owner taken now: the page's close may follow at once and forget who it was shown to
+            let owner = Encatch.shared.ownerOf(submitReq)
+            Task { await Encatch.shared.submitForm(submitReq, owner: owner) }
             Encatch.shared.emitEvent(.formSubmit, EventPayload(formId: parsed.formId, timestamp: 0, data: data))
 
         case .complete:

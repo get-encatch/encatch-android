@@ -62,7 +62,39 @@ public final class Encatch: @unchecked Sendable {
     private var confirmedIdentity = false
     /// The user's data for this app run when `persistUserAcrossRestarts` is off; kept across a re-init.
     private let memoryUserStore = MemoryUserStore()
-    private var heldSubmits: [SubmitFormRequest] = []
+    /// Who each survey was shown to (handover 6b): the user current right before its show-form
+    /// request (nil: a visitor), by the form's ids (the id asked for and the reply's
+    /// feedbackConfigurationId), under [stateLock]. A submit's answers belong to that user; kept until
+    /// the survey closes or is dismissed, so a repeated final submit resolves the same way. A new show
+    /// of the same survey overwrites it.
+    private struct Owner {
+        let userName: String?
+    }
+    private var shownTo: [String: Owner] = [:]
+    /// Bumped by clearAll(), under [stateLock]: a submit waiting out a rate-limit pause since then is dropped.
+    private var clearGeneration = 0
+
+    /// The survey with these ids closed or was dismissed: its answers no longer need an owner.
+    private func forgetShown(_ ids: [String?]) {
+        let keys = ids.compactMap { $0 }.filter { !$0.isEmpty }
+        if keys.isEmpty { return }
+        withStateLock { for key in keys { shownTo[key] = nil } }
+    }
+
+    /// Survey submits held while the signature is expired, each with the user who made it.
+    private struct HeldSubmit {
+        let userName: String?
+        let params: SubmitFormRequest
+    }
+    private var heldSubmits: [HeldSubmit] = []
+    /// `EncatchConfig.onSignatureExpired`, under [stateLock].
+    private var onSignatureExpired: SignatureExpiredListener?
+    /// Users already told through [onSignatureExpired], under [stateLock]. A rejected new signature
+    /// isn't told again for the same user until an identify for them succeeds, else a signature the
+    /// app's server keeps getting wrong would loop (callback, identify, 401, callback); entering the
+    /// expired state always tells, and adds the user. A successful identify removes its user;
+    /// resetUser(), clearAll() and a re-init clear it.
+    private var expiryToldUsers: Set<String> = []
     static let maxHeldSubmits = 10
     /// identifyUser() dedupe, for this app run only (RN SDK 1.5.0, PostHog-style): what the last
     /// identify sent (or still in flight) carried. Under [stateLock]. Cleared when that identify fails
@@ -220,6 +252,17 @@ public final class Encatch: @unchecked Sendable {
         }
     }
     private let stateLock = NSLock()
+    /// Serialises the signature in memory with its storage write (a 401 dropping it, an identify
+    /// setting it), so a late drop can't wipe a fresh identify's stored signature. Never taken by a
+    /// public synchronous API, and the storage write happens outside [stateLock]: UserDefaults
+    /// notifies observers synchronously, and one may call back into the SDK.
+    private let signatureWriteLock = NSLock()
+
+    private func withSignatureWrite<T>(_ body: () -> T) -> T {
+        signatureWriteLock.lock()
+        defer { signatureWriteLock.unlock() }
+        return body()
+    }
 
     private func withStateLock<T>(_ body: () -> T) -> T {
         stateLock.lock()
@@ -357,6 +400,10 @@ public final class Encatch: @unchecked Sendable {
             withStateLock {
                 signatureExpired = false
                 heldSubmits = []
+                expiryToldUsers = []
+                // nor who its surveys were shown to; a submit waiting out a pause is dropped
+                shownTo = [:]
+                clearGeneration += 1
                 identifyMemory = nil
                 lastEventAtMs = [:]
                 lastScreen = nil
@@ -375,6 +422,7 @@ public final class Encatch: @unchecked Sendable {
         isFullScreenState = config?.isFullScreen ?? false
         if let theme = config?.theme { themeState = theme }
         onBeforeShowForm = config?.onBeforeShowForm
+        withStateLock { onSignatureExpired = config?.onSignatureExpired }
 
         logger.debug("Initializing SDK...")
 
@@ -401,7 +449,7 @@ public final class Encatch: @unchecked Sendable {
                 sessionManager?.stopPingInterval()
                 try? await resetUser()
             },
-            onSignatureExpired: { [self] signature, user in onSignatureExpired(signature: signature, user: user) },
+            onUnauthorized: { [self] reply in onUnauthorized(reply) },
             rateLimiter: rateLimiter,
             requestTimeoutMs: timings.requestTimeoutMs,
             logger: logger,
@@ -555,7 +603,7 @@ public final class Encatch: @unchecked Sendable {
                 return dropped
             }
             if droppedSubmits > 0 {
-                logger.warn("\(droppedSubmits) held survey submit(s) dropped: another user was identified")
+                logger.warn("\(droppedSubmits) held survey submit(s) dropped: identifyUser() switched to another user")
             }
         }
         storage.setUserName(userName)
@@ -618,6 +666,7 @@ public final class Encatch: @unchecked Sendable {
         }
         // A reply for a user who is no longer current (reset, switched or cleared since): ignored,
         // its id not stored either.
+        let current: Bool = withSignatureWrite {
         let current: Bool = withStateLock {
             guard userNameState == userName else { return false }
             if let replyUserId { userIdState = replyUserId }
@@ -630,17 +679,22 @@ public final class Encatch: @unchecked Sendable {
             // user; an identify without `secure` clears them.
             userSignature = secure?.signature
             userSignatureTime = secure?.signature != nil ? secure?.generatedDateTimeInUtc : nil
+            // told again about this user's next expiry
+            expiryToldUsers.remove(userName)
             return true
         }
-        guard current else {
-            logger.debug("identify reply for \"\(userName)\" ignored: no longer the current user")
-            return
-        }
+        guard current else { return false }
         if let replyUserId { storage.setUserId(userName: userName, userId: replyUserId) }
         if let secure {
             storage.setUserSignature(userName: userName, value: .init(signature: secure.signature, time: secure.generatedDateTimeInUtc))
         } else {
             storage.clearUserSignature(userName: userName)
+        }
+        return true
+        }
+        guard current else {
+            logger.debug("identify reply for \"\(userName)\" ignored: no longer the current user")
+            return
         }
         endSignatureExpired()
         if let replyFt {
@@ -892,26 +946,83 @@ public final class Encatch: @unchecked Sendable {
         }
     }
 
-    /// The stored session-time signature expired (a 401 on a request that carried it): warn once,
-    /// drop it, and wait for the next successful identify. A late 401 for an older signature (or
-    /// another user) is ignored, so it can't undo a fresh secure identify.
-    private func onSignatureExpired(signature: String, user: String?) {
-        let (first, current): (Bool, String?) = withStateLock {
-            guard userSignature == signature, userNameState == user else { return (false, nil) }
-            if signatureExpired { return (false, nil) }
+    private enum ExpiryOutcome {
+        case none
+        /// The app's own new signature was rejected as expired.
+        case newSignatureExpired(tell: Bool)
+        /// The stored signature expired: the expired state was entered.
+        case enteredExpiredState
+    }
+
+    /// A 401 (HANDOVER-ON-SIGNATURE-EXPIRED §4), decided in one locked step. Only for the current user.
+    /// The app's own new signature (identifyUser with `secure`, another signature than the stored one)
+    /// rejected as expired: warn and tell the app, nothing else (that identify just failed). The stored
+    /// signature (re-sent by setUserProperties, by an identifyUser with that same signature, or on any
+    /// request), while it is still the one in use: expired when the API says so, or (no reason: an older
+    /// API, or a problem the SDK can't tell apart) when setUserProperties re-sent it with a session time;
+    /// then the expired state, and the app is told. Any other 401 (a wrong signature, the key, the
+    /// referer) is not an expiry.
+    private func onUnauthorized(_ reply: UnauthorizedReply) {
+        guard let user = reply.userName else { return }
+        let (outcome, release, listener): (ExpiryOutcome, AsyncSignal, SignatureExpiredListener?) = withSignatureWrite {
+        let decided: (ExpiryOutcome, AsyncSignal, SignatureExpiredListener?) = withStateLock {
+            // taken as the reply arrives: a stop() or re-init from here on means no callback
+            let release = lifecycleRelease
+            guard userNameState == user, let signature = reply.signature else { return (.none, release, nil) }
+            if reply.identify == .own && signature != userSignature {
+                guard reply.signatureExpiredReason else { return (.none, release, nil) }
+                return (.newSignatureExpired(tell: expiryToldUsers.insert(user).inserted), release, onSignatureExpired)
+            }
+            let expired = reply.signatureExpiredReason || (reply.identify == .storedSignature && reply.hadSessionTime)
+            // a late 401 for an older signature can't undo a fresh secure identify
+            guard expired, !signatureExpired, userSignature == signature else { return (.none, release, nil) }
             signatureExpired = true
             userSignature = nil
             userSignatureTime = nil
             // the next identify (with a fresh signature) must go out, even if it matches
             identifyMemory = nil
-            return (true, userNameState)
+            expiryToldUsers.insert(user)
+            return (.enteredExpiredState, release, onSignatureExpired)
         }
-        guard first else { return }
-        logger.warn(
-            "Secure identify signature expired (401). Call identifyUser() with a fresh signature; until then " +
-                "events, screens, ping and automatic surveys are skipped and survey submits are held."
-        )
-        if let current { storage?.clearUserSignature(userName: current) }
+        if case .enteredExpiredState = decided.0 { storage?.clearUserSignature(userName: user) }
+        return decided
+        }
+        switch outcome {
+        case .none:
+            if userNameStateSnapshot != user { logger.debug("401 for \"\(user)\", no longer the current user: ignored") }
+        case .newSignatureExpired(let tell):
+            logger.warn("identifyUser(\"\(user)\") rejected: the secure signature has expired. Get a fresh signature from your server and call identifyUser() again.")
+            if tell { callSignatureExpired(listener, user: user, release: release) } else if listener != nil {
+                logger.debug("onSignatureExpired already called for \"\(user)\": waiting for a successful identify")
+            }
+        case .enteredExpiredState:
+            logger.warn(
+                "Secure identify signature expired (401). Call identifyUser() with a fresh signature; until then " +
+                    "events, screens, ping and automatic surveys are skipped and survey submits are held."
+            )
+            callSignatureExpired(listener, user: user, release: release)
+        }
+    }
+
+    private var userNameStateSnapshot: String? { withStateLock { userNameState } }
+
+    /// Calls the app's onSignatureExpired for [user] after this reply is handled (an identifyUser() made
+    /// from it starts from the updated state); not when stop() / clearAll() / a re-init ran or the user
+    /// changed meanwhile. An error it throws is logged.
+    private func callSignatureExpired(_ listener: SignatureExpiredListener?, user: String, release: AsyncSignal) {
+        guard let listener else { return }
+        let waitMs = timings.signatureExpiredCallDelayMs
+        Task { [weak self] in
+            if waitMs > 0 { try? await Task.sleep(nanoseconds: UInt64(waitMs) * 1_000_000) } else { await Task.yield() }
+            guard let self else { return }
+            let still = self.withStateLock { !release.isFired && self.initialized && self.userNameState == user }
+            guard still else { return }
+            do {
+                try await listener(SignatureExpiredInfo(userName: user))
+            } catch {
+                self.logger.warn("onSignatureExpired threw: \(error)")
+            }
+        }
     }
 
     var isSignatureExpired: Bool { withStateLock { signatureExpired } }
@@ -921,24 +1032,40 @@ public final class Encatch: @unchecked Sendable {
     var pingActive: Bool { sessionManager?.isPingActive ?? false }
     var sessionManagerForTesting: SessionManager { sessionManager }
 
-    /// Keeps a submit until the next successful identify (in memory, at most 10, oldest dropped).
-    private func holdSubmit(_ params: SubmitFormRequest) {
-        withStateLock {
-            heldSubmits.append(params)
+    private enum Hold { case held, dropped, notExpired }
+
+    /// Keeps a survey submit of [owner] until the next successful identify (in memory, at most 10,
+    /// oldest dropped). Checked again under the lock: once the expired state has ended (an identify
+    /// succeeded meanwhile) it isn't held but sent (`.notExpired`); a signed-in owner who is no longer
+    /// current has it dropped.
+    private func holdSubmit(_ params: SubmitFormRequest, owner: String?) -> Hold {
+        let outcome: Hold = withStateLock {
+            if !signatureExpired { return .notExpired }
+            if let owner, owner != userNameState { return .dropped }
+            heldSubmits.append(HeldSubmit(userName: owner, params: params))
             if heldSubmits.count > Self.maxHeldSubmits { heldSubmits.removeFirst() }
+            return .held
         }
-        logger.debug("submitForm held until the next identify (secure signature expired)")
+        switch outcome {
+        case .held: logger.debug("submitForm held until the next identify (secure signature expired)")
+        case .dropped: logger.warn("A survey submit was dropped: it belongs to \"\(owner ?? "")\", no longer the current user")
+        case .notExpired: break
+        }
+        return outcome
     }
 
-    /// A successful identify ends the expired state and sends any held submits.
+    /// A successful identify ends the expired state and sends any held submits, each only as the user
+    /// who made it.
     private func endSignatureExpired() {
-        let held: [SubmitFormRequest] = withStateLock {
+        let held: [HeldSubmit] = withStateLock {
             signatureExpired = false
             let held = heldSubmits
             heldSubmits = []
             return held
         }
-        for params in held { Task { try? await self.submitForm(params) } }
+        for submit in held {
+            Task { await self.submitForm(submit.params, owner: submit.userName) }
+        }
     }
 
     // ============================================================================
@@ -1199,6 +1326,9 @@ public final class Encatch: @unchecked Sendable {
         if let localeState { req["language"] = .string(localeState) }
         if let feedbackTransactions { req["$feedbackTransactions"] = .string(feedbackTransactions) }
 
+        // who the survey is for: a signed-in user who is no longer current when the reply arrives
+        // doesn't see it (a visitor's request that completes after sign-in still does)
+        let requestedBy = withStateLock { userNameState }
         do {
             let res = try await apiClient.post(endpoint: Endpoints.showForm, body: .object(req))
             await applyFeedbackTransactions(res)
@@ -1209,6 +1339,19 @@ public final class Encatch: @unchecked Sendable {
             var feedbackConfigurationId: String?
             if case .string(let value)? = resObj["feedbackConfigurationId"] { feedbackConfigurationId = value }
             if let feedbackConfigurationId { pendingCtaScheduler?.cancel(formId: feedbackConfigurationId) }
+
+            // its answers belong to that user (a custom form shown from onBeforeShowForm too)
+            let stillFor: Bool = withStateLock {
+                if let requestedBy, requestedBy != userNameState { return false }
+                for id in [formId, feedbackConfigurationId].compactMap({ $0 }) where !id.isEmpty {
+                    shownTo[id] = Owner(userName: requestedBy)
+                }
+                return true
+            }
+            guard stillFor else {
+                logger.debug("survey \(formId) not shown: it was asked for \"\(requestedBy ?? "")\", no longer the current user")
+                return
+            }
 
             let prefill = pendingResponsesSnapshot()
 
@@ -1279,6 +1422,7 @@ public final class Encatch: @unchecked Sendable {
     func recordDismissal(_ formConfigurationId: String?) async {
         guard initialized else { return }
         let id = (formConfigurationId?.isEmpty == false) ? formConfigurationId : nil
+        forgetShown([id])
         Task { await self.trackFormEvent("form:dismissed", id) }
         if let id {
             var req: [String: JSONValue] = ["formConfigurationId": .string(id), "$deviceInfo": buildDeviceInfo().toJSONValue()]
@@ -1302,10 +1446,13 @@ public final class Encatch: @unchecked Sendable {
 
         pendingCtaScheduler?.cancel(formId: formConfigurationId)
         EncatchInternalEmitter.shared.emit(.dismissForm(formConfigurationId: formConfigurationId))
-        withSurveyLock {
+        let closed: Set<String> = withSurveyLock {
+            let closed = openFormIds
             isFormVisible = false
             openFormIds = []
+            return closed
         }
+        forgetShown(Array(closed) + [formConfigurationId])
         checkSurveyIdle()
 
         Task { await self.trackFormEvent("form:dismissed", formConfigurationId) }
@@ -1357,11 +1504,32 @@ public final class Encatch: @unchecked Sendable {
 
     public func submitForm(_ params: SubmitFormRequest) async throws {
         guard initialized else { return }
-        // Secure signature expired: hold the answers until the app identifies again.
-        if isSignatureExpired {
-            holdSubmit(params)
+        await submitForm(params, owner: ownerOf(params))
+    }
+
+    /// The user these answers belong to: who the survey was shown to, else (not found, or shown to a
+    /// visitor) the current user. The survey page's submit takes it in its message handler, before the
+    /// close the page sends right after it forgets who the survey was shown to.
+    func ownerOf(_ params: SubmitFormRequest) -> String? {
+        withStateLock { shownTo[params.formDetails.formConfigurationId].flatMap { $0.userName } ?? userNameState }
+    }
+
+    /// submitForm for answers of [owner] (nil: a visitor's, sent whoever is current). A signed-in
+    /// owner's answers are sent only while they are the current user: checked now and before each send
+    /// attempt (after a rate-limit wait); signing out drops them too. clearAll() while one waits drops it.
+    func submitForm(_ params: SubmitFormRequest, owner: String?) async {
+        guard initialized else { return }
+        let generation = withStateLock { clearGeneration }
+        let ownerGone: () -> Bool = { [self] in
+            guard let owner else { return false }
+            return withStateLock { userNameState } != owner
+        }
+        if ownerGone() {
+            logger.warn("A survey submit was dropped: it belongs to \"\(owner ?? "")\", no longer the current user")
             return
         }
+        // Secure signature expired: hold the answers until the app identifies again.
+        if isSignatureExpired && holdSubmit(params, owner: owner) != .notExpired { return }
         let deviceInfo = buildDeviceInfo()
         var req: [String: JSONValue] = ["$deviceInfo": deviceInfo.toJSONValue()]
         if let triggerType = params.triggerType { req["triggerType"] = .string(triggerType) }
@@ -1372,6 +1540,14 @@ public final class Encatch: @unchecked Sendable {
         for attempt in 1...Self.submitMaxAttempts {
             let wait = rateLimiter.remainingMs(.submitForm)
             if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait) * 1_000_000) }
+            guard initialized, withStateLock({ clearGeneration }) == generation else {
+                logger.warn("A survey submit was dropped: the SDK was cleared or re-initialized while it waited")
+                return
+            }
+            if ownerGone() {
+                logger.warn("A survey submit was dropped: it belongs to \"\(owner ?? "")\", no longer the current user")
+                return
+            }
             do {
                 let res = try await apiClient.post(endpoint: Endpoints.submitForm, body: .object(req))
                 await applyFeedbackTransactions(res)
@@ -1381,7 +1557,11 @@ public final class Encatch: @unchecked Sendable {
                 let status = (error as? EncatchApiException)?.status
                 if status == 429 && attempt < Self.submitMaxAttempts { continue }
                 if status == 401, isSignatureExpired {
-                    holdSubmit(params)
+                    // held; or, if an identify ended the expired state meanwhile, tried again
+                    if holdSubmit(params, owner: owner) == .notExpired {
+                        if attempt < Self.submitMaxAttempts { continue }
+                        logger.warn("submitForm API error: \((error as? EncatchApiException)?.message ?? "\(error)")")
+                    }
                     return
                 }
                 logger.warn("submitForm API error: \((error as? EncatchApiException)?.message ?? "\(error)")")
@@ -1487,14 +1667,17 @@ public final class Encatch: @unchecked Sendable {
             loadingFormId = nil
         }
 
-        storage?.clearAll()
-        await retryQueue?.clear()
-        rateLimiter?.clear()
-
         initialized = false
-        apiKeyState = nil
-        // waiting setUserProperties updates were for the user being cleared
+        // waiting setUserProperties updates were for the user being cleared (and a reply arriving
+        // from here on calls no onSignatureExpired)
         releaseLifecycleWaits()
+        storage?.clearAll()
+        rateLimiter?.clear()
+        // cleared last: its clear suspends, and an initialize() overlapping it must not have its new
+        // state wiped by the rest of this
+        let queue = retryQueue
+
+        apiKeyState = nil
         releasePendingIdentifies()
         withStateLock {
             propsWaiting = []
@@ -1507,6 +1690,11 @@ public final class Encatch: @unchecked Sendable {
             userSignatureTime = nil
             signatureExpired = false
             heldSubmits = []
+            expiryToldUsers = []
+            onSignatureExpired = nil
+            // a submit waiting out a pause is dropped; nothing shown is remembered
+            shownTo = [:]
+            clearGeneration += 1
             identifyMemory = nil
             lastEventAtMs = [:]
             lastScreen = nil
@@ -1523,6 +1711,7 @@ public final class Encatch: @unchecked Sendable {
         isSessionStopped = false
 
         EncatchInternalEmitter.shared.emit(.userIdentified(userName: nil, userId: nil))
+        await queue?.clear()
     }
 
     // ============================================================================
@@ -1574,10 +1763,14 @@ public final class Encatch: @unchecked Sendable {
         sessionManager?.stopPingInterval()
         cancelPendingAutoShow()
         EncatchInternalEmitter.shared.emit(.dismissForm(formConfigurationId: nil))
-        withSurveyLock {
+        let closed: Set<String> = withSurveyLock {
+            let closed = openFormIds
             isFormVisible = false
             openFormIds = []
+            return closed
         }
+        // closed: its answers no longer need an owner (as Kotlin, both of its ids)
+        forgetShown(Array(closed))
         checkSurveyIdle()
         storage?.setSessionStopped()
     }
@@ -1603,6 +1796,7 @@ public final class Encatch: @unchecked Sendable {
             userSignatureTime = nil
             signatureExpired = false
             heldSubmits = []
+            expiryToldUsers = []
             identifyMemory = nil
             lastEventAtMs = [:]
             lastScreen = nil
@@ -1643,14 +1837,19 @@ public final class Encatch: @unchecked Sendable {
     /// by) — a close of a survey since replaced by another is ignored, so the one on screen stays
     /// "open" for the one-at-a-time guard.
     public func setFormVisible(_ visible: Bool, formId: String?) {
-        let ignored: Bool = withSurveyLock {
-            if !visible, let formId, !openFormIds.isEmpty, !openFormIds.contains(formId) { return true }
+        let (ignored, closed): (Bool, Set<String>) = withSurveyLock {
+            if !visible, let formId, !openFormIds.isEmpty, !openFormIds.contains(formId) { return (true, []) }
             isFormVisible = visible
+            let closed = visible ? [] : openFormIds
             if !visible { openFormIds = [] }
-            return false
+            return (false, closed)
         }
         if ignored { logger.debug("close of \(formId ?? "") ignored: another survey is open") }
-        if !visible { checkSurveyIdle() }
+        if !visible {
+            // closed (submitted, X, back, CTA, remind me later): its answers no longer need an owner
+            if !ignored { forgetShown(Array(closed) + [formId]) }
+            checkSurveyIdle()
+        }
     }
 
     /// Flushes the offline retry queue. The RN SDK does this automatically on `AppState` foreground;

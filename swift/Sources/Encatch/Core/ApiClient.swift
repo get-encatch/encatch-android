@@ -149,6 +149,37 @@ struct AuthState {
     }
 }
 
+/// The 401 body's `reason` for an expired secure-identify signature (the user gateway).
+let signatureExpiredReason = "user_signature_expired"
+
+/// A 401 body's `reason`, when it is a string (anything else, or no JSON: none).
+func errorReason(_ body: JSONValue?) -> String? {
+    guard case .object(let object)? = body, case .string(let reason)? = object["reason"] else { return nil }
+    return reason
+}
+
+/// A 401 reply: what the request carried, for the signature-expiry rules.
+struct UnauthorizedReply: Sendable, Equatable {
+    enum Identify: Sendable, Equatable {
+        /// Not identify-user.
+        case none
+        /// identify-user from identifyUser(): the call's own signature (or none).
+        case own
+        /// identify-user re-sending the stored signature (setUserProperties).
+        case storedSignature
+    }
+
+    /// The user the request was for: identify-user's own name, else `X-User-Name` (nil: a visitor).
+    let userName: String?
+    /// The `X-User-Signature` it carried.
+    let signature: String?
+    /// It carried a session time with that signature.
+    let hadSessionTime: Bool
+    let identify: Identify
+    /// The body said `reason: "user_signature_expired"`.
+    let signatureExpiredReason: Bool
+}
+
 /// Per-request options of `EncatchApiClient.post`.
 struct RequestOptions: Sendable {
     /// identify-user only: that call's own user name, sent as `X-User-Name`. An identify never
@@ -157,8 +188,8 @@ struct RequestOptions: Sendable {
     /// Secure identify: the call's signature and `generatedDateTimeInUtc` (epoch ms, as given).
     var signature: String?
     var signatureTime: String?
-    /// setUserProperties: [signature] is the stored session-time signature, not the call's own, so a
-    /// 401 is an expiry as on any other request.
+    /// setUserProperties: [signature] is the stored session-time signature, not the call's own, which
+    /// decides how its 401 is reported (`UnauthorizedReply.Identify.storedSignature`).
     var storedSignature: Bool
 
     init(identifyUserName: String? = nil, signature: String? = nil, signatureTime: String? = nil, storedSignature: Bool = false) {
@@ -280,8 +311,9 @@ final class EncatchApiClient: @unchecked Sendable {
     private let baseUrlProvider: @Sendable () -> String
     private let authStateProvider: @Sendable () -> AuthState
     private let onUserPendingRetryExhausted: @Sendable () async -> Void
-    /// (the expired signature, the user it was sent for)
-    private let onSignatureExpired: @Sendable (String, String?) -> Void
+    /// Every 401, with what the request carried and whether the body marked it as an expired
+    /// signature: the SDK decides whether it is one (HANDOVER-ON-SIGNATURE-EXPIRED §4).
+    private let onUnauthorized: @Sendable (UnauthorizedReply) -> Void
     private let rateLimiter: RateLimiter?
     private let requestTimeoutMs: Int64
     private let logger: EncatchLogger
@@ -293,7 +325,7 @@ final class EncatchApiClient: @unchecked Sendable {
         baseUrlProvider: @escaping @Sendable () -> String,
         authStateProvider: @escaping @Sendable () -> AuthState,
         onUserPendingRetryExhausted: @escaping @Sendable () async -> Void = {},
-        onSignatureExpired: @escaping @Sendable (String, String?) -> Void = { _, _ in },
+        onUnauthorized: @escaping @Sendable (UnauthorizedReply) -> Void = { _ in },
         rateLimiter: RateLimiter? = nil,
         requestTimeoutMs: Int64 = 30_000,
         logger: EncatchLogger = DefaultEncatchLogger(debugMode: { false }),
@@ -304,7 +336,7 @@ final class EncatchApiClient: @unchecked Sendable {
         self.baseUrlProvider = baseUrlProvider
         self.authStateProvider = authStateProvider
         self.onUserPendingRetryExhausted = onUserPendingRetryExhausted
-        self.onSignatureExpired = onSignatureExpired
+        self.onUnauthorized = onUnauthorized
         self.rateLimiter = rateLimiter
         self.requestTimeoutMs = requestTimeoutMs
         self.logger = logger
@@ -403,10 +435,14 @@ final class EncatchApiClient: @unchecked Sendable {
             await onUserPendingRetryExhausted()
         }
 
-        // A 401 on a request that carried the stored session-time signature: it expired (RN 1.4.4 item 16).
-        if statusCode == 401, options.identifyUserName == nil || options.storedSignature,
-           let sentSignature = authHeaders["X-User-Signature"], authHeaders["X-User-Session-Time"] != nil {
-            onSignatureExpired(sentSignature, authHeaders["X-User-Name"])
+        if statusCode == 401 {
+            onUnauthorized(UnauthorizedReply(
+                userName: options.identifyUserName ?? authHeaders["X-User-Name"],
+                signature: authHeaders["X-User-Signature"],
+                hadSessionTime: authHeaders["X-User-Session-Time"] != nil,
+                identify: options.identifyUserName == nil ? .none : (options.storedSignature ? .storedSignature : .own),
+                signatureExpiredReason: errorReason(parsed) == signatureExpiredReason
+            ))
         }
 
         let isSuccess = (200...299).contains(statusCode)

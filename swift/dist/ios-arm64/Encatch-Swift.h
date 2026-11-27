@@ -453,6 +453,8 @@ SWIFT_CLASS_NAMED("EncatchBridgeConfig")
 @property (nonatomic, copy) NSString * _Nullable theme;
 /// See <code>EncatchBridgeInterceptorCallback</code>‘s doc comment for why this isn’t an <code>async</code> closure.
 @property (nonatomic, copy) void (^ _Nullable onBeforeShowForm)(EncatchBridgeShowFormInterceptorPayload * _Nonnull, void (^ _Nonnull)(BOOL));
+/// <code>EncatchConfig.onSignatureExpired</code>, given the user name.
+@property (nonatomic, copy) void (^ _Nullable onSignatureExpired)(NSString * _Nonnull);
 - (nonnull instancetype)init OBJC_DESIGNATED_INITIALIZER;
 @end
 
