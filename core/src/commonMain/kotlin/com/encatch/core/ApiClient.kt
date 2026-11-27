@@ -230,12 +230,17 @@ class EncatchApiClient internal constructor(
     suspend fun post(endpoint: String, body: JsonElement, signatureTime: String? = null): JsonObject =
         send(endpoint, body, identify = null, signatureTime = signatureTime)
 
-    /** [post], with identify-user's own identity ([identify]) when it is that call. */
+    /**
+     * [post], with identify-user's own identity ([identify]) when it is that call. [storedSignature]:
+     * [identify] carries the stored session-time signature (setUserProperties), so a 401 is an expiry
+     * as on any other request (identify's own signature is the call's, never treated so).
+     */
     internal suspend fun send(
         endpoint: String,
         body: JsonElement,
         identify: IdentifyAuth?,
         signatureTime: String? = null,
+        storedSignature: Boolean = false,
     ): JsonObject {
         val url = "${baseUrlProvider()}/$endpoint"
         val authHeaders = buildAuthHeaders(identify, signatureTime)
@@ -298,7 +303,7 @@ class EncatchApiClient internal constructor(
 
         val sentSignature = authHeaders["X-User-Signature"]
         val sentUser = authHeaders["X-User-Name"]
-        if (response.status.value == 401 && identify == null &&
+        if (response.status.value == 401 && (identify == null || storedSignature) &&
             sentSignature != null && sentUser != null && authHeaders["X-User-Session-Time"] != null
         ) {
             onSignatureExpired(sentUser, sentSignature)

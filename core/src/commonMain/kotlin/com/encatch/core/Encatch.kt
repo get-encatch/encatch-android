@@ -1,6 +1,8 @@
 package com.encatch.core
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +15,8 @@ import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
@@ -115,6 +119,148 @@ object Encatch {
         }
     }
 
+    /** A later identifyUser() with traits is sent again: setUserProperties may have changed them. */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun forgetIdentifyTraits() {
+        while (true) {
+            val cur = identifyMemory.load() ?: return
+            if (cur.traitsKey == null) return
+            val next = IdentifyMemory(cur.name, cur.optionsKey, null, null, cur.locale, cur.country, cur.token)
+            if (identifyMemory.compareAndSet(cur, next)) return
+        }
+    }
+
+    // setUserProperties (RN SDK 1.5.0) -------------------------------------------------------------
+    // The user it may update: their identify succeeded, or they were restored with their id at
+    // launch. Cleared on a user switch (until the new user's identify succeeds), resetUser, clearAll.
+    @Volatile private var confirmedName: String? = null
+
+    /** Identifies queued or retrying, by user name: setUserProperties waits for them. */
+    @OptIn(ExperimentalAtomicApi::class)
+    private val pendingIdentifies = AtomicReference<Map<String, List<CompletableDeferred<Unit>>>>(emptyMap())
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun updatePendingIdentifies(change: (Map<String, List<CompletableDeferred<Unit>>>) -> Map<String, List<CompletableDeferred<Unit>>>) {
+        while (true) {
+            val cur = pendingIdentifies.load()
+            if (pendingIdentifies.compareAndSet(cur, change(cur))) return
+        }
+    }
+
+    /** Registers an identify of [userName] as pending; the returned function ends it (sent or dropped). */
+    private fun addPendingIdentify(userName: String): () -> Unit {
+        val done = CompletableDeferred<Unit>()
+        updatePendingIdentifies { it + (userName to (it[userName].orEmpty() + done)) }
+        return {
+            done.complete(Unit)
+            updatePendingIdentifies { m ->
+                val rest = m[userName].orEmpty().filter { it !== done }
+                if (rest.isEmpty()) m - userName else m + (userName to rest)
+            }
+        }
+    }
+
+    /** Ends every pending identify: the queue was emptied without reporting them (re-init). */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun releasePendingIdentifies() {
+        pendingIdentifies.exchange(emptyMap()).values.flatten().forEach { it.complete(Unit) }
+    }
+
+    /** Completed (then replaced) by stop(), clearAll() and a re-init: waits started before then give up. */
+    @OptIn(ExperimentalAtomicApi::class)
+    private val lifecycleRelease = AtomicReference(CompletableDeferred<Unit>())
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun releaseLifecycleWaits() {
+        // swapped atomically: two releases at once (stop and clearAll) can't leave a deferred uncompleted
+        lifecycleRelease.exchange(CompletableDeferred()).complete(Unit)
+        checkSurveyIdle(release = true)
+    }
+
+    /**
+     * setUserProperties calls wait their turn here, in call order, from the moment they're made: two
+     * waiting at once (for a survey, or for one identify) must not go out reversed. Not [identityMutex],
+     * so an identify or reset is never held up by a waiting update.
+     */
+    private val propsOrder = Mutex()
+
+    // Waiting for an open survey to close: one shared watcher, a check every 500 ms that is also run
+    // when a survey closes. stop() / clearAll() release every waiter.
+    @OptIn(ExperimentalAtomicApi::class)
+    private val surveyIdle = AtomicReference<CompletableDeferred<Unit>?>(null)
+
+    /** How often the shared watcher checks that an open survey closed (it is also woken by a close). Tests lengthen it. */
+    @Volatile internal var surveyIdlePollMs = 500L
+
+    /** A survey is loading, on screen, or about to be shown (an automatic show waiting out its delay). */
+    // pending first: the automatic show sets "loading" before it ends "pending", so reading in this
+    // order (without the lock) can't miss both
+    private fun isSurveyOpen(): Boolean = pendingAutoShow?.isActive == true || loadingFormId != null || isFormVisible
+
+    private suspend fun awaitSurveyIdle(release: Deferred<Unit>) {
+        while (initialized && isSurveyOpen() && !release.isCompleted) {
+            val idle = surveyIdleSignal()
+            select<Unit> {
+                idle.onAwait {}
+                release.onAwait {}
+            }
+        }
+    }
+
+    /** The shared signal, and its watcher when it is new (one at a time: a new one only after the last fired). */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun surveyIdleSignal(): CompletableDeferred<Unit> {
+        while (true) {
+            surveyIdle.load()?.let { return it }
+            val fresh = CompletableDeferred<Unit>()
+            if (surveyIdle.compareAndSet(null, fresh)) {
+                scope.launch {
+                    while (!fresh.isCompleted) {
+                        delay(surveyIdlePollMs)
+                        checkSurveyIdle()
+                    }
+                }
+                return fresh
+            }
+        }
+    }
+
+    /** Wakes the survey waiters once no survey is open ([release]: wake them regardless). */
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun checkSurveyIdle(release: Boolean = false) {
+        if (!release && initialized && isSurveyOpen()) return
+        surveyIdle.exchange(null)?.complete(Unit)
+    }
+
+    /**
+     * setUserProperties updates go out one after the other, in call order: the next is queued only
+     * when the previous one is sent or dropped, so a retried older update can't land after a newer one.
+     */
+    private class PropsUpdate(val release: Deferred<Unit>, val start: suspend (finish: () -> Unit) -> Unit)
+
+    @Volatile private var propsUpdates = Channel<PropsUpdate>(Channel.UNLIMITED)
+    @Volatile private var propsPump: Job? = null
+
+    private fun startPropsPump() {
+        propsPump?.cancel()
+        val old = propsUpdates
+        old.close()
+        var dropped = 0
+        while (old.tryReceive().isSuccess) dropped++
+        if (dropped > 0) logger.debug("$dropped setUserProperties update(s) not sent: the SDK was re-initialized")
+        val updates = Channel<PropsUpdate>(Channel.UNLIMITED)
+        propsUpdates = updates
+        propsPump = scope.launch {
+            for (update in updates) {
+                // stop() / clearAll() since it was queued: it was for the user being cleared
+                if (update.release.isCompleted) continue
+                val done = CompletableDeferred<Unit>()
+                runCatching { update.start { done.complete(Unit) } }.onFailure { if (it is CancellationException) throw it; done.complete(Unit) }
+                done.await()
+            }
+        }
+    }
+
     // Preferences
     private var localeState: String? = null
     private var countryState: String? = null
@@ -167,6 +313,9 @@ object Encatch {
     private val memoryUserStore = MemoryUserStore()
     private lateinit var apiClient: EncatchApiClient
     private lateinit var retryQueue: RetryQueue
+
+    /** Tests only: how many requests the retry queue holds. */
+    internal fun retryQueueSizeForTest(): Int = if (::retryQueue.isInitialized) retryQueue.queueSize() else 0
     private lateinit var sessionManager: SessionManager
     /** The 429 pause per bucket (RN 1.4.4 item 2). */
     private lateinit var rateLimiter: RateLimiter
@@ -214,6 +363,9 @@ object Encatch {
             }
             pendingReinitJob = teardown
             teardown.join()
+            // the cleared queue reports nothing: end what waits on it
+            releasePendingIdentifies()
+            releaseLifecycleWaits()
             rateLimiter.clear()
             // nothing of the old key's identify/secure/collapse memory carries over to the new one
             clearIdentifyMemory()
@@ -315,6 +467,8 @@ object Encatch {
             feedbackTransactions = storage.getFeedbackTransactions("anonymous")
         }
         confirmedIdentity = userNameState != null && userIdState != null
+        confirmedName = if (confirmedIdentity) userNameState else null
+        startPropsPump()
 
         initialized = true
 
@@ -387,6 +541,7 @@ object Encatch {
             // cleared meanwhile (a signature expiry, stopSession): decide again on what's there now
             if (identifyMemory.compareAndSet(mem, next)) break
         }
+        var pendingFinish: (() -> Unit)? = null
         // once the memory says "sent", the identify must be queued: if anything below fails, forget it
         try {
 
@@ -403,6 +558,8 @@ object Encatch {
                     heldSubmits.size.also { heldSubmits.clear() }
                 }
                 if (dropped > 0) logger.warn("[Encatch] $dropped held survey submit(s) dropped: another user was identified")
+                // not confirmed until this user's identify succeeds (setUserProperties waits for it)
+                confirmedName = null
                 userIdState = null
                 userNameState = userName
                 userIdState = storage.getUserId(userName)
@@ -434,24 +591,22 @@ object Encatch {
             // pause ends, so a sign-in during a pause isn't lost and repeated calls don't pile up.
             if (rateLimiter.isPaused(RateBucket.TRACKING)) retryQueue.removeQueued("identifyUser")
 
-            retryQueue.enqueue(
-                "identifyUser",
-                // dropped without succeeding: the same identify may be sent again (its traits too, even
-                // if a later identify without traits took over the rest of the memory)
-                onDrop = { forgetDroppedIdentify(memoryToken) },
-            ) {
+            suspend fun sendIdentify() {
                 val res = apiClient.send(Endpoints.IDENTIFY_USER, req, identify = auth)
                 // a reply for a user who is no longer current (reset or switched since): not applied
                 if (userNameState != userName) {
                     logger.debug("identify reply for \"$userName\" ignored: no longer the current user")
-                    return@enqueue
+                    return
                 }
                 res["userId"]?.jsonPrimitive?.contentOrNull?.let {
                     userIdState = it
                     storage.setUserId(userName, it)
                 }
                 // the identify succeeded: this user is now the confirmed identity
-                if (userIdState != null) confirmedIdentity = true
+                if (userIdState != null) {
+                    confirmedIdentity = true
+                    confirmedName = userName
+                }
                 // Secure identify: from now on the signature (and its time) go on every request of this
                 // user and survive a restart; an identify without `secure` clears them.
                 if (secure != null) {
@@ -481,9 +636,197 @@ object Encatch {
 
                 handleSurveyInReply(res)
             }
+
+            // setUserProperties for this user waits until this identify is sent or dropped
+            val finishPending = addPendingIdentify(userName).also { pendingFinish = it }
+            retryQueue.enqueue(
+                "identifyUser",
+                // dropped without succeeding: the same identify may be sent again (its traits too, even
+                // if a later identify without traits took over the rest of the memory)
+                onDrop = {
+                    finishPending()
+                    forgetDroppedIdentify(memoryToken)
+                },
+            ) {
+                sendIdentify()
+                finishPending()
+            }
         } catch (err: Throwable) {
             forgetDroppedIdentify(memoryToken)
+            pendingFinish?.invoke()
             throw err
+        }
+    }
+
+    // ============================================================================
+    // setUserProperties
+    // ============================================================================
+
+    /**
+     * Updates the identified user's properties, with the same operations as identifyUser's traits
+     * (`$set`, `$setOnce`, `$increment`, `$decrement`, `$unset`), through identify-user. Never
+     * deduped: every call is sent.
+     *
+     * [userName] must be the current user, and their identify must have succeeded (or they were
+     * restored with their id at launch); otherwise the call is ignored, so a pending or failed switch
+     * can't update the wrong person. Waits for an identify of that user still in flight, and for an
+     * open survey to close. Returns once the update is queued or ignored.
+     *
+     * It counts against the identify-user rate limit (about 5 per minute per user; a 429 pauses all
+     * tracking). An update with `$increment` or `$decrement` is sent once, never retried, so a timeout
+     * can't apply it twice.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    @Throws(Exception::class)
+    suspend fun setUserProperties(userName: String, traits: UserTraits) {
+        if (!initialized) return
+        if (hasUnsendableValue(traits)) {
+            logger.warn("setUserProperties(\"$userName\") ignored: traits contain a value that can't be sent (a number that isn't finite).")
+            return
+        }
+        if (traitsForDedupe(traits) == null) {
+            logger.debug("setUserProperties ignored: no traits to set.")
+            return
+        }
+        // what will be sent, taken now: the caller may change their maps meanwhile
+        val wire = traits.toJson()
+        val counts = !traits.increment.isNullOrEmpty() || !traits.decrement.isNullOrEmpty()
+
+        // Identity calls made before this one run first; then wait, outside the identity lock (so a
+        // resetUser() isn't held up), for an identify of this user still in flight and for an open
+        // survey to close.
+        val release = lifecycleRelease.load()
+        propsOrder.withLock {
+            while (true) {
+                val pending = identityMutex.withLock { pendingIdentifies.loadPending(userName) }
+                when {
+                    pending.isNotEmpty() -> for (identify in pending) {
+                        select<Unit> {
+                            identify.onAwait {}
+                            release.onAwait {}
+                        }
+                        if (release.isCompleted) break
+                    }
+                    isSurveyOpen() -> awaitSurveyIdle(release)
+                    else -> break
+                }
+                if (release.isCompleted || !initialized) return
+            }
+            identityMutex.withLock { withContext(NonCancellable) { setUserPropertiesNow(userName, wire, counts, release) } }
+        }
+    }
+
+    @OptIn(ExperimentalAtomicApi::class)
+    private fun AtomicReference<Map<String, List<CompletableDeferred<Unit>>>>.loadPending(userName: String) =
+        load()[userName].orEmpty()
+
+    private suspend fun setUserPropertiesNow(userName: String, wire: JsonObject, counts: Boolean, release: Deferred<Unit>) {
+        if (!initialized || release.isCompleted) return
+        val current = userNameState
+        if (current == null) {
+            logger.debug("setUserProperties ignored: no user is identified. Call identifyUser() first.")
+            return
+        }
+        if (current != userName) {
+            logger.warn("setUserProperties(\"$userName\") ignored: the current user is \"$current\".")
+            return
+        }
+        val userId = userIdState
+        if (userId == null || confirmedName != userName) {
+            logger.warn("setUserProperties(\"$userName\") ignored: \"$userName\" isn't identified (identifyUser failed or was never called).")
+            return
+        }
+        if (signatureExpired) {
+            logger.debug("setUserProperties(\"$userName\") ignored: secure signature expired, waiting for identify")
+            return
+        }
+        if (rateLimiter.isPaused(RateBucket.TRACKING)) {
+            logger.warn("setUserProperties ignored: rate limited, try again later.")
+            return
+        }
+
+        // a later identifyUser() with traits is sent again (the properties may have changed since)
+        forgetIdentifyTraits()
+
+        val req = buildJsonObject {
+            put("userName", userName)
+            put("userId", userId)
+            put("\$deviceInfo", buildDeviceInfo().toJson())
+            put("userAttributes", wire)
+            feedbackTransactions?.let { put("\$feedbackTransactions", it) }
+        }
+        propsUpdates.trySend(PropsUpdate(release) { finish -> queueUserProperties(userName, userId, req, counts, release, finish) })
+    }
+
+    private suspend fun queueUserProperties(
+        userName: String,
+        userId: String,
+        req: JsonObject,
+        counts: Boolean,
+        release: Deferred<Unit>,
+        finish: () -> Unit,
+    ) {
+        retryQueue.enqueue(
+            "setUserProperties",
+            maxRetries = if (counts) 1 else RetryQueue.MAX_RETRIES,
+            onDrop = finish,
+        ) send@{
+            // checked again just before sending: a reset or switch may have happened
+            if (release.isCompleted || userNameState != userName || confirmedName != userName || userIdState != userId) {
+                logger.debug("setUserProperties(\"$userName\") not sent: the user changed")
+                finish()
+                return@send
+            }
+            if (signatureExpired) {
+                logger.debug("setUserProperties(\"$userName\") ignored: secure signature expired, waiting for identify")
+                finish()
+                return@send
+            }
+            // a survey opened meanwhile: send after it closes (an identify-user while a survey is
+            // open can drop it from the person's candidates on the server, so its submit fails)
+            if (isSurveyOpen()) {
+                scope.launch {
+                    try {
+                        awaitSurveyIdle(release)
+                        if (release.isCompleted) finish() else queueUserProperties(userName, userId, req, counts, release, finish)
+                    } catch (err: Throwable) {
+                        // never leave the next update waiting behind this one
+                        finish()
+                        if (err !is CancellationException) logger.warn("setUserProperties not queued again: ${err.message}")
+                    }
+                }
+                return@send
+            }
+            // the user name, plus the stored signature and its time (not the call's: there is none)
+            val auth = IdentifyAuth(userName, userSignature, userSignatureTime)
+            val res = apiClient.send(Endpoints.IDENTIFY_USER, req, identify = auth, storedSignature = true)
+            try {
+                // a reply for a user who is no longer current (reset or switched since): not applied
+                if (userNameState != userName) {
+                    logger.debug("setUserProperties reply for \"$userName\" ignored: no longer the current user")
+                    return@send
+                }
+                // its own reply handling, not identify's: no signature change, no held submits
+                // released, no session restart, no "user identified"
+                res["\$feedbackTransactions"]?.jsonPrimitive?.contentOrNull?.let {
+                    feedbackTransactions = it
+                    storage.setFeedbackTransactions(userName, it)
+                }
+                val meta = res.toResponseMeta()
+                sessionManager.handleResponseMeta(meta)
+                // only while the ping runs (scheduleNextPing doesn't start a stopped one)
+                if (meta.pingAgainIn != null && meta.pingAgainIn > 0) {
+                    sessionManager.scheduleNextPing((meta.pingAgainIn * 1000).toLong())
+                }
+                handleSurveyInReply(res)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (err: Throwable) {
+                // sent: never sent again for a local failure
+                logger.warn("setUserProperties reply not applied: ${err.message}")
+            } finally {
+                finish()
+            }
         }
     }
 
@@ -712,6 +1055,7 @@ object Encatch {
     private fun cancelPendingAutoShow() {
         pendingAutoShow?.cancel()
         pendingAutoShow = null
+        checkSurveyIdle()
     }
 
     private suspend fun showFormInternal(
@@ -725,17 +1069,15 @@ object Encatch {
             if (fromSchedule) {
                 val self = currentCoroutineContext()[Job]
                 surveyGuard.withLock { if (pendingAutoShow === self) pendingAutoShow = null }
+                checkSurveyIdle()
             }
             logger.debug("showForm $formId skipped: rate limited")
             return
         }
         val proceed = surveyGuard.withLock {
             // the scheduled show has started: it is now "loading", no longer "pending" — if it is still the current one
-            if (fromSchedule) {
-                if (pendingAutoShow !== currentCoroutineContext()[Job]) return@withLock false
-                pendingAutoShow = null
-            }
-            when {
+            if (fromSchedule && pendingAutoShow !== currentCoroutineContext()[Job]) return@withLock false
+            val go = when {
                 // an automatic show never interrupts a survey that is loading or open
                 triggerType == TriggerType.AUTOMATIC && (signatureExpired || loadingFormId != null || isFormVisible) -> false
                 // asking again for the survey already loading or open keeps the answers in progress
@@ -745,9 +1087,14 @@ object Encatch {
                     true
                 }
             }
+            // "loading" is set before "pending" ends, so a survey check never sees neither
+            if (fromSchedule) pendingAutoShow = null
+            go
         }
         if (!proceed) {
             logger.debug("show-form $formId skipped: a survey is loading or open (survey-open)")
+            // a scheduled show that ended here was "open" for setUserProperties until now
+            if (fromSchedule) checkSurveyIdle()
             return
         }
         try {
@@ -755,6 +1102,7 @@ object Encatch {
         } finally {
             // even when cancelled: a guard left "loading" would block every automatic survey after it
             withContext(NonCancellable) { surveyGuard.withLock { if (loadingFormId == formId) loadingFormId = null } }
+            checkSurveyIdle()
         }
     }
 
@@ -876,6 +1224,7 @@ object Encatch {
         EncatchInternalEmitter.emit(InternalEvent.DismissForm(formConfigurationId))
         isFormVisible = false
         openFormIds = emptySet()
+        checkSurveyIdle()
 
         scope.launch { trackFormEvent("form:dismissed", formConfigurationId) }
 
@@ -1028,6 +1377,12 @@ object Encatch {
 
         initialized = false
         confirmedIdentity = false
+        confirmedName = null
+        // waiting setUserProperties updates were for the user being cleared
+        releaseLifecycleWaits()
+        // nothing queued goes out after consent is withdrawn, and nothing waits on it any more
+        if (::retryQueue.isInitialized) retryQueue.clear()
+        releasePendingIdentifies()
         apiKeyState = null
         userNameState = null
         userIdState = null
@@ -1099,6 +1454,7 @@ object Encatch {
         cancelPendingAutoShow()
         EncatchInternalEmitter.emit(InternalEvent.DismissForm())
         isFormVisible = false
+        checkSurveyIdle()
         storage.setSessionStopped()
     }
 
@@ -1116,6 +1472,7 @@ object Encatch {
         // the in-memory identity first, so nothing goes out with a half-cleared one
         val previous = userNameState
         confirmedIdentity = false
+        confirmedName = null
         userIdState = null
         userNameState = null
         userSignature = null
@@ -1164,7 +1521,10 @@ object Encatch {
             return
         }
         isFormVisible = visible
-        if (!visible) openFormIds = emptySet()
+        if (!visible) {
+            openFormIds = emptySet()
+            checkSurveyIdle()
+        }
     }
 
     /**
@@ -1195,6 +1555,8 @@ object Encatch {
 
     fun stop() {
         if (::sessionManager.isInitialized) sessionManager.stopPingInterval()
+        // anything waiting for a survey to close or an identify gives up
+        releaseLifecycleWaits()
     }
 
     // ============================================================================
